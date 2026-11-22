@@ -106,15 +106,17 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	id := g.Nodes[0].ID
 
 	// Open its settings with a click, change them, save.
-	var summary string
+	var summary, name string
 	err = chromedp.Run(ctx,
 		chromedp.Click(`#node-1 .wf-title`, chromedp.ByQuery),
 		chromedp.WaitVisible(`#wf-modal form.node-form`),
 		chromedp.Click(`#wf-modal input[name=mode][value=summoned]`),
 		chromedp.SetValue(`#wf-modal input[name=stop_tag]`, "autobot: skip"),
+		chromedp.SetValue(`#wf-modal input[name=name]`, "New ready PRs"),
 		chromedp.Click(`#wf-modal form.node-form button:not([type])`),
 		waitSaved,
 		chromedp.Text(`#node-1 .wf-sub`, &summary),
+		chromedp.Text(`#node-1 .wf-name`, &name),
 	)
 	if err != nil {
 		var status, modalText string
@@ -124,6 +126,9 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	s, _ := workflow.EventSettingsOf(stored().Nodes[0])
 	if s.Mode != "summoned" || s.StopTag != "autobot: skip" || stored().Nodes[0].ID != id {
 		t.Fatalf("stored settings: %+v", s)
+	}
+	if name != "New ready PRs" || stored().Nodes[0].Name != "New ready PRs" {
+		t.Fatalf("node name shown %q, stored %q", name, stored().Nodes[0].Name)
 	}
 	if !strings.Contains(summary, "Only if summoned") || !strings.Contains(summary, "autobot: skip") {
 		t.Fatalf("node summary %q", summary)

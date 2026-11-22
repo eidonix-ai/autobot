@@ -1,8 +1,10 @@
 // Package workflow is a workspace's workflows: one for pull requests and one for issues, each a
-// set of nodes placed on a canvas and joined in chains. A chain starts at an event node, which says
-// when a workflow runs on an item; later nodes (review, test, decide, post) follow it in a straight
-// line. The canvas is free in layout and strict in meaning: each node has at most one link in and one
-// link out, and an event node has none in, so running a chain is doing its steps in order.
+// set of nodes placed on a canvas and joined by links. An event node says when a workflow runs on an
+// item; the nodes it links to (agents, decisions, and later testing and posting) run after it. A link
+// runs from a named output of one node to a named input of another, so a node can fan out (one output
+// to several nodes, or a decision with one output per choice) and links can collapse into one input.
+// The one shape refused for now is a loop, because nothing runs loops yet; how a node with several
+// incoming links waits for them is the engine's to decide, and nothing here fixes it.
 package workflow
 
 import (
@@ -78,15 +80,47 @@ type Graph struct {
 type Node struct {
 	ID       string          `json:"id"`
 	Type     string          `json:"type"`
+	Name     string          `json:"name,omitempty"` // shown above the node; its type's label when empty
 	X        float64         `json:"x"`
 	Y        float64         `json:"y"`
 	Settings json.RawMessage `json:"settings,omitempty"`
 }
 
-// Link joins one node's output to the next node's input.
+// Link joins an output of one node to an input of another.
 type Link struct {
 	From string `json:"from"`
+	Out  string `json:"out"` // the output's name: "out", or a decision's choice
 	To   string `json:"to"`
+	In   string `json:"in"` // the input's name: "in"
+}
+
+// Outputs are the named outputs of a node.
+func Outputs(n Node) []string { return []string{"out"} }
+
+// Inputs are the named inputs of a node; an event node has none.
+func Inputs(n Node) []string {
+	if t, _ := TypeOf(n.Type); t.Event {
+		return nil
+	}
+	return []string{"in"}
+}
+
+// DisplayName is what the canvas shows above a node.
+func DisplayName(n Node) string {
+	if n.Name != "" {
+		return n.Name
+	}
+	t, _ := TypeOf(n.Type)
+	return t.Label
+}
+
+func has(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 var idRE = regexp.MustCompile(`^[a-z0-9]{1,24}$`)
@@ -115,6 +149,9 @@ func (g Graph) Check(kind string) error {
 		if _, dup := byID[n.ID]; dup {
 			return fmt.Errorf("two nodes share the id %s", n.ID)
 		}
+		if len([]rune(n.Name)) > 60 || strings.ContainsAny(n.Name, "\n\r\t") {
+			return fmt.Errorf("node names are one line of up to 60 characters")
+		}
 		if n.X < -1e6 || n.X > 1e6 || n.Y < -1e6 || n.Y > 1e6 {
 			return fmt.Errorf("node %s is placed out of range", n.ID)
 		}
@@ -129,36 +166,53 @@ func (g Graph) Check(kind string) error {
 		}
 		byID[n.ID] = n
 	}
-	out, in := map[string]string{}, map[string]string{}
+	next := map[string][]string{}
+	seen := map[Link]bool{}
 	for _, l := range g.Links {
 		from, okf := byID[l.From]
-		_, okt := byID[l.To]
+		to, okt := byID[l.To]
 		if !okf || !okt || l.From == l.To {
 			return errors.New("a link joins nodes that are not on the canvas")
 		}
-		if t, _ := TypeOf(byID[l.To].Type); t.Event {
-			return errors.New("an event node starts a chain; nothing can link into it")
+		if t, _ := TypeOf(to.Type); t.Event {
+			return errors.New("an event node starts a workflow; nothing can link into it")
 		}
-		if _, ok := out[l.From]; ok {
-			return fmt.Errorf("%s already links to a next step; a chain does not branch", label(from))
+		if !has(Outputs(from), l.Out) || !has(Inputs(to), l.In) {
+			return fmt.Errorf("a link uses an output or input that %s or %s does not have", label(from), label(to))
 		}
-		if _, ok := in[l.To]; ok {
-			return fmt.Errorf("%s already has a step before it; chains do not merge", label(byID[l.To]))
+		if seen[l] {
+			return errors.New("two links join the same output and input")
 		}
-		out[l.From], in[l.To] = l.To, l.From
+		seen[l] = true
+		next[l.From] = append(next[l.From], l.To)
 	}
-	// Straight lines with one link in and out cannot branch or merge; a loop is the one shape left.
+	// Any shape but a loop: walk from every node, and fail on reaching a node already on the path.
+	const (
+		unvisited = iota
+		onPath
+		done
+	)
+	mark := map[string]int{}
+	var visit func(string) error
+	visit = func(id string) error {
+		switch mark[id] {
+		case onPath:
+			return errors.New("links cannot loop back to an earlier step (not yet supported)")
+		case done:
+			return nil
+		}
+		mark[id] = onPath
+		for _, n := range next[id] {
+			if err := visit(n); err != nil {
+				return err
+			}
+		}
+		mark[id] = done
+		return nil
+	}
 	for id := range byID {
-		seen := map[string]bool{}
-		for at := id; ; {
-			next, ok := out[at]
-			if !ok {
-				break
-			}
-			if seen[next] {
-				return errors.New("a chain cannot loop back on itself")
-			}
-			seen[next], at = true, next
+		if err := visit(id); err != nil {
+			return err
 		}
 	}
 	return nil

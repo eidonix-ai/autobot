@@ -1,7 +1,7 @@
 // The workflow canvas. Drawflow draws the nodes and links and handles dragging and zoom; this adds
-// what is Autobot's: a right-click menu to place nodes, a click to open a node's settings, the rule
-// that chains are straight lines, and saving every change. The server checks every save, keeps
-// each node's settings, and refuses a save made from an out-of-date copy.
+// what is Autobot's: a right-click menu to place nodes, a click to open a node's settings, named
+// outputs, and saving every change. The server checks every save (links may fan out and merge but
+// not loop), keeps each node's settings, and refuses a save made from an out-of-date copy.
 (function () {
   'use strict';
   var root = document.getElementById('wf');
@@ -35,7 +35,7 @@
   function addNode(id, type, x, y) {
     var t = types[type];
     var dfid = editor.addNode(type, t.event ? 0 : 1, 1, x, y, 'wf-' + type, { id: id },
-      '<div class="wf-node"><div class="wf-title"></div><div class="wf-sub"></div></div>');
+      '<div class="wf-node"><div class="wf-name"></div><div class="wf-title"></div><div class="wf-sub"></div></div>');
     dfToID[dfid] = id; idToDf[id] = dfid;
     var el = nodeEl(dfid);
     el.querySelector('.wf-title').textContent = t.label;
@@ -43,9 +43,12 @@
     return dfid;
   }
 
+  // The name above a node and the summary inside it come from the server's last answer.
   function setSummary(id) {
     var el = nodeEl(idToDf[id]);
-    if (el) { el.querySelector('.wf-sub').textContent = state.summaries[id] || ''; }
+    if (!el) { return; }
+    el.querySelector('.wf-sub').textContent = state.summaries[id] || '';
+    el.querySelector('.wf-name').textContent = (state.names || {})[id] || types[editor.getNodeFromId(idToDf[id]).name].label;
   }
 
   function show(msg, bad) {
@@ -56,7 +59,7 @@
   // ---- loading the saved workflow ----
   state.graph.nodes.forEach(function (n) { addNode(n.id, n.type, n.x, n.y); });
   state.graph.links.forEach(function (l) {
-    if (idToDf[l.from] && idToDf[l.to]) { editor.addConnection(idToDf[l.from], idToDf[l.to], 'output_1', 'input_1'); }
+    if (idToDf[l.from] && idToDf[l.to]) { editor.addConnection(idToDf[l.from], idToDf[l.to], outClass(l.from, l.out), 'input_1'); }
   });
   loading = false;
 
@@ -73,11 +76,19 @@
     Object.keys(data).forEach(function (k) {
       var n = data[k], id = dfToID[n.id];
       nodes.push({ id: id, type: n.name, x: Math.round(n.pos_x), y: Math.round(n.pos_y) });
-      var out = n.outputs.output_1;
-      (out ? out.connections : []).forEach(function (c) { links.push({ from: id, to: dfToID[c.node] }); });
+      Object.keys(n.outputs).forEach(function (cls) {
+        n.outputs[cls].connections.forEach(function (c) {
+          links.push({ from: id, out: outName(id, cls), to: dfToID[c.node], in: 'in' });
+        });
+      });
     });
     return { version: state.version, nodes: nodes, links: links };
   }
+
+  // A node's outputs, in Drawflow's order (output_1, output_2, …), by name.
+  function outputsOf(id) { return (state.outputs || {})[id] || ['out']; }
+  function outName(id, cls) { return outputsOf(id)[parseInt(cls.replace('output_', ''), 10) - 1] || 'out'; }
+  function outClass(id, name) { return 'output_' + (Math.max(0, outputsOf(id).indexOf(name)) + 1); }
 
   function post(url, body, isForm) {
     var headers = { 'X-Autobot-CSRF': csrf };
@@ -93,13 +104,16 @@
       return resp.json().then(function (body) { return { status: resp.status, body: body }; });
     }).then(function (r) {
       if (r.status === 200) {
-        state.version = r.body.version; state.summaries = r.body.summaries;
+        state.version = r.body.version; state.summaries = r.body.summaries; state.names = r.body.names;
         Object.keys(idToDf).forEach(setSummary);
         show('Saved');
       } else {
         show(r.body.error || 'Not saved.', true);
         if (r.status === 409) { offerReload(); }
+        // A refused link (a loop, say) comes off the canvas again.
+        if (lastLink) { editor.removeSingleConnection(lastLink.output_id, lastLink.input_id, lastLink.output_class, lastLink.input_class); }
       }
+      lastLink = null;
     }).catch(function () { show('Not saved: Autobot could not be reached.', true); })
       .then(function () { saving = false; if (again) { again = false; save(); } });
   }
@@ -114,16 +128,9 @@
   editor.on('nodeMoved', scheduleSave);
   editor.on('nodeRemoved', function (dfid) { delete idToDf[dfToID[dfid]]; delete dfToID[dfid]; scheduleSave(); });
   editor.on('connectionRemoved', scheduleSave);
-  // A chain is a straight line: one link out of a node, one link into it.
-  editor.on('connectionCreated', function (c) {
-    var from = editor.getNodeFromId(c.output_id), to = editor.getNodeFromId(c.input_id);
-    if (from.outputs[c.output_class].connections.length > 1 || to.inputs[c.input_class].connections.length > 1) {
-      editor.removeSingleConnection(c.output_id, c.input_id, c.output_class, c.input_class);
-      show('A chain is a straight line: each step links to one next step.', true);
-      return;
-    }
-    scheduleSave();
-  });
+  // Links may fan out and collapse; the server refuses only a loop, and then the link comes off.
+  var lastLink = null;
+  editor.on('connectionCreated', function (c) { lastLink = c; scheduleSave(); });
 
   // ---- the right-click menu, and placing a node with the mouse ----
   var placing = null;
@@ -220,7 +227,7 @@
     post(form.action, new URLSearchParams(new FormData(form)), true).then(function (resp) {
       if (resp.status === 200) {
         return resp.json().then(function (body) {
-          state.version = body.version; state.summaries = body.summaries;
+          state.version = body.version; state.summaries = body.summaries; state.names = body.names;
           setSummary(id); modal.hidePopover(); show('Saved');
         });
       }

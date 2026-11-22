@@ -24,8 +24,9 @@ func TestCheck(t *testing.T) {
 		"unknown type":             {Graph{Nodes: []Node{node("a", "run_anything")}}, PR, "no node type"},
 		"duplicate id":             {Graph{Nodes: []Node{node("a", "pr_ready"), node("a", "pr_draft")}}, PR, "share the id"},
 		"bad id":                   {Graph{Nodes: []Node{node("A B", "pr_ready")}}, PR, "not valid"},
-		"link into an event":       {Graph{Nodes: []Node{node("a", "pr_ready"), node("b", "pr_draft")}, Links: []Link{{"a", "b"}}}, PR, "nothing can link into it"},
-		"link to a missing node":   {Graph{Nodes: []Node{node("a", "pr_ready")}, Links: []Link{{"a", "z"}}}, PR, "not on the canvas"},
+		"link into an event":       {Graph{Nodes: []Node{node("a", "pr_ready"), node("b", "pr_draft")}, Links: []Link{{"a", "out", "b", "in"}}}, PR, "nothing can link into it"},
+		"link to a missing node":   {Graph{Nodes: []Node{node("a", "pr_ready")}, Links: []Link{{"a", "out", "z", "in"}}}, PR, "not on the canvas"},
+		"unknown output":           {Graph{Nodes: []Node{node("a", "pr_ready")}, Links: []Link{{"a", "nope", "a", "in"}}}, PR, "not on the canvas"},
 		"settings that do not fit": {Graph{Nodes: []Node{{ID: "a", Type: "pr_ready", Settings: bad}}}, PR, "choose when it runs"},
 		"unknown kind":             {Graph{}, "discussion", "no workflow kind"},
 	} {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
@@ -25,6 +26,15 @@ func loadGraph(stored *store.StoredWorkflow) (workflow.Graph, error) {
 	var g workflow.Graph
 	err := json.Unmarshal([]byte(stored.Graph), &g)
 	return g, err
+}
+
+// canvasFacts is what the canvas shows of each node besides its type: its name and outputs.
+func canvasFacts(g workflow.Graph) (map[string]string, map[string][]string) {
+	names, outputs := map[string]string{}, map[string][]string{}
+	for _, n := range g.Nodes {
+		names[n.ID], outputs[n.ID] = workflow.DisplayName(n), workflow.Outputs(n)
+	}
+	return names, outputs
 }
 
 // summaries is each event node's one-line summary, for the canvas.
@@ -66,8 +76,9 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	names, outputs := canvasFacts(g)
 	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": summaries(g),
-		"types": workflow.TypesFor(kind)})
+		"names": names, "outputs": outputs, "types": workflow.TypesFor(kind)})
 	var tabs []map[string]string
 	for _, k := range workflow.Kinds {
 		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
@@ -120,7 +131,7 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 	for _, n := range req.Nodes {
 		node := workflow.Node{ID: n.ID, Type: n.Type, X: n.X, Y: n.Y}
 		if k, ok := kept[n.ID]; ok && k.Type == n.Type {
-			node.Settings = k.Settings
+			node.Settings, node.Name = k.Settings, k.Name
 		}
 		g.Nodes = append(g.Nodes, node)
 	}
@@ -150,8 +161,9 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 		s.fail(w, err)
 		return
 	}
+	names, outputs := canvasFacts(g)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": summaries(g)})
+	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": summaries(g), "names": names, "outputs": outputs})
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
@@ -206,7 +218,7 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws *store.Workspace, kind string, n workflow.Node, settings workflow.EventSettings, problem string) {
 	t, _ := workflow.TypeOf(n.Type)
-	s.renderFragment(w, r, status, "node_event.html", map[string]any{"WS": ws, "Kind": kind, "Node": n, "Type": t,
+	s.renderFragment(w, r, status, "node_event.html", map[string]any{"WS": ws, "Kind": kind, "Node": n, "Type": t, "Name": workflow.DisplayName(n),
 		"S": settings, "Activities": workflow.Activities, "Error": problem,
 		"Action": ws.Path() + "/workflows/" + kind + "/nodes/" + n.ID})
 }
@@ -218,6 +230,10 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := &g.Nodes[i]
+	n.Name = strings.TrimSpace(r.PostForm.Get("name"))
+	if t, _ := workflow.TypeOf(n.Type); n.Name == t.Label {
+		n.Name = "" // the default needs no storing
+	}
 	settings := workflow.EventFromForm(n.Type, r.PostForm.Get, func(k string) []string { return r.PostForm[k] })
 	if err := settings.Check(n.Type); err != nil {
 		s.nodeForm(w, r, http.StatusBadRequest, ws, kind, *n, settings, err.Error()+".")

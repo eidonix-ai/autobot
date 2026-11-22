@@ -18,6 +18,7 @@ type Machine struct {
 	WorkspaceID int64
 	Name        string
 	Revoked     bool
+	Enabled     bool // false while taken offline: it gets no new runs
 	CreatedAt   time.Time
 }
 
@@ -28,12 +29,12 @@ func hashToken64(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-const machineCols = `id, workspace_id, name, revoked, created_at`
+const machineCols = `id, workspace_id, name, revoked, enabled, created_at`
 
 func scanMachine(row scanner) (*Machine, error) {
 	var m Machine
 	var at int64
-	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.Name, &m.Revoked, &at); err != nil {
+	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.Name, &m.Revoked, &m.Enabled, &at); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -111,6 +112,30 @@ func (s *Store) Machines(workspaceID int64) ([]Machine, error) {
 		out = append(out, *m)
 	}
 	return out, rows.Err()
+}
+
+// SetMachineEnabled takes a machine offline (no new runs) or brings it back, and records it in the
+// workspace's history. A run in progress is left to finish.
+func (s *Store) SetMachineEnabled(m *Machine, enabled bool, actor *User) error {
+	if m.Enabled == enabled {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE machines SET enabled = ? WHERE id = ?`, enabled, m.ID); err != nil {
+		return err
+	}
+	what := "took " + m.Name + " offline"
+	if enabled {
+		what = "brought " + m.Name + " back online"
+	}
+	if err := addEvent(tx, m.WorkspaceID, actor, what); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RevokeMachine stops a machine's token from working. Its runs stay in the history.

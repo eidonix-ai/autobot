@@ -112,7 +112,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, m *store.Mach
 	if st.Run != 0 && (run == nil || run.ID != st.Run || run.Cancel) {
 		out.Cancel = true
 	}
-	if st.Run == 0 && st.Problem == "" && run != nil && run.State == "queued" {
+	if st.Run == 0 && st.Problem == "" && m.Enabled && run != nil && run.State == "queued" {
 		job, err := s.job(run)
 		if err != nil {
 			s.fail(w, err)

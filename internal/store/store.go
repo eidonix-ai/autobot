@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -284,4 +284,9 @@ CREATE TABLE case_contributions (
 	finalized_at INTEGER
 );
 CREATE INDEX case_contributions_by_case ON case_contributions(case_uuid, id);
+`
+
+// A machine can be taken offline for a while without removing it: it gets no new runs.
+const schemaV8 = `
+ALTER TABLE machines ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
 `

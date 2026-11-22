@@ -1,9 +1,14 @@
 {{define "content"}}
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
 <h1>{{.M.Name}}</h1>
-<p><span class="dot {{if .M.Ready}}on{{else if .M.Online}}busy{{else}}off{{end}}"></span> {{.M.State}}
+<p><span class="dot {{if .M.Ready}}on{{else if .M.Lit}}busy{{else}}off{{end}}"></span> {{.M.State}}
 {{if not .M.Live.Seen.IsZero}}<span class="muted">· last checked in {{ago .M.Live.Seen}}</span>{{end}}
 {{with .M.Run}} · <a href="{{$.WS.Path}}/runs/{{.ID}}">open run {{.ID}}</a>{{end}}</p>
+<form method="post" action="{{.M.Path}}/enabled" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label class="check"><input type="checkbox" name="enabled"{{if .M.Enabled}} checked{{end}}> Enabled</label>
+  <button class="secondary">Save</button>
+</form>
 
 {{if not .M.Live.Seen.IsZero}}{{with .M.Live}}
 <div class="grid">

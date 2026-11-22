@@ -130,3 +130,22 @@ func TestConnectorAPI(t *testing.T) {
 		t.Fatalf("removed machine: %d", code)
 	}
 }
+
+// A machine taken offline gets no new runs until it is enabled again.
+func TestDisabledMachineGetsNoRuns(t *testing.T) {
+	e := newEnv(t)
+	admin := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", admin, "", "")
+	m, tok, _ := e.st.AddMachine(ws.ID, "cn7", admin)
+	idle := protocol.Status{Image: "sha256:x"}
+	e.st.SetMachineEnabled(m, false, admin)
+	run, _ := e.st.QueueRun(m, "true", "", "", false, 0, time.Minute, admin)
+	if _, r := e.connector(t, tok, "/connector/v1/heartbeat", idle); r.Job != nil {
+		t.Fatal("a disabled machine was given a run")
+	}
+	m, _ = e.st.Machine(m.ID)
+	e.st.SetMachineEnabled(m, true, admin)
+	if _, r := e.connector(t, tok, "/connector/v1/heartbeat", idle); r.Job == nil || r.Job.Run != run.ID {
+		t.Fatalf("re-enabled machine: %+v", r.Job)
+	}
+}

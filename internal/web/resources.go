@@ -25,6 +25,8 @@ type machineView struct {
 // State is the machine's condition in a few words.
 func (m machineView) State() string {
 	switch {
+	case !m.Enabled:
+		return "Offline (disabled)"
 	case !m.Online && m.Live.Seen.IsZero():
 		return "Never connected"
 	case !m.Online:
@@ -41,7 +43,12 @@ func (m machineView) State() string {
 }
 
 // Ready reports whether a run can start on the machine now.
-func (m machineView) Ready() bool { return m.Online && m.Run == nil && m.Live.Problem == "" }
+func (m machineView) Ready() bool {
+	return m.Enabled && m.Online && m.Run == nil && m.Live.Problem == ""
+}
+
+// Lit reports whether the machine's dot shows it online: connected and enabled.
+func (m machineView) Lit() bool { return m.Enabled && m.Online }
 
 func (s *Server) machineViews(ws *store.Workspace) ([]machineView, error) {
 	machines, err := s.st.Machines(ws.ID)
@@ -295,7 +302,7 @@ func summarize(ms []machineView) resourceSummary {
 		switch {
 		case m.Ready():
 			r.Ready++
-		case m.Online:
+		case m.Lit():
 			r.Busy++
 		default:
 			r.Offline++
@@ -307,4 +314,17 @@ func summarize(ms []machineView) resourceSummary {
 		r.Dot = "busy"
 	}
 	return r
+}
+
+// setMachineEnabled takes a machine offline or brings it back.
+func (s *Server) setMachineEnabled(w http.ResponseWriter, r *http.Request) {
+	ws, m, ok := s.openMachine(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.SetMachineEnabled(m, r.PostForm.Get("enabled") == "on", me(r)); err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("%s/machines/%d", ws.Path(), m.ID), http.StatusSeeOther)
 }

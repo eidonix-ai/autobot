@@ -73,7 +73,7 @@
   <thead><tr><th>Machine</th><th>State</th><th>GPUs</th><th>Models</th></tr></thead>
   <tbody>{{range .Machines}}<tr>
     <td><a href="{{.Path}}">{{.Name}}</a></td>
-    <td><span class="dot {{if .Ready}}on{{else if .Online}}busy{{else}}off{{end}}"></span> {{.State}}</td>
+    <td><span class="dot {{if .Ready}}on{{else if .Lit}}busy{{else}}off{{end}}"></span> {{.State}}</td>
     <td class="muted">{{if .Online}}{{len .Live.GPUs}}{{with .Live.GPUs}} × {{(index . 0).Name}}{{end}}{{else}}–{{end}}</td>
     <td class="muted">{{if .Online}}{{len .Live.Models}}{{else}}–{{end}}</td>
   </tr>{{end}}</tbody>

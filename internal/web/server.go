@@ -139,6 +139,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/machines/{id}", s.auth(s.machinePage))
 	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/runs", s.auth(s.startRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/remove", s.auth(s.removeMachine))
+	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/enabled", s.auth(s.setMachineEnabled))
 	s.mux.Handle("GET /w/{owner}/{repo}/runs/{id}", s.auth(s.runPage))
 	s.mux.Handle("POST /w/{owner}/{repo}/runs/{id}/stop", s.auth(s.stopRun))
 

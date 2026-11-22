@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -329,7 +330,8 @@ func pickWheel(wheels []struct{ URL, Hash string }, pyTag, arch string) (pickedW
 		platOK := plat == "any" || (strings.Contains(plat, "linux") && strings.HasSuffix(plat, arch))
 		pyOK := false
 		for _, t := range strings.Split(py, ".") {
-			if t == pyTag || t == "py3" || (abi == "abi3" && strings.HasPrefix(t, "cp3") && t <= pyTag) {
+			// An abi3 wheel built for CPython 3.N works on every 3.M with M >= N.
+			if t == pyTag || t == "py3" || (abi == "abi3" && minor(t) >= 0 && minor(t) <= minor(pyTag)) {
 				pyOK = true
 			}
 		}
@@ -338,6 +340,15 @@ func pickWheel(wheels []struct{ URL, Hash string }, pyTag, arch string) (pickedW
 		}
 	}
 	return pickedWheel{}, false
+}
+
+// minor is N in a CPython 3 tag such as cp312 (12), or -1 for any other tag.
+func minor(tag string) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(tag, "cp3"))
+	if !strings.HasPrefix(tag, "cp3") || err != nil {
+		return -1
+	}
+	return n
 }
 
 // normalize is a Python package name in its comparable form (PEP 503).

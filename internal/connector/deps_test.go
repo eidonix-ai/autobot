@@ -122,4 +122,12 @@ func TestPickWheel(t *testing.T) {
 	if p, ok := pickWheel([]struct{ URL, Hash string }{w("six-1.17.0-py2.py3-none-any.whl")}, "cp312", "x86_64"); !ok || p.file != "six-1.17.0-py2.py3-none-any.whl" {
 		t.Fatalf("pure-Python wheel: %+v %v", p, ok)
 	}
+	// abi3 wheels compare Python versions as numbers: cp36 is older than cp312.
+	psutil := "psutil-7.0.0-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+	if p, ok := pickWheel([]struct{ URL, Hash string }{w(psutil)}, "cp312", "x86_64"); !ok || p.file != psutil {
+		t.Fatalf("abi3 wheel for an older Python: %+v %v", p, ok)
+	}
+	if _, ok := pickWheel([]struct{ URL, Hash string }{w("x-1.0-cp313-abi3-manylinux_2_17_x86_64.whl")}, "cp312", "x86_64"); ok {
+		t.Fatal("picked an abi3 wheel that needs a newer Python")
+	}
 }

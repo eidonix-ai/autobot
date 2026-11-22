@@ -289,12 +289,12 @@ func (c *Connector) report(run int64, res protocol.Result) {
 }
 
 // prelude runs before the job's own script: it copies the code into the job's scratch folder,
-// then runs the script with -x so the output shows each command.
+// then runs the script with -e (stop at the first failure) and -x (show each command).
 const prelude = `set -e
 mkdir -p "$TMPDIR"
 if [ -d /input/source ]; then cp -a /input/source /work/source; cd /work/source; fi
-set -x
-eval "$1"`
+printf '%s\n' "$1" > "$TMPDIR/run.sh"
+exec bash -ex "$TMPDIR/run.sh"`
 
 func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun) protocol.Result {
 	res := protocol.Result{ExitCode: -1}

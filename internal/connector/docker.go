@@ -103,6 +103,7 @@ func (s spec) createBody() map[string]any {
 	}
 	return map[string]any{
 		"Image":           s.Image,
+		"Entrypoint":      []string{}, // run Cmd itself, not the image's start-up script
 		"Cmd":             s.Cmd,
 		"User":            "1000:1000",
 		"WorkingDir":      "/work",

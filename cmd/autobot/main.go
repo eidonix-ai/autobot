@@ -30,6 +30,9 @@ const usage = `Usage:
   autobot serve   [-db FILE] [-addr HOST:PORT]     run the web service
   autobot useradd [-db FILE] [-admin] [-name "Display Name"] USERNAME
   autobot passwd  [-db FILE] USERNAME              set a user's password (signs them out)
+  autobot charter [-db FILE] get OWNER/REPO        print a workspace's current charter
+  autobot charter [-db FILE] [-as USERNAME] set OWNER/REPO < FILE
+                                                   save FILE as the next charter revision
 
 The first visitor to the web interface creates the first admin account. useradd and passwd
 are for recovery; they read the password from the terminal, or from the first line of stdin.
@@ -49,6 +52,8 @@ func main() {
 		err = useradd(os.Args[2:])
 	case "passwd":
 		err = passwd(os.Args[2:])
+	case "charter":
+		err = charter(os.Args[2:])
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -201,6 +206,81 @@ func passwd(args []string) error {
 		return err
 	}
 	fmt.Printf("password set for %s\n", u.Username)
+	return nil
+}
+
+// charter prints or replaces a workspace's charter. A replacement is saved as the next revision,
+// exactly as the web editor saves one, recorded under -as (default: the first admin).
+func charter(args []string) error {
+	fs := flag.NewFlagSet("charter", flag.ExitOnError)
+	db := dbFlag(fs)
+	as := fs.String("as", "", "username recorded as the author (default: the first admin)")
+	fs.Parse(args)
+	if fs.NArg() != 2 || (fs.Arg(0) != "get" && fs.Arg(0) != "set") {
+		return errors.New("usage: autobot charter [-db FILE] [-as USERNAME] get|set OWNER/REPO")
+	}
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ws, err := st.Workspace(fs.Arg(1))
+	if errors.Is(err, store.ErrNotFound) {
+		all, _ := st.Workspaces(&store.User{IsAdmin: true})
+		var names []string
+		for _, w := range all {
+			names = append(names, w.Name)
+		}
+		return fmt.Errorf("no workspace %s; there are: %s", fs.Arg(1), strings.Join(names, ", "))
+	}
+	if err != nil {
+		return err
+	}
+	cur, err := st.Charter(ws.ID, 0)
+	if err != nil {
+		return err
+	}
+	if fs.Arg(0) == "get" {
+		fmt.Print(cur.Body)
+		fmt.Fprintf(os.Stderr, "(revision %d, saved by %s)\n", cur.Rev, cur.Author)
+		return nil
+	}
+
+	var author *store.User
+	if *as != "" {
+		if author, err = st.UserByUsername(*as); err != nil {
+			return fmt.Errorf("user %q: %w", *as, err)
+		}
+	} else {
+		users, err := st.Users()
+		if err != nil {
+			return err
+		}
+		for i := range users {
+			if users[i].IsAdmin && (author == nil || users[i].ID < author.ID) {
+				author = &users[i]
+			}
+		}
+		if author == nil {
+			return errors.New("there is no admin to record as the author; pass -as USERNAME")
+		}
+	}
+	body, err := io.ReadAll(io.LimitReader(os.Stdin, store.MaxCharterBytes+1))
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(body)) == "" {
+		return errors.New("the new charter on stdin is empty")
+	}
+	rev, err := st.SaveCharter(ws.ID, cur.Rev, string(body), author)
+	if err != nil {
+		return err
+	}
+	if rev == cur.Rev {
+		fmt.Printf("%s charter unchanged (revision %d)\n", ws.Name, rev)
+	} else {
+		fmt.Printf("saved revision %d of the %s charter, recorded as %s\n", rev, ws.Name, author.Username)
+	}
 	return nil
 }
 

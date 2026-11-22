@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -37,13 +39,11 @@ func canvasFacts(g workflow.Graph) (map[string]string, map[string][]string) {
 	return names, outputs
 }
 
-// summaries is each event node's one-line summary, for the canvas.
-func summaries(g workflow.Graph) map[string]string {
+// summaries is each node's one-line summary, for the canvas.
+func summaries(g workflow.Graph, kind string) map[string]string {
 	out := map[string]string{}
 	for _, n := range g.Nodes {
-		if s, err := workflow.EventSettingsOf(n); err == nil {
-			out[n.ID] = s.Summary()
-		}
+		out[n.ID] = workflow.Summary(n, kind, func(m workflow.ModelRef) string { return m.Model })
 	}
 	return out
 }
@@ -77,7 +77,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	names, outputs := canvasFacts(g)
-	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": summaries(g),
+	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": summaries(g, kind),
 		"names": names, "outputs": outputs, "types": workflow.TypesFor(kind)})
 	var tabs []map[string]string
 	for _, k := range workflow.Kinds {
@@ -141,6 +141,69 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 	s.storeGraph(w, ws, kind, req.Version, g, me(r))
 }
 
+// modelOption is one entry of a step's model dropdown.
+type modelOption struct {
+	Value, Label string
+	Selected     bool
+}
+
+func modelValue(m workflow.ModelRef) string { return strconv.FormatInt(m.Provider, 10) + ":" + m.Model }
+
+func parseModel(v string) workflow.ModelRef {
+	p, m, _ := strings.Cut(v, ":")
+	id, _ := strconv.ParseInt(p, 10, 64)
+	return workflow.ModelRef{Provider: id, Model: m}
+}
+
+// usable reports whether the workspace may use a model as a text model, or as a decision model.
+func usable(a store.AvailableModel, decisions bool) bool {
+	if decisions {
+		return a.DecisionAPI != ""
+	}
+	return a.Text
+}
+
+// modelOptions lists the models a step may choose: the workspace's text or decision models, with
+// the current choice first when it is no longer assigned.
+func (s *Server) modelOptions(ws *store.Workspace, decisions bool, cur workflow.ModelRef) ([]modelOption, error) {
+	all, err := s.st.AvailableModels(ws.ID)
+	if err != nil {
+		return nil, err
+	}
+	var out []modelOption
+	found := false
+	for _, a := range all {
+		if !usable(a, decisions) {
+			continue
+		}
+		ref := workflow.ModelRef{Provider: a.ProviderID, Model: a.Model}
+		sel := ref == cur
+		found = found || sel
+		out = append(out, modelOption{modelValue(ref), a.Model + " · " + a.ProviderName, sel})
+	}
+	if cur.Set() && !found {
+		out = append([]modelOption{{modelValue(cur), cur.Model + " (no longer assigned)", true}}, out...)
+	}
+	return out, nil
+}
+
+// checkModel confirms the workspace may use the model for the step.
+func (s *Server) checkModel(ws *store.Workspace, m workflow.ModelRef, decisions bool) error {
+	all, err := s.st.AvailableModels(ws.ID)
+	if err != nil {
+		return err
+	}
+	for _, a := range all {
+		if a.ProviderID == m.Provider && a.Model == m.Model && usable(a, decisions) {
+			return nil
+		}
+	}
+	if decisions {
+		return errors.New("choose one of this workspace's decision models")
+	}
+	return errors.New("choose one of this workspace's text models")
+}
+
 // storeGraph checks and saves a workflow and answers with its new version and summaries.
 func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind string, base int, g workflow.Graph, actor *store.User) {
 	if err := g.Check(kind); err != nil {
@@ -163,7 +226,7 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 	}
 	names, outputs := canvasFacts(g)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": summaries(g), "names": names, "outputs": outputs})
+	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": summaries(g, kind), "names": names, "outputs": outputs, "links": g.Links})
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
@@ -208,35 +271,110 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := g.Nodes[i]
-	settings, err := workflow.EventSettingsOf(n)
+	var settings any
+	var err error
+	switch n.Type {
+	case workflow.Agent:
+		settings, err = workflow.AgentSettingsOf(n, kind)
+	case workflow.Decision:
+		settings, err = workflow.DecisionSettingsOf(n, kind)
+	case workflow.CaseEntry:
+		settings, err = workflow.CaseEntrySettingsOf(n)
+	default:
+		settings, err = workflow.EventSettingsOf(n)
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	s.nodeForm(w, r, http.StatusOK, ws, kind, n, settings, "")
+	s.nodeForm(w, r, http.StatusOK, ws, kind, g, n, settings, "")
 }
 
-func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws *store.Workspace, kind string, n workflow.Node, settings workflow.EventSettings, problem string) {
+// nodeForm renders a node's settings form: the event, agent or decision form, by its type.
+func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws *store.Workspace, kind string, g workflow.Graph, n workflow.Node, settings any, problem string) {
 	t, _ := workflow.TypeOf(n.Type)
-	s.renderFragment(w, r, status, "node_event.html", map[string]any{"WS": ws, "Kind": kind, "Node": n, "Type": t, "Name": workflow.DisplayName(n),
-		"S": settings, "Activities": workflow.Activities, "Error": problem,
-		"Action": ws.Path() + "/workflows/" + kind + "/nodes/" + n.ID})
+	data := map[string]any{"WS": ws, "Kind": kind, "Node": n, "Type": t, "Name": workflow.DisplayName(n),
+		"S": settings, "Error": problem, "Action": ws.Path() + "/workflows/" + kind + "/nodes/" + n.ID}
+	page := "node_event.html"
+	var model workflow.ModelRef
+	switch st := settings.(type) {
+	case workflow.AgentSettings:
+		page, model = "node_agent.html", st.Model
+		data["Tools"] = workflow.AgentTools
+	case workflow.DecisionSettings:
+		page, model = "node_decision.html", st.Model
+	case workflow.CaseEntrySettings:
+		page = "node_case.html"
+	default:
+		data["Activities"] = workflow.Activities
+	}
+	if page != "node_event.html" {
+		if n.Type != workflow.CaseEntry {
+			models, err := s.modelOptions(ws, n.Type == workflow.Decision, model)
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			data["Models"] = models
+		}
+		var outs []string
+		for tag := range g.OutputTags(kind, n.ID) {
+			outs = append(outs, tag)
+		}
+		sort.Strings(outs)
+		data["Tags"], data["OutputTags"] = workflow.Tags(kind), outs
+	}
+	s.renderFragment(w, r, status, page, data)
 }
 
-// saveNodeSettings stores a node's settings from its form.
+// saveNodeSettings stores a node's settings from its form. A decision whose choices changed loses
+// the links from choices it no longer has.
 func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	ws, kind, _, g, i, ok := s.findNode(w, r)
 	if !ok {
 		return
 	}
 	n := &g.Nodes[i]
-	n.Name = strings.TrimSpace(r.PostForm.Get("name"))
+	f := r.PostForm
+	n.Name = strings.TrimSpace(f.Get("name"))
 	if t, _ := workflow.TypeOf(n.Type); n.Name == t.Label {
 		n.Name = "" // the default needs no storing
 	}
-	settings := workflow.EventFromForm(n.Type, r.PostForm.Get, func(k string) []string { return r.PostForm[k] })
-	if err := settings.Check(n.Type); err != nil {
-		s.nodeForm(w, r, http.StatusBadRequest, ws, kind, *n, settings, err.Error()+".")
+	outputs := g.OutputTags(kind, n.ID)
+	var settings any
+	var err error
+	switch n.Type {
+	case workflow.Agent:
+		a := workflow.AgentFromForm(f.Get, func(k string) []string { return f[k] })
+		a.Model = parseModel(f.Get("model"))
+		if err = a.Check(kind); err == nil {
+			if err = workflow.CheckTemplates(kind, outputs, a.SystemPrompt, a.Instruction, a.FollowUp); err == nil {
+				err = s.checkModel(ws, a.Model, false)
+			}
+		}
+		settings = a
+	case workflow.Decision:
+		d := workflow.DecisionFromForm(f.Get)
+		d.Model = parseModel(f.Get("model"))
+		if err = d.Check(kind); err == nil {
+			if err = workflow.CheckTemplates(kind, outputs, d.Context, d.Question); err == nil {
+				err = s.checkModel(ws, d.Model, true)
+			}
+		}
+		settings = d
+	case workflow.CaseEntry:
+		c := workflow.CaseEntryFromForm(f.Get)
+		if err = c.Check(); err == nil {
+			err = workflow.CheckTemplates(kind, outputs, c.Entry)
+		}
+		settings = c
+	default:
+		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
+		err = e.Check(n.Type)
+		settings = e
+	}
+	if err != nil {
+		s.nodeForm(w, r, http.StatusBadRequest, ws, kind, g, *n, settings, err.Error()+".")
 		return
 	}
 	b, err := json.Marshal(settings)
@@ -245,7 +383,15 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.Settings = b
-	base, _ := strconv.Atoi(r.PostForm.Get("version"))
+	ports := workflow.Outputs(*n)
+	links := g.Links[:0]
+	for _, l := range g.Links {
+		if l.From != n.ID || slices.Contains(ports, l.Out) {
+			links = append(links, l)
+		}
+	}
+	g.Links = links
+	base, _ := strconv.Atoi(f.Get("version"))
 	s.storeGraph(w, ws, kind, base, g, me(r))
 }
 

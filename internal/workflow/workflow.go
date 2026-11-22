@@ -35,10 +35,11 @@ func KindLabel(kind string) string {
 
 // NodeType is a kind of node that can be placed on a workflow's canvas.
 type NodeType struct {
-	Type  string `json:"type"`
-	Kind  string `json:"kind"` // the workflow it belongs to
-	Label string `json:"label"`
-	Event bool   `json:"event"` // starts a chain: no input
+	Type    string   `json:"type"`
+	Kind    string   `json:"kind"` // the workflow it belongs to; "" for steps, which go in any
+	Label   string   `json:"label"`
+	Event   bool     `json:"event"`   // starts a chain: no input
+	Outputs []string `json:"outputs"` // a new node's outputs, filled by TypesFor
 }
 
 // Types are every node type, in menu order.
@@ -47,13 +48,17 @@ var Types = []NodeType{
 	{Type: "pr_draft", Kind: PR, Label: "PR Draft", Event: true},
 	{Type: "pr_activity", Kind: PR, Label: "PR Activity", Event: true},
 	{Type: "issue_opened", Kind: Issue, Label: "Issue Opened", Event: true},
+	{Type: Agent, Label: "Agent"},
+	{Type: Decision, Label: "Decision"},
+	{Type: CaseEntry, Label: "Case Entry"},
 }
 
 // TypesFor lists the node types a kind's canvas offers.
 func TypesFor(kind string) []NodeType {
 	var out []NodeType
 	for _, t := range Types {
-		if t.Kind == kind {
+		if t.Kind == kind || t.Kind == "" {
+			t.Outputs = Outputs(Node{Type: t.Type})
 			out = append(out, t)
 		}
 	}
@@ -94,8 +99,20 @@ type Link struct {
 	In   string `json:"in"` // the input's name: "in"
 }
 
-// Outputs are the named outputs of a node.
-func Outputs(n Node) []string { return []string{"out"} }
+// Outputs are the named outputs of a node: a decision has one per choice, every other node "out".
+// (A decision's default choices are the same in either kind of workflow.)
+func Outputs(n Node) []string {
+	if n.Type == Decision {
+		if s, err := DecisionSettingsOf(n, PR); err == nil && len(s.Choices) > 0 {
+			out := make([]string, len(s.Choices))
+			for i, c := range s.Choices {
+				out[i] = c.Name
+			}
+			return out
+		}
+	}
+	return []string{"out"}
+}
 
 // Inputs are the named inputs of a node; an event node has none.
 func Inputs(n Node) []string {
@@ -129,7 +146,8 @@ var idRE = regexp.MustCompile(`^[a-z0-9]{1,24}$`)
 const MaxNodes = 100
 
 // Check confirms a graph is a valid workflow of kind: known node types for the kind, unique ids,
-// settings that check out, and links that form straight chains starting at event nodes.
+// event settings that check out and step settings that can be read (a step placed but not yet set
+// up is allowed; it cannot run), and links without loops between ports the nodes have.
 func (g Graph) Check(kind string) error {
 	if kind != PR && kind != Issue {
 		return fmt.Errorf("no workflow kind %q", kind)
@@ -140,7 +158,7 @@ func (g Graph) Check(kind string) error {
 	byID := map[string]Node{}
 	for _, n := range g.Nodes {
 		t, ok := TypeOf(n.Type)
-		if !ok || t.Kind != kind {
+		if !ok || (t.Kind != kind && t.Kind != "") {
 			return fmt.Errorf("a %s workflow has no node type %q", KindLabel(kind), n.Type)
 		}
 		if !idRE.MatchString(n.ID) {
@@ -163,6 +181,18 @@ func (g Graph) Check(kind string) error {
 			if err := s.Check(n.Type); err != nil {
 				return fmt.Errorf("%s: %w", t.Label, err)
 			}
+		}
+		var err error
+		switch n.Type {
+		case Agent:
+			_, err = AgentSettingsOf(n, kind)
+		case Decision:
+			_, err = DecisionSettingsOf(n, kind)
+		case CaseEntry:
+			_, err = CaseEntrySettingsOf(n)
+		}
+		if err != nil {
+			return err
 		}
 		byID[n.ID] = n
 	}

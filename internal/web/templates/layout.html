@@ -44,3 +44,7 @@
 </main>
 </body>
 </html>{{end}}
+{{define "tags"}}<details class="tags"><summary>Tags</summary>
+<dl>{{range .Tags}}<dt><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{.About}}</dd>{{end}}
+{{range .OutputTags}}<dt><code>{{"{"}}{{.}}{{"}"}}</code></dt><dd>another step's output</dd>{{end}}</dl>
+</details>{{end}}

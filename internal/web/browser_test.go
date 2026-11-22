@@ -23,6 +23,7 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
+	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
@@ -30,6 +31,13 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	e := newEnv(t)
 	admin := e.user("derek", true)
 	ws, _ := e.st.CreateWorkspace("o/r", admin, "", "")
+	prov, err := e.st.CreateProvider(store.ProviderEdit{Name: "Eidonix", Kind: store.KindOpenAI, Endpoint: "https://llm.example/v1"}, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.st.SetProviderModels(prov.ID, []string{"GLM-5.3-Flash"})
+	e.st.SetProviderRoutes(prov.ID, true, false)
+	e.st.LendProvider(prov, []int64{ws.ID}, admin)
 
 	chrome := os.Getenv("CHROME")
 	if chrome == "" {
@@ -50,7 +58,8 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		defer mu.Unlock()
 		switch ev := ev.(type) {
 		case *log.EventEntryAdded:
-			if ev.Entry.Level == log.LevelError {
+			// The one refusal the test provokes (an unknown tag) is answered 400, as it should be.
+			if ev.Entry.Level == log.LevelError && !strings.Contains(ev.Entry.Text, "status of 400") {
 				problems = append(problems, ev.Entry.Text)
 			}
 		case *runtime.EventExceptionThrown:
@@ -88,7 +97,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	}
 
 	page := e.srv.URL + "/w/o/r/workflows/pr"
-	err := chromedp.Run(ctx,
+	err = chromedp.Run(ctx,
 		chromedp.EmulateViewport(1400, 900),
 		chromedp.Navigate(e.srv.URL+"/login?next="+url.QueryEscape("/w/o/r/workflows/pr")),
 		chromedp.SendKeys(`input[name=username]`, "derek"),
@@ -151,6 +160,86 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		}
 	}
 
+	// Steps: a decision has one labelled output per choice, and links follow its choices.
+	nodeOf := func(typ string) workflow.Node {
+		for _, n := range stored().Nodes {
+			if n.Type == typ {
+				return n
+			}
+		}
+		t.Fatalf("no %s node stored", typ)
+		return workflow.Node{}
+	}
+	saveForm := chromedp.Tasks{chromedp.Click(`#wf-modal form.node-form button:not([type])`), waitSaved}
+	var labels []string
+	err = chromedp.Run(ctx,
+		place("Decision", 400, 620),
+		chromedp.Click(`#node-3 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal textarea[name=choices]`),
+		chromedp.SetValue(`#wf-modal textarea[name=choices]`, "approve: safe\nrequest-changes: needs work\nhold: wait for CI"),
+		saveForm,
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('#node-3 .outputs .output')).map(function(p){return p.dataset.label})`, &labels),
+		place("Case Entry", 900, 650),
+	)
+	if err != nil || strings.Join(labels, ",") != "approve,request-changes,hold" {
+		t.Fatalf("decision ports %v: %v", labels, err)
+	}
+	d := nodeOf(workflow.Decision)
+	if ds, _ := workflow.DecisionSettingsOf(d, workflow.PR); !ds.Model.Set() || len(ds.Choices) != 3 {
+		t.Fatalf("decision settings %+v", ds)
+	}
+	center := func(sel string, v *[]float64) chromedp.Action {
+		return chromedp.Evaluate(`(function(){var r=document.querySelector('`+sel+`').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()`, v)
+	}
+	var from, to []float64
+	err = chromedp.Run(ctx, center(`#node-3 .output_3`, &from), center(`#node-4 .input_1`, &to))
+	if err == nil {
+		err = chromedp.Run(ctx,
+			chromedp.Evaluate(`document.getElementById('wf-status').textContent = ''`, nil),
+			chromedp.MouseEvent(input.MouseMoved, from[0], from[1]),
+			chromedp.MouseEvent(input.MousePressed, from[0], from[1], chromedp.ButtonLeft, chromedp.ClickCount(1)),
+			chromedp.MouseEvent(input.MouseMoved, (from[0]+to[0])/2, (from[1]+to[1])/2, chromedp.ButtonLeft),
+			chromedp.MouseEvent(input.MouseMoved, to[0], to[1], chromedp.ButtonLeft),
+			chromedp.MouseEvent(input.MouseReleased, to[0], to[1], chromedp.ButtonLeft, chromedp.ClickCount(1)),
+			waitSaved)
+	}
+	entry := nodeOf(workflow.CaseEntry)
+	if g := stored(); err != nil || len(g.Links) != 1 || g.Links[0] != (workflow.Link{From: d.ID, Out: "hold", To: entry.ID, In: "in"}) {
+		t.Fatalf("link from a choice: %+v, %v", g.Links, err)
+	}
+	var ports int
+	err = chromedp.Run(ctx,
+		chromedp.Click(`#node-3 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal textarea[name=choices]`),
+		chromedp.SetValue(`#wf-modal textarea[name=choices]`, "approve: safe\nrequest-changes: needs work"),
+		saveForm,
+		chromedp.Evaluate(`document.querySelectorAll('#node-3 .outputs .output').length`, &ports))
+	if g := stored(); err != nil || ports != 2 || len(g.Links) != 0 {
+		t.Fatalf("after dropping a choice: %d ports, links %+v, %v", ports, g.Links, err)
+	}
+
+	// An agent's output tag is stored, and another step may use it; an unknown tag is refused.
+	var problem string
+	err = chromedp.Run(ctx,
+		place("Agent", 700, 250),
+		chromedp.Click(`#node-5 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal input[name=output_to]`),
+		chromedp.SetValue(`#wf-modal input[name=output_to]`, "value_summary"),
+		saveForm,
+		chromedp.Click(`#node-4 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal textarea[name=entry]`),
+		chromedp.SetValue(`#wf-modal textarea[name=entry]`, "{nope}"),
+		chromedp.Click(`#wf-modal form.node-form button:not([type])`),
+		chromedp.WaitVisible(`#wf-modal p.error`), chromedp.Text(`#wf-modal p.error`, &problem),
+		chromedp.SetValue(`#wf-modal textarea[name=entry]`, "Summary: {value_summary}"),
+		saveForm,
+	)
+	if err != nil || !strings.Contains(problem, "{nope} is not a tag") {
+		t.Fatalf("tags: %q, %v", problem, err)
+	}
+	if a, _ := workflow.AgentSettingsOf(nodeOf(workflow.Agent), workflow.PR); a.OutputTo != "value_summary" || !a.Model.Set() {
+		t.Fatalf("agent settings %+v", a)
+	}
+	if c, _ := workflow.CaseEntrySettingsOf(nodeOf(workflow.CaseEntry)); c.Entry != "Summary: {value_summary}" || !c.Finalize {
+		t.Fatalf("case entry settings %+v", c)
+	}
+
 	// A drag on the background pans the canvas, and the dot grid moves with it.
 	var grid, transform string
 	err = chromedp.Run(ctx,
@@ -205,14 +294,26 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		t.Fatalf("Fit and reload: out of view before Fit %v, in view after %v, after reload %v; view %q then %q; %v", !lost, found, kept, viewBefore, viewAfter, err)
 	}
 
-	// With SHOTS set to a folder, save pictures of the canvas and the settings modal.
+	// With SHOTS set to a folder, save pictures of the canvas and the settings modals.
 	if dir := os.Getenv("SHOTS"); dir != "" {
-		var canvas, modal []byte
-		chromedp.Run(ctx, chromedp.FullScreenshot(&canvas, 90),
-			chromedp.Click(`#node-1 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal form.node-form`),
-			chromedp.Sleep(300*time.Millisecond), chromedp.FullScreenshot(&modal, 90))
-		os.WriteFile(dir+"/canvas.jpg", canvas, 0o644)
-		os.WriteFile(dir+"/modal.jpg", modal, 0o644)
+		shot := func(name, node string) {
+			var b []byte
+			tasks := chromedp.Tasks{chromedp.Click(`#wf-fit`, chromedp.ByQuery), chromedp.Sleep(200 * time.Millisecond)}
+			if node != "" {
+				tasks = append(tasks, chromedp.Click(node+` .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal form.node-form`), chromedp.Sleep(300*time.Millisecond))
+			}
+			tasks = append(tasks, chromedp.FullScreenshot(&b, 90))
+			if node != "" {
+				tasks = append(tasks, chromedp.Click(`#wf-modal .close`, chromedp.ByQuery))
+			}
+			chromedp.Run(ctx, tasks)
+			os.WriteFile(dir+"/"+name+".jpg", b, 0o644)
+		}
+		shot("canvas", "")
+		shot("event", "#node-1")
+		shot("decision", "#node-3")
+		shot("agent", "#node-5")
+		shot("case", "#node-4")
 	}
 
 	mu.Lock()

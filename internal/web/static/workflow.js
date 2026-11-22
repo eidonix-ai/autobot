@@ -64,13 +64,47 @@
   // Node content is fixed markup; the label and summary are set as text, never as HTML.
   function addNode(id, type, x, y) {
     var t = types[type];
-    var dfid = editor.addNode(type, t.event ? 0 : 1, 1, x, y, 'wf-' + type, { id: id },
+    var outs = (state.outputs || {})[id] || t.outputs || ['out'];
+    var dfid = editor.addNode(type, t.event ? 0 : 1, outs.length, x, y, 'wf-' + type, { id: id },
       '<div class="wf-node"><div class="wf-name"></div><div class="wf-title"></div><div class="wf-sub"></div></div>');
     dfToID[dfid] = id; idToDf[id] = dfid;
     var el = nodeEl(dfid);
     el.querySelector('.wf-title').textContent = t.label;
+    if (!state.outputs) { state.outputs = {}; }
+    state.outputs[id] = outs;
+    labelPorts(id);
     setSummary(id);
     return dfid;
+  }
+
+  // A node with named outputs (a decision's choices) shows each name beside its port.
+  function labelPorts(id) {
+    var outs = outputsOf(id), ports = nodeEl(idToDf[id]).querySelectorAll('.outputs .output');
+    ports.forEach(function (p, i) {
+      if (outs.length > 1 || outs[0] !== 'out') { p.dataset.label = outs[i] || ''; } else { delete p.dataset.label; }
+    });
+  }
+
+  // After a save, a node's outputs and the links from them are set to what the server stored: a
+  // decision's choices may have changed, and links from choices it no longer has are gone.
+  function syncPorts(id, links) {
+    var dfid = idToDf[id], outs = outputsOf(id);
+    if (!dfid) { return; }
+    loading = true;   // these changes are the server's own; nothing to save
+    var n = editor.getNodeFromId(dfid);
+    Object.keys(n.outputs).forEach(function (cls) {
+      n.outputs[cls].connections.slice().forEach(function (c) {
+        editor.removeSingleConnection(dfid, c.node, cls, c.output);
+      });
+    });
+    var have = Object.keys(editor.getNodeFromId(dfid).outputs).length;
+    for (; have < outs.length; have++) { editor.addNodeOutput(dfid); }
+    for (; have > outs.length; have--) { editor.removeNodeOutput(dfid, 'output_' + have); }
+    links.forEach(function (l) {
+      if (l.from === id && idToDf[l.to]) { editor.addConnection(dfid, idToDf[l.to], outClass(id, l.out), 'input_1'); }
+    });
+    labelPorts(id);
+    loading = false; lastLink = null;
   }
 
   // The name above a node and the summary inside it come from the server's last answer.
@@ -175,7 +209,12 @@
   }
 
   // A node's outputs, in Drawflow's order (output_1, output_2, …), by name.
-  function outputsOf(id) { return (state.outputs || {})[id] || ['out']; }
+  function outputsOf(id) {
+    var o = (state.outputs || {})[id];
+    if (o) { return o; }
+    var n = idToDf[id] && editor.getNodeFromId(idToDf[id]);
+    return (n && types[n.name].outputs) || ['out'];
+  }
   function outName(id, cls) { return outputsOf(id)[parseInt(cls.replace('output_', ''), 10) - 1] || 'out'; }
   function outClass(id, name) { return 'output_' + (Math.max(0, outputsOf(id).indexOf(name)) + 1); }
 
@@ -194,6 +233,7 @@
     }).then(function (r) {
       if (r.status === 200) {
         state.version = r.body.version; state.summaries = r.body.summaries; state.names = r.body.names;
+        state.outputs = r.body.outputs;
         Object.keys(idToDf).forEach(setSummary);
         show('Saved');
       } else {
@@ -317,6 +357,8 @@
       if (resp.status === 200) {
         return resp.json().then(function (body) {
           state.version = body.version; state.summaries = body.summaries; state.names = body.names;
+          state.outputs = body.outputs;
+          syncPorts(id, body.links || []);
           setSummary(id); modal.hidePopover(); show('Saved');
         });
       }

@@ -1,0 +1,31 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <div class="row">
+    <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+    <label>Decision model
+      <select name="model" required>
+        {{if not .Models}}<option value="">No decision models are assigned</option>{{end}}
+        {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select></label>
+  </div>
+  <label>Context <textarea name="context" rows="4" class="code" spellcheck="false">{{.S.Context}}</textarea></label>
+  <label>Question <textarea name="question" rows="2" spellcheck="false" required>{{.S.Question}}</textarea></label>
+  {{template "tags" .}}
+  <label><span class="lbl">Choices, one per line as name: description <span class="info" tabindex="0" data-tip="Each choice is one output of the block on the canvas.">ⓘ</span></span>
+    <textarea name="choices" rows="4" class="code" spellcheck="false" required>{{.S.ChoiceLines}}</textarea></label>
+  <div class="row">
+    <label>Output
+      <select name="output">
+        <option value="decision"{{if eq .S.Output "decision"}} selected{{end}}>The decision only</option>
+        <option value="probabilities"{{if eq .S.Output "probabilities"}} selected{{end}}>The decision and each choice's probability</option>
+      </select></label>
+    <label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="Saves the decision as a tag other steps can use, such as {value_decision}. Kept per pull request or issue; a later run replaces it.">ⓘ</span></span>
+      <input name="output_to" value="{{.S.OutputTo}}" placeholder="value_decision" maxlength="40" autocomplete="off" spellcheck="false"></label>
+  </div>
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

@@ -1,0 +1,36 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <div class="row">
+    <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+    <label>Model
+      <select name="model" required>
+        {{if not .Models}}<option value="">No text models are assigned</option>{{end}}
+        {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select></label>
+  </div>
+  <label>System prompt <textarea name="system_prompt" rows="4" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
+  <label>Instruction <textarea name="instruction" rows="6" class="code" spellcheck="false" required>{{.S.Instruction}}</textarea></label>
+  {{template "tags" .}}
+  <fieldset>
+    <legend>Tools</legend>
+    {{range .Tools}}<label class="check"><input type="checkbox" name="tool" value="{{.Key}}"{{if $.S.HasTool .Key}} checked{{end}}> {{.Label}}</label>{{end}}
+  </fieldset>
+  <div class="row">
+    <label>Turn limit <input type="number" name="max_turns" min="1" max="200" value="{{.S.MaxTurns}}"></label>
+    <label>Time limit (minutes) <input type="number" name="max_minutes" min="1" max="120" value="{{.S.MaxMinutes}}"></label>
+    <label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="Saves the final answer as a tag other steps can use, such as {value_summary}. Kept per pull request or issue; a later run replaces it.">ⓘ</span></span>
+      <input name="output_to" value="{{.S.OutputTo}}" placeholder="value_summary" maxlength="40" autocomplete="off" spellcheck="false"></label>
+  </div>
+  <fieldset>
+    <legend>When it runs again on the same item</legend>
+    <label class="check"><input type="radio" name="rerun" value="resume"{{if eq .S.Rerun "resume"}} checked{{end}}> Resume its conversation</label>
+    <label class="check"><input type="radio" name="rerun" value="fresh"{{if eq .S.Rerun "fresh"}} checked{{end}}> Start fresh</label>
+  </fieldset>
+  <label>Follow-up, when it resumes <textarea name="follow_up" rows="3" class="code" spellcheck="false" placeholder="Empty: the instruction is sent again">{{.S.FollowUp}}</textarea></label>
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

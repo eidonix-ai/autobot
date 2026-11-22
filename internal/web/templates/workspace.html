@@ -35,9 +35,8 @@
   <ul class="plain models">{{range .Available}}{{$about := printf "%s · lent by %s" .ProviderName .Owner}}{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}{{$about = printf "%s · decisions" $about}}{{end}}
     <li><span class="model">{{.Model}}</span> <span class="info" title="{{$about}}" aria-label="{{$about}}">ⓘ</span></li>{{end}}</ul>
   {{else}}
-  <p class="muted">No provider is lent to this workspace yet.</p>
+  <p class="muted">None yet.</p>
   {{end}}
-  <p class="hint"><a href="/providers">Lend your providers</a> to add models.</p>
 </section>
 
 <section class="panel">

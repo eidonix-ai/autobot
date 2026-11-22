@@ -14,8 +14,12 @@ This is the proof of concept. Piece 1 is done: users, workspaces and the project
 - **Workspaces** are named exactly as their GitHub repository, `owner/repo`, and live at the matching
   URL: `/w/NVIDIA/hyperflare-inference`. The name is checked on GitHub when a workspace is created or
   renamed and saved as GitHub spells it; a repository GitHub does not know is refused, and so is any
-  name when GitHub cannot be reached. Only public repositories can be checked until Autobot has a
-  GitHub token.
+  name when GitHub cannot be reached.
+- **GitHub identity** (per workspace): the GitHub user Autobot acts as there, such as
+  flare-autobot, and that user's token. Required for a private repository, optional for a public
+  one. Before saving, Autobot checks that the token belongs to that user and that the user can see
+  the repository; the settings page re-checks it each time it opens and shows the user's access and
+  the token's expiry. Tokens are encrypted and never shown again.
 - **Workspace settings** (admins): rename the repository, choose the members from a checklist, or
   delete the workspace by typing its name.
 - **The project charter** is one Markdown document per workspace, on its own page, edited in a single
@@ -51,6 +55,11 @@ Build for the Linux host with `GOOS=linux GOARCH=amd64 go build -o autobot ./cmd
 
 All settings and data live in the one SQLite file. Back it up by copying it while the service is
 stopped, or with `sqlite3 autobot.db ".backup copy.db"` while it runs.
+
+GitHub tokens in the database are encrypted (AES-256-GCM) with a key kept outside it: on the host,
+`/etc/autobot/secret.key` (root only, handed to the service by systemd); when run by hand, the key
+is `DB.key` next to the database, created on first start. Back the key up separately. Without it the
+saved tokens cannot be read and must be entered again; nothing else is lost.
 
 ## Security notes
 

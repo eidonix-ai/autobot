@@ -12,6 +12,12 @@ rm -f /tmp/autobot-linux
 
 ssh "$host" 'set -eu
 id autobot >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/autobot --no-create-home --shell /usr/sbin/nologin autobot
+if ! sudo test -f /etc/autobot/secret.key; then
+	sudo install -d -m 0700 -o root -g root /etc/autobot
+	head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n" | sudo tee /etc/autobot/secret.key >/dev/null
+	sudo chmod 0600 /etc/autobot/secret.key
+	echo "created /etc/autobot/secret.key: back it up separately from the database"
+fi
 sudo install -m 0755 autobot.new /usr/local/bin/autobot
 sudo install -m 0644 autobot.service.new /etc/systemd/system/autobot.service
 rm -f autobot.new autobot.service.new

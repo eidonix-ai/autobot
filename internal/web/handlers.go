@@ -180,23 +180,6 @@ func (s *Server) homePage(w http.ResponseWriter, r *http.Request, status int, da
 	s.render(w, r, status, "home.html", data)
 }
 
-func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
-	name, err := s.checkRepo(r, r.PostForm.Get("name"))
-	var ws *store.Workspace
-	if err == nil {
-		ws, err = s.st.CreateWorkspace(name, me(r))
-	}
-	if msg, ok := inputError(err); ok {
-		s.homePage(w, r, http.StatusBadRequest, map[string]any{"Error": msg, "Form": r.PostForm})
-		return
-	}
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	http.Redirect(w, r, ws.Path(), http.StatusSeeOther)
-}
-
 // openWorkspace resolves the workspace in the URL and checks the user may open it. To someone who
 // may not, it does not exist.
 func (s *Server) openWorkspace(w http.ResponseWriter, r *http.Request) (*store.Workspace, bool) {

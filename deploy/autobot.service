@@ -8,6 +8,9 @@ Wants=network-online.target
 User=autobot
 Group=autobot
 ExecStart=/usr/local/bin/autobot serve -db /var/lib/autobot/autobot.db -addr 192.168.5.123:8080
+# The key that encrypts GitHub tokens lives outside the data directory, readable by root only;
+# systemd hands the service a private copy.
+LoadCredential=secret-key:/etc/autobot/secret.key
 Restart=on-failure
 RestartSec=5
 

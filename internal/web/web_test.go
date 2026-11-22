@@ -18,7 +18,8 @@ import (
 	"github.com/eidonix-ai/autobot/internal/store"
 )
 
-// fakeGitHub knows a few repositories, keyed by lower-case name, and their GitHub spelling.
+// fakeGitHub knows a few public repositories (keyed by lower-case name, with their GitHub
+// spelling) and two private ones, which only the token "tok-good" of flare-autobot can see.
 type fakeGitHub struct{}
 
 var fakeRepos = map[string]string{
@@ -28,14 +29,34 @@ var fakeRepos = map[string]string{
 	"o/r2":                        "o/r2",
 }
 
-func (fakeGitHub) RepoName(_ context.Context, name string) (string, error) {
+var fakePrivate = map[string]string{"o/secret": "o/secret", "o/secret2": "o/secret2"}
+
+func (fakeGitHub) RepoName(_ context.Context, token, name string) (string, error) {
 	if name == "down/repo" {
 		return "", errors.New("could not reach GitHub: connection refused")
 	}
 	if c, ok := fakeRepos[strings.ToLower(name)]; ok {
 		return c, nil
 	}
+	if c, ok := fakePrivate[strings.ToLower(name)]; ok && token == "tok-good" {
+		return c, nil
+	}
 	return "", github.ErrNoRepo
+}
+
+func (f fakeGitHub) CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error) {
+	if token != "tok-good" {
+		return nil, github.ErrBadToken
+	}
+	if !strings.EqualFold(login, "flare-autobot") {
+		return nil, errors.New("that token belongs to the GitHub user flare-autobot, not " + login)
+	}
+	repo, err := f.RepoName(ctx, token, name)
+	if err != nil {
+		return nil, errors.New("the GitHub user flare-autobot cannot see " + name)
+	}
+	_, private := fakePrivate[strings.ToLower(name)]
+	return &github.Identity{Login: "flare-autobot", TokenKind: "fine-grained token", Repo: repo, Private: private, Access: "write"}, nil
 }
 
 type env struct {
@@ -47,6 +68,9 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UseKey(make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
 	ui, err := New(st, fakeGitHub{})
@@ -205,7 +229,7 @@ func TestCharterEditing(t *testing.T) {
 	e := newEnv(t)
 	admin := e.user("derek", true)
 	alice := e.user("alice", false)
-	ws, _ := e.st.CreateWorkspace("o/r", admin)
+	ws, _ := e.st.CreateWorkspace("o/r", admin, "", "")
 	e.st.UpdateUser(alice.ID, store.UserUpdate{Workspaces: []int64{ws.ID}}, admin)
 
 	a := e.signIn("alice")
@@ -356,8 +380,8 @@ func TestWorkspaceSettings(t *testing.T) {
 	e := newEnv(t)
 	admin := e.user("derek", true)
 	alice := e.user("alice", false)
-	ws, _ := e.st.CreateWorkspace("o/r", admin) // as if made before the GitHub check existed
-	e.st.CreateWorkspace("eidonix-ai/autobot", admin)
+	ws, _ := e.st.CreateWorkspace("o/r", admin, "", "") // as if made before the GitHub check existed
+	e.st.CreateWorkspace("eidonix-ai/autobot", admin, "", "")
 	e.st.UpdateUser(alice.ID, store.UserUpdate{Workspaces: []int64{ws.ID}}, admin)
 	d := e.signIn("derek")
 	a := e.signIn("alice")
@@ -419,5 +443,84 @@ func TestWorkspaceSettings(t *testing.T) {
 	}
 	if m, _ := e.st.Memberships(alice.ID); len(m) != 0 {
 		t.Fatalf("assignments survived the delete: %v", m)
+	}
+}
+
+func TestPrivateWorkspaceNeedsIdentity(t *testing.T) {
+	e := newEnv(t)
+	e.user("derek", true)
+	d := e.signIn("derek")
+	tok := d.csrf()
+	create := func(login, token string) (int, string, string) {
+		return d.post("/workspaces", url.Values{"csrf": {tok}, "name": {"o/secret"}, "gh_login": {login}, "gh_token": {token}})
+	}
+	for _, c := range []struct{ login, token, want string }{
+		{"", "", "If it is private, enter the GitHub user and token"},
+		{"flare-autobot", "", "Enter both the GitHub user and that user"},
+		{"flare-autobot", "tok-bad", "did not accept the token"},
+		{"someone", "tok-good", "belongs to the GitHub user flare-autobot, not someone"},
+	} {
+		code, _, body := create(c.login, c.token)
+		if code != http.StatusBadRequest || !strings.Contains(body, c.want) {
+			t.Errorf("login %q token %q: %d, want 400 with %q", c.login, c.token, code, c.want)
+		}
+		if strings.Contains(body, "tok-") {
+			t.Errorf("login %q: the token was sent back in the page", c.login)
+		}
+	}
+	if code, loc, _ := create("Flare-Autobot", "tok-good"); code != http.StatusSeeOther || loc != "/w/o/secret" {
+		t.Fatalf("create with identity: %d %q", code, loc)
+	}
+
+	code, body := d.get("/w/o/secret/settings")
+	if code != http.StatusOK || !strings.Contains(body, "Autobot acts on GitHub as <strong>flare-autobot</strong>") ||
+		!strings.Contains(body, "private repository flare-autobot has <strong>write</strong> access") {
+		t.Fatalf("settings: %d\n%s", code, body)
+	}
+	for _, page := range []string{"/", "/w/o/secret", "/w/o/secret/settings"} {
+		if _, body := d.get(page); strings.Contains(body, "tok-good") {
+			t.Errorf("%s shows the token", page)
+		}
+	}
+	if _, body := d.get("/w/o/secret"); !strings.Contains(body, "set the GitHub identity to flare-autobot") {
+		t.Error("history lacks the identity")
+	}
+
+	// A private repository cannot lose its identity.
+	if code, _, body := d.post("/w/o/secret/settings/github/remove", url.Values{"csrf": {tok}}); code != http.StatusBadRequest || !strings.Contains(body, "is private") {
+		t.Fatalf("remove from private: %d", code)
+	}
+	// Renames are checked with the workspace's token, so they work for private repositories.
+	if code, loc, _ := d.post("/w/o/secret/settings/name", url.Values{"csrf": {tok}, "name": {"o/secret2"}}); code != http.StatusSeeOther || loc != "/w/o/secret2/settings?saved=1" {
+		t.Fatalf("private rename: %d %q", code, loc)
+	}
+}
+
+func TestPublicWorkspaceIdentity(t *testing.T) {
+	e := newEnv(t)
+	admin := e.user("derek", true)
+	e.st.CreateWorkspace("NVIDIA/hyperflare-inference", admin, "", "")
+	d := e.signIn("derek")
+	tok := d.csrf()
+	p := "/w/NVIDIA/hyperflare-inference/settings"
+
+	if _, body := d.get(p); !strings.Contains(body, "Autobot uses GitHub anonymously here") {
+		t.Fatal("no-identity state not shown")
+	}
+	code, _, body := d.post(p+"/github", url.Values{"csrf": {tok}, "gh_login": {"flare-autobot"}, "gh_token": {"tok-bad"}})
+	if code != http.StatusBadRequest || !strings.Contains(body, `value="flare-autobot"`) || strings.Contains(body, "tok-bad") {
+		t.Fatalf("bad token: %d; want 400 keeping the typed user and dropping the token", code)
+	}
+	if code, _, _ := d.post(p+"/github", url.Values{"csrf": {tok}, "gh_login": {"flare-autobot"}, "gh_token": {"tok-good"}}); code != http.StatusSeeOther {
+		t.Fatalf("save identity: %d", code)
+	}
+	if _, body := d.get(p); !strings.Contains(body, "public repository flare-autobot has <strong>write</strong>") {
+		t.Fatal("identity not shown")
+	}
+	if code, _, _ := d.post(p+"/github/remove", url.Values{"csrf": {tok}}); code != http.StatusSeeOther {
+		t.Fatalf("remove from public: %d", code)
+	}
+	if _, body := d.get("/w/NVIDIA/hyperflare-inference"); !strings.Contains(body, "removed the GitHub identity") {
+		t.Fatal("history lacks the removal")
 	}
 }

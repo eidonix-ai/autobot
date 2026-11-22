@@ -6,15 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// ErrNoRepo means GitHub has no repository by that name that we can see.
+// ErrNoRepo means GitHub has no repository by that name that the caller can see. Without a token
+// that includes every private repository.
 var ErrNoRepo = errors.New("no such repository on GitHub")
 
-// Client is a GitHub API client. The zero value uses the public API without a token, which sees
-// public repositories only.
+// ErrBadToken means GitHub did not accept the token: it is wrong, revoked or expired.
+var ErrBadToken = errors.New("GitHub did not accept the token (wrong, revoked or expired)")
+
+// Client is a GitHub API client. The zero value uses the public API.
 type Client struct {
 	BaseURL string       // default https://api.github.com
 	HTTP    *http.Client // default: a client with a 10-second timeout
@@ -22,9 +27,8 @@ type Client struct {
 
 var defaultHTTP = &http.Client{Timeout: 10 * time.Second}
 
-// RepoName checks that owner/repo exists and returns its name as GitHub spells it. A renamed
-// repository resolves to its new name. name must already be a valid owner/repo.
-func (c *Client) RepoName(ctx context.Context, name string) (string, error) {
+// get calls the API, with the token when there is one, and decodes a 200 answer into out.
+func (c *Client) get(ctx context.Context, token, path string, out any) (http.Header, error) {
 	base, hc := c.BaseURL, c.HTTP
 	if base == "" {
 		base = "https://api.github.com"
@@ -32,32 +36,131 @@ func (c *Client) RepoName(ctx context.Context, name string) (string, error) {
 	if hc == nil {
 		hc = defaultHTTP
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/repos/"+name, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "autobot")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("could not reach GitHub: %w", err)
+		return nil, fmt.Errorf("could not reach GitHub: %w", err)
 	}
 	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-		var repo struct {
-			FullName string `json:"full_name"`
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return nil, errors.New("GitHub sent an unreadable answer")
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&repo); err != nil || repo.FullName == "" {
-			return "", fmt.Errorf("GitHub sent an unreadable answer for %s", name)
-		}
-		return repo.FullName, nil
-	case http.StatusNotFound:
-		return "", ErrNoRepo
-	case http.StatusForbidden, http.StatusTooManyRequests:
-		return "", errors.New("GitHub is limiting how often we can check; try again in a few minutes")
+		return resp.Header, nil
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, ErrNoRepo
+	case resp.StatusCode == http.StatusUnauthorized:
+		return nil, ErrBadToken
+	case resp.StatusCode == http.StatusTooManyRequests,
+		resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0":
+		return nil, errors.New("GitHub is limiting how often we can ask; try again in a few minutes")
 	default:
-		return "", fmt.Errorf("GitHub answered %s", resp.Status)
+		var msg struct {
+			Message string `json:"message"`
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if json.Unmarshal(body, &msg) == nil && msg.Message != "" {
+			return nil, fmt.Errorf("GitHub refused: %s", msg.Message)
+		}
+		return nil, fmt.Errorf("GitHub answered %s", resp.Status)
+	}
+}
+
+type repo struct {
+	FullName    string `json:"full_name"`
+	Private     bool   `json:"private"`
+	Permissions struct {
+		Admin, Maintain, Push, Triage, Pull bool
+	} `json:"permissions"`
+}
+
+// RepoName checks that owner/repo exists and returns its name as GitHub spells it; a renamed
+// repository resolves to its new name. With token "" only public repositories are visible. name
+// must already be a valid owner/repo.
+func (c *Client) RepoName(ctx context.Context, token, name string) (string, error) {
+	var r repo
+	if _, err := c.get(ctx, token, "/repos/"+name, &r); err != nil {
+		return "", err
+	}
+	return r.FullName, nil
+}
+
+// Identity is what a GitHub user's token can do on one repository.
+type Identity struct {
+	Login     string    // the GitHub user the token belongs to
+	TokenKind string    // "fine-grained token", "classic token", or "token"
+	Scopes    string    // a classic token's scopes, as GitHub lists them
+	Repo      string    // the repository as GitHub spells it
+	Private   bool      // whether the repository is private
+	Access    string    // the user's role on the repository: admin, maintain, write, triage or read
+	Expires   time.Time // when the token expires; zero if it does not
+}
+
+// CheckIdentity confirms that token belongs to the GitHub user login and that the user can see the
+// repository name, and reports what the token can do there.
+func (c *Client) CheckIdentity(ctx context.Context, login, token, name string) (*Identity, error) {
+	var user struct {
+		Login string `json:"login"`
+	}
+	h, err := c.get(ctx, token, "/user", &user)
+	if errors.Is(err, ErrNoRepo) {
+		err = ErrBadToken
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(user.Login, login) {
+		return nil, fmt.Errorf("that token belongs to the GitHub user %s, not %s", user.Login, login)
+	}
+	id := &Identity{Login: user.Login, TokenKind: tokenKind(token), Scopes: h.Get("X-OAuth-Scopes")}
+	for _, layout := range []string{"2006-01-02 15:04:05 MST", "2006-01-02 15:04:05 -0700"} {
+		if t, err := time.Parse(layout, h.Get("Github-Authentication-Token-Expiration")); err == nil {
+			id.Expires = t
+			break
+		}
+	}
+
+	var r repo
+	if _, err := c.get(ctx, token, "/repos/"+name, &r); err != nil {
+		if errors.Is(err, ErrNoRepo) {
+			return nil, fmt.Errorf("the GitHub user %s cannot see %s: add %s to the repository, or give the token access to it", user.Login, name, user.Login)
+		}
+		return nil, err
+	}
+	id.Repo, id.Private = r.FullName, r.Private
+	p := r.Permissions
+	switch {
+	case p.Admin:
+		id.Access = "admin"
+	case p.Maintain:
+		id.Access = "maintain"
+	case p.Push:
+		id.Access = "write"
+	case p.Triage:
+		id.Access = "triage"
+	default:
+		id.Access = "read"
+	}
+	return id, nil
+}
+
+func tokenKind(token string) string {
+	switch {
+	case strings.HasPrefix(token, "github_pat_"):
+		return "fine-grained token"
+	case strings.HasPrefix(token, "ghp_"):
+		return "classic token"
+	default:
+		return "token"
 	}
 }

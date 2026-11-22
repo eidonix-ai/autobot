@@ -2,6 +2,7 @@
 package store
 
 import (
+	"crypto/cipher"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -21,7 +22,10 @@ func (e *InputError) Error() string { return e.Msg }
 func invalid(format string, a ...any) error { return &InputError{fmt.Sprintf(format, a...)} }
 
 // Store is the database. It is safe for concurrent use.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db   *sql.DB
+	aead cipher.AEAD // seals GitHub tokens; set once at start by UseKey
+}
 
 // querier is satisfied by both *sql.DB and *sql.Tx, so helpers can run inside or outside a transaction.
 type querier interface {
@@ -52,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1}
+var migrations = []string{schemaV1, schemaV2}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -99,6 +103,18 @@ CREATE TABLE events (
 	created_at   INTEGER NOT NULL
 );
 CREATE INDEX events_by_workspace ON events(workspace_id, id);
+`
+
+// The GitHub user Autobot acts as in a workspace, and that user's token, sealed with the key file
+// so that the database alone does not reveal it.
+const schemaV2 = `
+CREATE TABLE workspace_github (
+	workspace_id INTEGER PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+	login        TEXT    NOT NULL,
+	token        BLOB    NOT NULL,
+	saved_by     INTEGER REFERENCES users(id),
+	saved_at     INTEGER NOT NULL
+);
 `
 
 func (s *Store) migrate() error {

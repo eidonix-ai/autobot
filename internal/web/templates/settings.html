@@ -13,6 +13,34 @@
 </section>
 
 <section class="panel">
+<h2>GitHub identity</h2>
+{{if .GH}}
+  {{with .Live}}
+  <p>Autobot acts on GitHub as <strong>{{.Login}}</strong>, with a {{.TokenKind}}{{with .Scopes}} (scopes: {{.}}){{end}}.
+  On this {{if .Private}}private{{else}}public{{end}} repository {{.Login}} has <strong>{{.Access}}</strong> access.
+  {{if .Expires.IsZero}}The token does not expire.{{else}}The token expires on {{ts .Expires}}.{{end}}</p>
+  {{end}}
+  {{with .GHProblem}}<p class="error">{{.}}</p>{{end}}
+  <p class="hint">Saved by {{or .GH.SavedBy "unknown"}} on {{ts .GH.SavedAt}}. Checked with GitHub just now.</p>
+{{else}}
+  <p class="muted">None. Autobot uses GitHub anonymously here, which works only for a public repository and cannot post reviews or comments.</p>
+{{end}}
+<form method="post" action="{{.WS.Path}}/settings/github" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>GitHub user <input name="gh_login" value="{{.GHLogin}}" placeholder="for example flare-autobot" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+  <label>That user's token <input type="password" name="gh_token" required autocomplete="off"{{if .GH}} placeholder="Enter the token again to change the identity"{{end}}></label>
+  <button>{{if .GH}}Replace identity{{else}}Save identity{{end}}</button>
+</form>
+{{if .GH}}
+<form method="post" action="{{.WS.Path}}/settings/github/remove" class="row spaced">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button class="secondary">Remove the GitHub identity</button>
+</form>
+{{end}}
+<p class="hint">Use a fine-grained token that can reach only this repository. The token is checked with GitHub before it is saved, stored encrypted, and never shown again. For reviews Autobot will need Metadata (read), Contents (read), Pull requests (read and write) and Issues (read and write).</p>
+</section>
+
+<section class="panel">
 <h2>Members</h2>
 <form method="post" action="{{.WS.Path}}/settings/members" class="stack">
   <input type="hidden" name="csrf" value="{{.CSRF}}">

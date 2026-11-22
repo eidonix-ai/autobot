@@ -18,6 +18,7 @@ import (
 	"time"
 	_ "time/tzdata" // the Eastern-time display works on hosts without a zoneinfo database
 
+	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -35,21 +36,21 @@ const (
 // Server is the web interface over a store.
 type Server struct {
 	st    *store.Store
-	repos RepoChecker
+	gh    GitHub
 	pages map[string]*template.Template
 	md    goldmark.Markdown
 	mux   *http.ServeMux
 	ready atomic.Bool // set once a user exists; users are never deleted, so it never goes back
 }
 
-// RepoChecker confirms a GitHub repository exists and returns its name as GitHub spells it.
-// *github.Client is the real one; tests use a fake.
-type RepoChecker interface {
-	RepoName(ctx context.Context, name string) (string, error)
+// GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
+type GitHub interface {
+	RepoName(ctx context.Context, token, name string) (string, error)
+	CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error)
 }
 
 // New builds the web interface.
-func New(st *store.Store, repos RepoChecker) (*Server, error) {
+func New(st *store.Store, gh GitHub) (*Server, error) {
 	eastern, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		return nil, err
@@ -60,7 +61,7 @@ func New(st *store.Store, repos RepoChecker) (*Server, error) {
 	}
 	s := &Server{
 		st:    st,
-		repos: repos,
+		gh:    gh,
 		pages: map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
 		md:  goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID())),
@@ -104,6 +105,8 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/charter", s.auth(s.charterSave))
 	s.mux.Handle("GET /w/{owner}/{repo}/settings", s.admin(s.settings))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/name", s.admin(s.renameWorkspace))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/github", s.admin(s.setGitHub))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/github/remove", s.admin(s.removeGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/members", s.admin(s.setMembers))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/delete", s.admin(s.deleteWorkspace))
 

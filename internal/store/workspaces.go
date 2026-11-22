@@ -56,8 +56,9 @@ func scanWorkspace(row scanner) (*Workspace, error) {
 	return &w, nil
 }
 
-// CreateWorkspace adds a workspace and starts its charter from the template.
-func (s *Store) CreateWorkspace(name string, actor *User) (*Workspace, error) {
+// CreateWorkspace adds a workspace and starts its charter from the template. When login is not
+// empty, the GitHub identity (login and token) is saved with it in the same transaction.
+func (s *Store) CreateWorkspace(name string, actor *User, login, token string) (*Workspace, error) {
 	name, err := NormalizeWorkspaceName(name)
 	if err != nil {
 		return nil, err
@@ -82,6 +83,11 @@ func (s *Store) CreateWorkspace(name string, actor *User) (*Workspace, error) {
 	}
 	if err := addEvent(tx, id, actor, "created the workspace"); err != nil {
 		return nil, err
+	}
+	if login != "" {
+		if err := s.setGitHub(tx, id, login, token, actor); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

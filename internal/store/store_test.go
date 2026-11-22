@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,11 +80,11 @@ func TestWorkspaceCreateAndAccess(t *testing.T) {
 	admin := mustUser(t, st, "admin", true)
 	alice := mustUser(t, st, "alice", false)
 
-	ws, err := st.CreateWorkspace("NVIDIA/hyperflare-inference", admin)
+	ws, err := st.CreateWorkspace("NVIDIA/hyperflare-inference", admin, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateWorkspace("nvidia/HYPERFLARE-inference", admin); !isInput(err) {
+	if _, err := st.CreateWorkspace("nvidia/HYPERFLARE-inference", admin, "", ""); !isInput(err) {
 		t.Fatalf("duplicate differing only in case: %v, want input error", err)
 	}
 	if got, err := st.Workspace("nvidia/hyperflare-inference"); err != nil || got.ID != ws.ID {
@@ -130,7 +132,7 @@ func TestWorkspaceCreateAndAccess(t *testing.T) {
 func TestCharterRevisionsAndConflict(t *testing.T) {
 	st := open(t)
 	admin := mustUser(t, st, "admin", true)
-	ws, _ := st.CreateWorkspace("o/r", admin)
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
 
 	rev, err := st.SaveCharter(ws.ID, 1, "# One\r\nline\r\n", admin)
 	if err != nil || rev != 2 {
@@ -274,5 +276,68 @@ func TestCreateFirstAdmin(t *testing.T) {
 	}
 	if _, err := st.CreateFirstAdmin("late", "", "password123"); !errors.Is(err, ErrSetupDone) {
 		t.Fatalf("setup after the first user: %v", err)
+	}
+}
+
+func TestGitHubTokenSealed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := mustUser(t, st, "admin", true)
+	if _, err := st.CreateWorkspace("o/a", admin, "flare-autobot", "github_pat_SECRET"); err == nil {
+		t.Fatal("saved a token with no key configured")
+	}
+	key := bytes.Repeat([]byte{7}, 32)
+	if err := st.UseKey(key); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateWorkspace("o/a", admin, "flare-autobot", " github_pat_SECRET ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := st.CreateWorkspace("o/b", admin, "", "")
+	if err := st.SetGitHub(b.ID, "other-bot", "github_pat_OTHER", admin); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := st.GitHub(a.ID); err != nil || id.Login != "flare-autobot" || id.Token != "github_pat_SECRET" || id.SavedBy != "admin" {
+		t.Fatalf("identity: %+v, %v", id, err)
+	}
+	if _, err := st.GitHub(9999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing identity: %v", err)
+	}
+
+	// The token is not in the database file in the clear.
+	st.Close()
+	raw, _ := os.ReadFile(path)
+	wal, _ := os.ReadFile(path + "-wal")
+	if bytes.Contains(raw, []byte("SECRET")) || bytes.Contains(wal, []byte("SECRET")) {
+		t.Fatal("token stored in the clear")
+	}
+
+	// Another key cannot open it.
+	st, _ = Open(path)
+	defer st.Close()
+	st.UseKey(bytes.Repeat([]byte{8}, 32))
+	if id, err := st.GitHub(a.ID); err != nil || !errors.Is(id.Err, ErrTokenUnreadable) || id.Token != "" {
+		t.Fatalf("wrong key: %+v, %v", id, err)
+	}
+
+	// A sealed token moved to another workspace's row does not open there.
+	st.UseKey(key)
+	if _, err := st.db.Exec(`UPDATE workspace_github SET token = (SELECT token FROM workspace_github WHERE workspace_id = ?) WHERE workspace_id = ?`, a.ID, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := st.GitHub(b.ID); !errors.Is(id.Err, ErrTokenUnreadable) {
+		t.Fatalf("swapped token opened: %+v", id)
+	}
+
+	// Deleting a workspace deletes its identity.
+	st.DeleteWorkspace(a.ID)
+	var n int
+	st.db.QueryRow(`SELECT count(*) FROM workspace_github WHERE workspace_id = ?`, a.ID).Scan(&n)
+	if n != 0 {
+		t.Fatal("identity survived the workspace")
 	}
 }

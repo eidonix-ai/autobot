@@ -4,14 +4,18 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -64,6 +68,7 @@ func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	db := dbFlag(fs)
 	addr := fs.String("addr", "127.0.0.1:8080", "address to listen on")
+	keyFile := fs.String("key", "", "file holding the hex key that encrypts GitHub tokens (default: the systemd credential secret-key, else DB.key, created if missing)")
 	fs.Parse(args)
 
 	st, err := store.Open(*db)
@@ -71,6 +76,13 @@ func serve(args []string) error {
 		return err
 	}
 	defer st.Close()
+	key, err := loadKey(*keyFile, *db)
+	if err != nil {
+		return err
+	}
+	if err := st.UseKey(key); err != nil {
+		return err
+	}
 	if users, err := st.Users(); err != nil {
 		return err
 	} else if len(users) == 0 {
@@ -102,6 +114,37 @@ func serve(args []string) error {
 		return err
 	}
 	return <-done
+}
+
+// loadKey reads the 32-byte key that encrypts GitHub tokens, written as 64 hex digits. Without
+// -key it uses the systemd credential "secret-key" when the service has one, and otherwise
+// DB.key next to the database, creating that file on first use (for development).
+func loadKey(path, db string) ([]byte, error) {
+	if path == "" {
+		if dir := os.Getenv("CREDENTIALS_DIRECTORY"); dir != "" {
+			path = filepath.Join(dir, "secret-key")
+		}
+	}
+	if path == "" {
+		path = db + ".key"
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			key := make([]byte, 32)
+			rand.Read(key)
+			if err := os.WriteFile(path, []byte(hex.EncodeToString(key)+"\n"), 0o600); err != nil {
+				return nil, err
+			}
+			log.Printf("created the encryption key %s: back it up separately from the database; without it saved GitHub tokens cannot be read", path)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("encryption key: %w", err)
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(string(b)))
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("encryption key %s must be 64 hex digits", path)
+	}
+	return key, nil
 }
 
 func useradd(args []string) error {

@@ -13,12 +13,17 @@
 {{if .Me.IsAdmin}}
 <section class="panel">
 <h2>New workspace</h2>
-<form method="post" action="/workspaces" class="row">
+<form method="post" action="/workspaces" class="stack">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <input name="name" value="{{.Form.Get "name"}}" placeholder="owner/repo" aria-label="GitHub repository" required autocomplete="off" spellcheck="false">
+  <label>GitHub repository <input name="name" value="{{.Form.Get "name"}}" placeholder="owner/repo" required autocomplete="off" spellcheck="false"></label>
+  <fieldset>
+    <legend>GitHub identity: required for a private repository, optional for a public one</legend>
+    <label>GitHub user <input name="gh_login" value="{{.Form.Get "gh_login"}}" placeholder="for example flare-autobot" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+    <label>That user's token <input type="password" name="gh_token" autocomplete="off"></label>
+  </fieldset>
   <button>Create</button>
 </form>
-<p class="hint">Name it exactly as the repository is named on GitHub, for example NVIDIA/hyperflare-inference. A pasted github.com link works too.</p>
+<p class="hint">Name it exactly as on GitHub, for example NVIDIA/hyperflare-inference; a pasted github.com link works too. The identity can be added or changed later in the workspace's settings.</p>
 </section>
 {{end}}
 {{end}}

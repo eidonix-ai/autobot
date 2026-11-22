@@ -8,7 +8,7 @@
 </form>
 <p class="muted">{{if .Q}}{{len .Cases}} of {{.Total}} cases match.{{else}}{{.Total}} case{{if ne .Total 1}}s{{end}}, most recently changed first.{{end}}</p>
 {{if .Cases}}
-<div class="scroll"><table class="list dense">
+<div class="scroll"><table class="list dense cases">
 <thead><tr><th>Case</th><th>Title</th><th>Lines</th><th>Changed</th></tr></thead>
 <tbody>{{range .Cases}}<tr>
   <td class="nowrap"><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a></td>

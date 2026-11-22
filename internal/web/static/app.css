@@ -161,7 +161,9 @@ select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 details.more { margin-top: 0.4rem; }
 .scrollbox { max-height: 22rem; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 0 0.8rem; }
 table.dense th, table.dense td { padding: 0.3rem 0.7rem; font-size: 0.9rem; }
-table.dense td:nth-child(2) { width: 100%; }
+table.cases td:nth-child(2) { width: 100%; } /* the title takes the spare width */
+table.members { width: auto; min-width: min(100%, 28rem); }
+table.members td, table.members th { white-space: nowrap; padding-right: 2rem; }
 a.plainlink { color: var(--text); text-decoration: none; }
 a.plainlink:hover { color: var(--accent); }
 form.search { margin-bottom: 0.6rem; }

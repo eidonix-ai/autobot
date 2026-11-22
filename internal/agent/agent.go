@@ -11,15 +11,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 )
 
 // Tool is a tool the agent may call. Run's error is shown to the model as the tool's result.
+// Reads, when set, names the files a successful call read, so a report citing a file the agent
+// never read can be caught.
 type Tool struct {
-	Spec ToolSpec
-	Run  func(ctx context.Context, args json.RawMessage) (string, error)
+	Spec  ToolSpec
+	Run   func(ctx context.Context, args json.RawMessage) (string, error)
+	Reads func(args json.RawMessage) []string
 }
 
 // How a run ended.
@@ -46,6 +51,7 @@ type Transcript struct {
 	Turns    int        `json:"turns"`
 	In       int        `json:"tokens_in"`
 	Out      int        `json:"tokens_out"`
+	Read     []string   `json:"read,omitempty"` // the files its tools have read
 	Outcome  string     `json:"outcome,omitempty"`
 	Report   string     `json:"report,omitempty"`
 	Error    string     `json:"error,omitempty"`
@@ -69,6 +75,7 @@ const (
 	maxNudges   = 3
 	maxRejected = 3
 	maxResult   = 24_000 // characters of a tool's result shown to the model
+	keepTurns   = 6      // turns whose tool results are sent in full; older ones are cut to a line
 )
 
 var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it when the goal is met, or when you are blocked and cannot meet it. " +
@@ -115,7 +122,7 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 			save()
 			return tr
 		}
-		reply, use, err := complete(ctx, cfg.Model, tr.Messages, specs)
+		reply, use, err := complete(ctx, cfg.Model, trimmed(tr.Messages), specs)
 		if err != nil {
 			tr.Outcome, tr.Error = Failed, err.Error()
 			if ctx.Err() != nil {
@@ -164,6 +171,15 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 			}
 		}
 		wg.Wait()
+		for i, call := range reply.ToolCalls {
+			if t, ok := tools[call.Function.Name]; ok && t.Reads != nil && !strings.HasPrefix(results[i], "error:") {
+				for _, p := range t.Reads(json.RawMessage(call.Function.Arguments)) {
+					if !slices.Contains(tr.Read, p) {
+						tr.Read = append(tr.Read, p)
+					}
+				}
+			}
+		}
 		done := false
 		if finish != nil {
 			var verdict string
@@ -176,6 +192,10 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 		}
 		for i, call := range reply.ToolCalls {
 			tr.Messages = append(tr.Messages, Message{Role: "tool", ToolCallID: call.ID, Content: clip(results[i])})
+		}
+		if left := cfg.MaxTurns - turn - 1; !done && (left == max(3, cfg.MaxTurns/4) || left == 2) {
+			tr.Messages = append(tr.Messages, Message{Role: "user", Content: fmt.Sprintf("You have %d turns left. "+
+				"Stop exploring and finish soon with what you have found: call finish with your report.", left)})
 		}
 		save()
 		if done {
@@ -200,6 +220,11 @@ func (tr *Transcript) finish(ctx context.Context, cfg Config, args string, rejec
 		if len(open) > 0 {
 			return "Not finished: your plan still has open steps: " + strings.Join(open, "; ") +
 				". Do them, or mark them dropped with a note saying why, then finish again.", false
+		}
+		if unread := tr.unread(a.Report); len(unread) > 0 && *rejected < maxRejected {
+			*rejected++
+			return "Not finished: your report cites " + strings.Join(unread, ", ") + ", which you have not read in this run. " +
+				"Read them to confirm what you say about them, or take those claims out, then finish again.", false
 		}
 		if cfg.Verify != nil && *rejected < maxRejected {
 			ok, why, err := cfg.Verify(ctx, cfg.Goal, a.Report)
@@ -278,6 +303,60 @@ func transient(err error) bool {
 		}
 	}
 	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// citedRE finds files a report names: a path or file name with a source-like extension, perhaps
+// followed by a line number.
+var citedRE = regexp.MustCompile(`\b([\w./-]*[\w-]+\.(?:go|mod|py|rs|ts|tsx|js|jsx|c|h|cc|cpp|hpp|java|kt|swift|rb|php|cs|sh|ya?ml|toml|json|md|sql|proto))\b`)
+
+// unread lists the files a report cites that the agent's tools never read.
+func (tr *Transcript) unread(report string) []string {
+	var out []string
+	for _, m := range citedRE.FindAllStringSubmatch(report, -1) {
+		c := strings.TrimPrefix(strings.TrimPrefix(m[1], "./"), "/")
+		if slices.Contains(out, c) || slices.ContainsFunc(tr.Read, func(r string) bool { return samePath(r, c) }) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// samePath reports whether two paths name the same file, one perhaps given relative to a folder.
+func samePath(a, b string) bool {
+	a, b = strings.TrimPrefix(a, "/"), strings.TrimPrefix(b, "/")
+	return a == b || strings.HasSuffix(a, "/"+b) || strings.HasSuffix(b, "/"+a)
+}
+
+// trimmed is the conversation as sent to the model: tool results from before the last keepTurns
+// turns are cut to their first line, which keeps a long run's requests from growing without end.
+// The transcript itself keeps everything.
+func trimmed(msgs []Message) []Message {
+	turns := 0
+	cut := len(msgs)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" {
+			if turns++; turns == keepTurns {
+				cut = i
+				break
+			}
+		}
+	}
+	if cut == len(msgs) {
+		return msgs
+	}
+	out := make([]Message, len(msgs))
+	copy(out, msgs)
+	for i := range out[:cut] {
+		if m := out[i]; m.Role == "tool" && len(m.Content) > 400 {
+			first, _, _ := strings.Cut(m.Content, "\n")
+			if len(first) > 200 {
+				first = first[:200]
+			}
+			out[i].Content = strings.ToValidUTF8(first, "") + fmt.Sprintf("\n[%d characters left out to save room; call the tool again if you need them]", len(m.Content))
+		}
+	}
+	return out
 }
 
 // clip keeps a long result's beginning and end, which is where the useful parts usually are.

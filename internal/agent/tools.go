@@ -75,6 +75,16 @@ func PRTools(p *PR) []Tool {
 			}},
 		{Spec: ToolSpec{Name: "pr_diff", Description: "Read the pull request's diff, all of it or only the files whose paths contain a given text.",
 			Parameters: schema(`{"type":"object","properties":{"path":{"type":"string","description":"only files whose path contains this"},"start":{"type":"integer"}}}`)},
+			Reads: func(raw json.RawMessage) []string {
+				a, _ := args[struct{ Path string }](raw)
+				var out []string
+				for _, f := range p.Files {
+					if strings.Contains(f.Path, a.Path) {
+						out = append(out, f.Path)
+					}
+				}
+				return out
+			},
 			Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				a, err := args[struct {
 					Path  string
@@ -135,6 +145,10 @@ func PRTools(p *PR) []Tool {
 			}},
 		{Spec: ToolSpec{Name: "read_file", Description: "Read a file of the repository at the pull request's head, with line numbers, optionally only some lines.",
 			Parameters: schema(`{"type":"object","properties":{"path":{"type":"string"},"from_line":{"type":"integer"},"to_line":{"type":"integer"}},"required":["path"]}`)},
+			Reads: func(raw json.RawMessage) []string {
+				a, _ := args[struct{ Path string }](raw)
+				return []string{a.Path}
+			},
 			Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				a, err := args[struct {
 					Path     string
@@ -220,6 +234,13 @@ func WebTools(searcher func(ctx context.Context, query string, n int) ([]search.
 	}
 	return append(tools, Tool{Spec: ToolSpec{Name: "fetch_url", Description: "Fetch a public web page or file and return its text.",
 		Parameters: schema(`{"type":"object","properties":{"url":{"type":"string"},"start":{"type":"integer"}},"required":["url"]}`)},
+		Reads: func(raw json.RawMessage) []string {
+			a, _ := args[struct{ URL string }](raw)
+			if u, err := url.Parse(a.URL); err == nil && u.Path != "" {
+				return []string{u.Path} // a raw file's address ends with its path in the repository
+			}
+			return nil
+		},
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			a, err := args[struct {
 				URL   string

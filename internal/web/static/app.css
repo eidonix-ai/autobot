@@ -169,3 +169,7 @@ form.search input { flex: 1 1 20rem; }
 
 td.nowrap, .nowrap { white-space: nowrap; }
 p.names { line-height: 1.7; }
+
+ul.models li { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+ul.models .model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.info { color: var(--muted); cursor: help; font-size: 0.85em; flex: none; }

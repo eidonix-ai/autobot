@@ -194,9 +194,13 @@ p.status { font-size: 1.05rem; margin-bottom: 0.2rem; }
 p.status .dot { margin-left: 0; }
 
 /* Modals: the browser's popover, dismissed by Esc, a click outside, or the close button. */
-.modal { width: min(92vw, 52rem); max-height: 80vh; overflow: auto; padding: 1rem 1.25rem;
-  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
-.modal::backdrop { background: rgb(0 0 0 / 0.55); }
+.modal { inset: 0; margin: auto; width: fit-content; height: fit-content;
+  min-width: min(92vw, 26rem); max-width: min(92vw, 52rem); max-height: 80vh; overflow: auto;
+  padding: 1rem 1.25rem; background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 40px rgb(0 0 0 / 0.45); }
+.modal::backdrop { background: rgb(0 0 0 / 0.6); backdrop-filter: blur(2px); }
+.modal .scroll { margin-bottom: 0.6rem; }
+.modal table.list { width: 100%; min-width: 0; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
 .modal-head h2 { margin: 0; }
 button.close { background: none; color: var(--muted); padding: 0.1rem 0.5rem; font-size: 1.1rem; }

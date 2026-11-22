@@ -3,13 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{with .Title}}{{.}} · {{end}}Autobot</title>
+<title>{{with .Title}}{{.}} · {{end}}Eidonix Autobot</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/app.css">
 {{with .Refresh}}<meta http-equiv="refresh" content="3; url={{.}}">{{end}}
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/">Autobot</a>
+  <a class="brand" href="/"><svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="65.4 81 371.3 294" aria-hidden="true" focusable="false"><g transform="translate(0,512) scale(0.1,-0.1)" fill="currentColor" stroke="none">
+    <path d="M2384 4078 c-81 -128 -254 -397 -384 -598 -130 -201 -258 -400 -285
+-442 -28 -43 -207 -323 -400 -623 -192 -300 -423 -656 -512 -791 -114 -174
+-157 -247 -148 -251 21 -7 2492 1 2500 9 4 3 -17 38 -45 77 -29 40 -89 131
+-135 204 l-83 132 -93 7 c-52 4 -348 7 -659 6 -437 -2 -564 0 -563 10 6 26
+903 1426 955 1489 19 24 45 -6 154 -174 59 -93 176 -271 260 -398 83 -126 199
+-306 256 -400 122 -198 244 -395 411 -659 65 -104 131 -212 145 -241 l26 -53
+66 -6 c83 -8 456 -6 491 3 l26 6 -69 110 c-37 61 -97 155 -131 210 -35 55
+-109 174 -166 265 -101 163 -138 222 -400 640 -74 118 -177 285 -229 370 -52
+85 -197 319 -322 520 -125 201 -282 455 -350 565 -67 110 -129 210 -137 223
+-7 12 -17 22 -22 22 -5 0 -76 -105 -157 -232z"/>
+    <path d="M2491 2673 c13 -21 44 -69 69 -108 26 -38 103 -160 172 -270 196
+-312 312 -495 453 -713 l130 -202 163 0 c90 0 162 3 160 8 -2 4 -38 61 -81
+127 -43 66 -142 221 -219 345 -78 124 -181 288 -229 365 -48 77 -138 218 -200
+313 l-112 172 -164 0 -165 0 23 -37z"/>
+  </g></svg><span>Eidonix Autobot</span></a>
   {{with .Me}}
   <nav>
     <a href="/">Workspaces</a>

@@ -23,9 +23,10 @@
 </section>
 
 <section class="panel tile">
-  <h2><button class="tile-link" popovertarget="models-modal">Models</button></h2>
+  <h2><button class="tile-link" popovertarget="models-modal">Inference</button></h2>
   {{if .Available}}
-  <p class="status"><span class="dot on"></span> {{len .Available}} model{{if ne (len .Available) 1}}s{{end}} configured</p>
+  <p class="status"><span class="dot {{if .ChatModels}}on{{else}}off{{end}}"></span> {{if .ChatModels}}{{.ChatModels}} model{{if ne .ChatModels 1}}s{{end}} configured{{else}}No models{{end}}</p>
+  <p class="status"><span class="dot {{if .DecisionModels}}on{{else}}off{{end}}"></span> {{if .DecisionModels}}{{.DecisionModels}} decision model{{if ne .DecisionModels 1}}s{{end}} configured{{else}}No decision models{{end}}</p>
   {{else}}
   <p class="status"><span class="dot off"></span> 🙁 (No models assigned)</p>
   {{end}}
@@ -82,7 +83,7 @@
 </div>
 
 <div id="models-modal" class="modal" popover>
-  <div class="modal-head"><h2>Models</h2><button class="close" popovertarget="models-modal" popovertargetaction="hide" aria-label="Close">✕</button></div>
+  <div class="modal-head"><h2>Inference</h2><button class="close" popovertarget="models-modal" popovertargetaction="hide" aria-label="Close">✕</button></div>
   {{if .Available}}
   <div class="scroll"><table class="list dense members">
   <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th><th>Use</th></tr></thead>

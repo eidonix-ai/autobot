@@ -246,7 +246,8 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, r, http.StatusOK, "workspace.html", map[string]any{
 		"Title": ws.Name, "WS": ws, "Charter": charter, "Members": members, "Events": events, "Machines": machines,
-		"Available": available, "Cases": cases, "CaseCount": caseCount, "Res": summarize(machines)})
+		"Available": available, "Cases": cases, "CaseCount": caseCount, "Res": summarize(machines),
+		"ChatModels": countKind(available, false), "DecisionModels": countKind(available, true)})
 }
 
 func (s *Server) charter(w http.ResponseWriter, r *http.Request) {
@@ -441,4 +442,16 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin/users/"+strconv.FormatInt(u.ID, 10)+"?saved=1", http.StatusSeeOther)
+}
+
+// countKind counts the available models that answer decisions (System One, /v1/decisions), or
+// the ones that do not (chat models).
+func countKind(available []store.AvailableModel, decisions bool) int {
+	n := 0
+	for _, a := range available {
+		if (a.Kind == store.KindDecisions || a.Kind == store.KindSystemOne) == decisions {
+			n++
+		}
+	}
+	return n
 }

@@ -63,11 +63,16 @@ socket, as any CI runner does, so a donated machine should be used only for test
 Setting up a machine, once an admin has added it in Autobot and has its token:
 
 ```sh
-cd deploy/connector
-cp example.env .env && chmod 600 .env     # fill in the token, work image and models folder
-docker compose up -d --build
+curl -fsSLO https://raw.githubusercontent.com/eidonix-ai/autobot/main/deploy/connector/compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/eidonix-ai/autobot/main/deploy/connector/example.env
+chmod 600 .env                            # fill in the token, work image and models folder
+docker compose pull && docker compose up -d
 docker compose run --rm connector check
 ```
+
+The image is `ghcr.io/eidonix-ai/eidonix-autobot-connector`, for linux/amd64 and linux/arm64. To
+build it from a checkout instead: `docker compose -f compose.yml -f compose.build.yml up -d --build`
+in `deploy/connector`.
 
 ## Run it
 

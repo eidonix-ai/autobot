@@ -8,10 +8,11 @@
 </section>
 <section class="panel">
 <h2>Start the connector on the machine</h2>
-<p>The machine needs Docker with the NVIDIA Container Toolkit, and should be used only for testing. On it, in a checkout of the Autobot repository:</p>
-<pre>cd deploy/connector
-cp example.env .env      # then edit .env: see below
-docker compose up -d --build
+<p>The machine needs Docker with the NVIDIA Container Toolkit, and should be used only for testing. On it, in a new folder:</p>
+<pre>curl -fsSLO https://raw.githubusercontent.com/eidonix-ai/autobot/main/deploy/connector/compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/eidonix-ai/autobot/main/deploy/connector/example.env
+chmod 600 .env           # then edit .env: see below
+docker compose pull && docker compose up -d
 docker compose run --rm connector check</pre>
 <p>In <code>.env</code>, set at least:</p>
 <pre>AUTOBOT_URL={{.URL}}

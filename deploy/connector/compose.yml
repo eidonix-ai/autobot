@@ -1,16 +1,15 @@
-# The Autobot connector: lends this machine to Autobot for test runs.
+# The Autobot connector: lends this machine to Autobot for test runs. Put this file and .env in
+# a folder of their own, then:
 #   cp example.env .env && chmod 600 .env    then fill it in
-#   docker compose up -d --build             start it (and after every update)
+#   docker compose pull && docker compose up -d   start it (and to update it)
 #   docker compose run --rm connector check  confirm job containers are isolated
 #   docker compose logs -f                   watch it
 #   docker compose down                      stop it
+# To build the image from a checkout instead: docker compose -f compose.yml -f compose.build.yml up -d --build
 name: autobot-connector
 services:
   connector:
-    build:
-      context: ../..
-      dockerfile: deploy/connector/Dockerfile
-    image: autobot-connector:local
+    image: ghcr.io/eidonix-ai/eidonix-autobot-connector:${CONNECTOR_VERSION:-latest}
     restart: unless-stopped
     env_file: .env
     # The connector itself: no root filesystem writes, no capabilities, outbound network only.

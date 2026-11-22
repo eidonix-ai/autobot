@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -289,4 +289,18 @@ CREATE INDEX case_contributions_by_case ON case_contributions(case_uuid, id);
 // A machine can be taken offline for a while without removing it: it gets no new runs.
 const schemaV8 = `
 ALTER TABLE machines ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+`
+
+// A workspace's workflows, one per kind (pr, issue): the canvas as JSON (nodes with their settings,
+// and links), checked by package workflow before it is stored.
+const schemaV9 = `
+CREATE TABLE workflows (
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	kind         TEXT    NOT NULL,
+	graph        TEXT    NOT NULL,
+	version      INTEGER NOT NULL,
+	updated_by   INTEGER REFERENCES users(id),
+	updated_at   INTEGER NOT NULL,
+	PRIMARY KEY (workspace_id, kind)
+);
 `

@@ -96,7 +96,8 @@ label.check { display: flex !important; align-items: baseline; gap: 0.5rem; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 0.6rem 0.9rem 0.8rem; margin: 0; display: grid; gap: 0.4rem; }
 legend { color: var(--muted); font-size: 0.9rem; padding: 0 0.3rem; }
 
-input:not([type=checkbox]), textarea {
+[hidden] { display: none !important; }
+input:not([type=checkbox]):not([type=radio]), textarea {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--line); border-radius: 6px; padding: 0.45rem 0.6rem; width: 100%;
 }
@@ -212,3 +213,34 @@ button.close:hover { color: var(--text); }
 .panel.tile a:not(.tile-link), .panel.tile .info { position: relative; z-index: 1; }
 
 ul.recent li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the workflow page: full width, a tab per kind, and the canvas ---- */
+main.wide { max-width: none; padding-bottom: 1rem; }
+.wf-top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; margin-bottom: 0.6rem; }
+.wf-top .crumbs { margin: 0; }
+nav.tabs { display: flex; gap: 0.3rem; }
+nav.tabs a { padding: 0.35rem 0.9rem; border-radius: 6px; color: var(--muted); text-decoration: none; border: 1px solid transparent; }
+nav.tabs a:hover { color: var(--text); }
+nav.tabs a.on { color: var(--text); border-color: var(--line); background: var(--panel); }
+.wf-status { margin-left: auto; font-size: 0.88rem; color: var(--muted); }
+.wf-status.bad { color: var(--error); }
+.wf-canvas { position: relative; height: calc(100vh - 11.5rem); min-height: 24rem; border: 1px solid var(--line); border-radius: 8px;
+  background-color: var(--bg); background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px; overflow: hidden; }
+.wf-hint { margin: 0.5rem 0 0; }
+.wf-canvas .drawflow .drawflow-node { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+  width: 15rem; padding: 0.7rem 0.9rem; box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); }
+.wf-canvas .drawflow .drawflow-node:hover { border-color: var(--accent); cursor: pointer; }
+.wf-canvas .drawflow .drawflow-node.selected { background: var(--panel); border-color: var(--accent); }
+.wf-canvas .drawflow .drawflow-node .input, .wf-canvas .drawflow .drawflow-node .output { background: var(--panel); border: 2px solid var(--accent); width: 14px; height: 14px; }
+.wf-canvas .drawflow .connection .main-path { stroke: var(--accent); stroke-width: 3px; }
+.wf-canvas .drawflow-delete { display: none; }
+.wf-node .wf-title { font-weight: 600; }
+.wf-node .wf-sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
+.wf-pr_ready, .wf-pr_draft, .wf-pr_activity, .wf-issue_opened { border-left: 4px solid #2ea043 !important; }
+.wf-menu { position: fixed; z-index: 50; display: grid; min-width: 11rem; padding: 0.3rem; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.4); }
+.wf-menu button { all: unset; padding: 0.4rem 0.7rem; border-radius: 5px; cursor: pointer; color: var(--text); }
+.wf-menu button:hover, .wf-menu button:focus { background: var(--bg); }
+.wf-ghost { position: fixed; z-index: 40; pointer-events: none; transform: translate(8px, 8px); padding: 0.5rem 0.8rem;
+  background: var(--panel); border: 1px dashed var(--accent); border-radius: 8px; color: var(--text); opacity: 0.9; }
+.node-form fieldset { gap: 0.3rem; }

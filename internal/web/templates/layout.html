@@ -6,6 +6,7 @@
 <title>{{with .Title}}{{.}} · {{end}}Eidonix Autobot</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/app.css">
+{{block "head" .}}{{end}}
 {{with .Refresh}}<meta http-equiv="refresh" content="3; url={{.}}">{{end}}
 </head>
 <body>
@@ -36,7 +37,7 @@
   </nav>
   {{end}}
 </header>
-<main>
+<main{{if .Wide}} class="wide"{{end}}>
 {{with .Error}}<p class="error">{{.}}</p>{{end}}
 {{with .Notice}}<p class="notice">{{.}}</p>{{end}}
 {{template "content" .}}

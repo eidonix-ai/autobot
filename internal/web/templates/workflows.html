@@ -1,0 +1,15 @@
+{{define "head"}}<link rel="stylesheet" href="/static/vendor/drawflow-0.0.60/drawflow.min.css">{{end}}
+{{define "content"}}
+<div class="wf-top">
+  <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+  <nav class="tabs">{{range .Tabs}}<a href="{{$.WS.Path}}/workflows/{{.Kind}}"{{if eq .Kind $.Kind}} class="on" aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
+  <span class="wf-status" id="wf-status" role="status"></span>
+</div>
+<div id="wf" class="wf-canvas" data-state="{{.State}}" data-base="{{.Base}}" data-csrf="{{.CSRF}}"></div>
+<div id="wf-menu" class="wf-menu" hidden></div>
+<div id="wf-ghost" class="wf-ghost" hidden></div>
+<div id="wf-modal" class="modal" popover></div>
+<p class="hint wf-hint">Right-click the canvas to add a node. Click a node to set it up; drag to move it; drag from its dot to link it to the next step.</p>
+<script src="/static/vendor/drawflow-0.0.60/drawflow.min.js"></script>
+<script src="/static/workflow.js"></script>
+{{end}}

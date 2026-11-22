@@ -81,3 +81,23 @@ func TestLineChanges(t *testing.T) {
 		}
 	}
 }
+
+// A workflow saved from an out-of-date copy is refused.
+func TestWorkflowVersions(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
+	if w, _ := st.Workflow(ws.ID, "pr"); w.Version != 0 {
+		t.Fatalf("new workflow version %d", w.Version)
+	}
+	v, err := st.SaveWorkflow(ws.ID, "pr", 0, `{"nodes":[],"links":[]}`, admin)
+	if err != nil || v != 1 {
+		t.Fatalf("first save: %d %v", v, err)
+	}
+	if _, err := st.SaveWorkflow(ws.ID, "pr", 0, `{"nodes":[],"links":[]}`, admin); !errors.Is(err, ErrStaleWorkflow) {
+		t.Fatalf("stale save: %v", err)
+	}
+	if v, err := st.SaveWorkflow(ws.ID, "pr", 1, `{"nodes":[],"links":[]}`, admin); err != nil || v != 2 {
+		t.Fatalf("second save: %d %v", v, err)
+	}
+}

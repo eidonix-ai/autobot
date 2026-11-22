@@ -73,12 +73,12 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 			}
 			return strconv.FormatFloat(*v, 'f', digits, 64)
 		},
-		"gib":   func(mib int) string { return strconv.FormatFloat(float64(mib)/1024, 'f', 1, 64) + " GiB" },
-		"bytes": humanBytes,
-		"short": func(s string, n int) string { s = strings.TrimPrefix(s, "sha256:"); return s[:min(n, len(s))] },
-		"ago":   func(t time.Time) string { return time.Since(t).Round(time.Second).String() + " ago" },
-		"pct":   func(p float64) float64 { return p * 100 },
-		"sub":   func(a, b int) int { return a - b },
+		"gib":     func(mib int) string { return strconv.FormatFloat(float64(mib)/1024, 'f', 1, 64) + " GiB" },
+		"bytes":   humanBytes,
+		"short":   func(s string, n int) string { s = strings.TrimPrefix(s, "sha256:"); return s[:min(n, len(s))] },
+		"ago":     func(t time.Time) string { return time.Since(t).Round(time.Second).String() + " ago" },
+		"pct":     func(p float64) float64 { return p * 100 },
+		"sub":     func(a, b int) int { return a - b },
 		"tsShort": func(t time.Time) string { return t.In(eastern).Format("Jan 2, 3:04 PM") },
 	}
 	s := &Server{
@@ -149,6 +149,11 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /connector/v1/runs/{id}/output", s.connectorAPI(s.runOutput))
 	s.mux.Handle("POST /connector/v1/runs/{id}/result", s.connectorAPI(s.runResult))
 
+	s.mux.Handle("GET /w/{owner}/{repo}/workflows", s.auth(s.workflowsIndex))
+	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}", s.auth(s.workflowPage))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/layout", s.auth(s.saveLayout))
+	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.nodeSettings))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.saveNodeSettings))
 	s.mux.Handle("GET /w/{owner}/{repo}/models", s.auth(s.modelsPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members", s.auth(s.membersPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members/{username}", s.auth(s.memberPage))
@@ -233,7 +238,14 @@ func (s *Server) auth(next http.HandlerFunc) http.Handler {
 		}
 		if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, maxForm)
-			if subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(csrf)) != 1 {
+			// Forms send the token as a field; the workflow canvas's requests, as a header. The form is
+			// parsed either way (a JSON body is left alone), so handlers can read r.PostForm.
+			r.ParseForm()
+			token := r.Header.Get("X-Autobot-CSRF")
+			if token == "" {
+				token = r.PostFormValue("csrf")
+			}
+			if subtle.ConstantTimeCompare([]byte(token), []byte(csrf)) != 1 {
 				http.Error(w, "This form has expired. Go back, reload the page and try again.", http.StatusForbidden)
 				return
 			}

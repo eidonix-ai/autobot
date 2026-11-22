@@ -1,0 +1,55 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  {{if eq .Node.Type "pr_activity"}}
+  <fieldset>
+    <legend>Activity that runs it</legend>
+    {{range .Activities}}<label class="check"><input type="checkbox" name="activity" value="{{.Key}}"{{if $.S.HasActivity .Key}} checked{{end}}> {{.Label}}</label>{{end}}
+  </fieldset>
+  <label>Quiet period (minutes) <input type="number" name="quiet_minutes" min="0" max="1440" value="{{.S.QuietMinutes}}"></label>
+  {{end}}
+  <fieldset>
+    <legend>When it runs</legend>
+    <label class="check"><input type="radio" name="mode" value="always"{{if eq .S.Mode "always"}} checked{{end}}> Always run</label>
+    <label class="check"><input type="radio" name="mode" value="summoned"{{if eq .S.Mode "summoned"}} checked{{end}}> Only if summoned</label>
+  </fieldset>
+  <div class="row">
+    <label>Summon phrase <input name="summon_phrase" value="{{.S.SummonPhrase}}" maxlength="100" required></label>
+    <label>Stop tag <input name="stop_tag" value="{{.S.StopTag}}" maxlength="100" required></label>
+  </div>
+  {{if eq .Kind "pr"}}<label class="check"><input type="checkbox" name="review_request"{{if .S.ReviewRequest}} checked{{end}}> A review request to the workspace's GitHub user also summons it</label>{{end}}
+  <label class="check"><input type="checkbox" name="trusted_only"{{if .S.TrustedOnly}} checked{{end}}> Honor summons and the stop tag only from the author and collaborators</label>
+  {{if eq .Kind "pr"}}
+  <details class="more" open><summary>Filters</summary>
+    <div class="stack wide">
+      <label>Target branches <input name="branches" value="{{.S.Branches}}" placeholder="the default branch" autocomplete="off"></label>
+      <label>Authors
+        <select name="authors">
+          <option value="skip_bots"{{if eq .S.Authors "skip_bots"}} selected{{end}}>Everyone but bots</option>
+          <option value="all"{{if eq .S.Authors "all"}} selected{{end}}>Everyone</option>
+          <option value="only_bots"{{if eq .S.Authors "only_bots"}} selected{{end}}>Only bots (Dependabot, Renovate)</option>
+        </select></label>
+      <label class="check"><input type="checkbox" name="skip_maintainers"{{if .S.SkipMaintain}} checked{{end}}> Skip pull requests by maintainers</label>
+      <div class="row">
+        <label>Size limit (changed lines, 0 for none) <input type="number" name="max_lines" min="0" value="{{.S.MaxLines}}"></label>
+        <label>Over the limit
+          <select name="over_limit">
+            <option value="summoned"{{if eq .S.OverLimit "summoned"}} selected{{end}}>Only if summoned</option>
+            <option value="skip"{{if eq .S.OverLimit "skip"}} selected{{end}}>Skip</option>
+          </select></label>
+      </div>
+      <label>Wait for CI
+        <select name="wait_ci">
+          <option value="finished"{{if eq .S.WaitCI "finished"}} selected{{end}}>Until its checks finish</option>
+          <option value="passed"{{if eq .S.WaitCI "passed"}} selected{{end}}>Until its checks pass</option>
+          <option value="no"{{if eq .S.WaitCI "no"}} selected{{end}}>No</option>
+        </select></label>
+    </div>
+  </details>
+  {{end}}
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

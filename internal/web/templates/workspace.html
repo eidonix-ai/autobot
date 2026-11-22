@@ -33,6 +33,11 @@
 </section>
 
 <section class="panel tile">
+  <h2><a class="tile-link" href="{{.WS.Path}}/workflows">Workflows</a></h2>
+  <p class="muted">Pull requests · Issues</p>
+</section>
+
+<section class="panel tile">
   <h2><a class="tile-link" href="{{.WS.Path}}/cases">Case files</a></h2>
   {{if .Cases}}
   <p class="status">{{.CaseCount}} case{{if ne .CaseCount 1}}s{{end}}</p>

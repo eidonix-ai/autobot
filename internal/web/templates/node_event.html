@@ -18,8 +18,8 @@
     <label class="check"><input type="radio" name="mode" value="summoned"{{if eq .S.Mode "summoned"}} checked{{end}}> Only if summoned</label>
   </fieldset>
   <div class="row">
-    <label>Summon phrase <input name="summon_phrase" value="{{.S.SummonPhrase}}" maxlength="100" required></label>
-    <label>Stop tag <input name="stop_tag" value="{{.S.StopTag}}" maxlength="100" required></label>
+    <label>Summon phrase <span class="info" tabindex="0" data-tip="Case doesn't matter. ? stands for one character or none, * for any run of characters.">ⓘ</span> <input name="summon_phrase" value="{{.S.SummonPhrase}}" maxlength="100" required></label>
+    <label>Stop tag <span class="info" tabindex="0" data-tip="Case doesn't matter. ? stands for one character or none, * for any run of characters.">ⓘ</span> <input name="stop_tag" value="{{.S.StopTag}}" maxlength="100" required></label>
   </div>
   {{if eq .Kind "pr"}}<label class="check"><input type="checkbox" name="review_request"{{if .S.ReviewRequest}} checked{{end}}> A review request to the workspace's GitHub user also summons it</label>{{end}}
   <label class="check"><input type="checkbox" name="trusted_only"{{if .S.TrustedOnly}} checked{{end}}> Honor summons and the stop tag only from the author and collaborators</label>

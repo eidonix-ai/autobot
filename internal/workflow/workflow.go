@@ -299,6 +299,8 @@ func (s EventSettings) Check(typ string) error {
 		return errors.New("the stop tag must be 1 to 100 characters")
 	case strings.TrimSpace(s.SummonPhrase) == "" || len(s.SummonPhrase) > 100:
 		return errors.New("the summon phrase must be 1 to 100 characters")
+	case Stops(s.SummonPhrase, s.StopTag):
+		return errors.New("the stop tag matches the summon phrase itself, so every summons would stop the run")
 	}
 	if kind == Issue {
 		return nil

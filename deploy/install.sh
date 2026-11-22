@@ -1,0 +1,23 @@
+#!/bin/sh
+# Build Autobot and install or upgrade it on the triage host.
+# Usage: deploy/install.sh [ssh-host]   (default: triage)
+set -eu
+host=${1:-triage}
+cd "$(dirname "$0")/.."
+
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/autobot-linux ./cmd/autobot
+scp -q /tmp/autobot-linux "$host":autobot.new
+scp -q deploy/autobot.service "$host":autobot.service.new
+rm -f /tmp/autobot-linux
+
+ssh "$host" 'set -eu
+id autobot >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/autobot --no-create-home --shell /usr/sbin/nologin autobot
+sudo install -m 0755 autobot.new /usr/local/bin/autobot
+sudo install -m 0644 autobot.service.new /etc/systemd/system/autobot.service
+rm -f autobot.new autobot.service.new
+sudo systemctl daemon-reload
+sudo systemctl enable autobot.service >/dev/null
+sudo systemctl restart autobot.service
+sleep 1
+systemctl is-active autobot.service
+sudo journalctl -u autobot.service -n 5 --no-pager'

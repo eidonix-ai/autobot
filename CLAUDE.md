@@ -23,10 +23,18 @@ only what the current piece needs. Never copy its architecture, its config syste
 
 ## Hosting
 
-The old harness ran on 192.168.5.123 (ssh alias `triage`, user `agent`) on port 8080, published as
-autobot.eidonix.com through nginx on the DMZ host (192.168.5.2), LAN only. Its services
-(`triage.service`, `donor-hub.service`) were still running there on 2026-11-22. Don't stop them or
-take the port without Derek's OK.
+Autobot runs on 192.168.5.123 (ssh alias `triage`, user `agent`, passwordless sudo) as
+`autobot.service`, user `autobot`, listening on 192.168.5.123:8080, database
+`/var/lib/autobot/autobot.db`. Deploy or upgrade with `deploy/install.sh`.
+
+It is published as https://autobot.eidonix.com through nginx on the DMZ host (192.168.5.2, ssh alias
+`dmz`, no systemd: reload with `nginx -s reload`). The server block allows only 192.168.0.0/16 until
+the security audit passes (Derek, 2026-11-22). LAN clients on other subnets reach nginx as
+192.168.5.1; outside clients keep their public address, so the allow list holds. The pre-change config
+is `/etc/nginx/nginx.conf.pre-autobot-internal-20261122`.
+
+The old harness's `triage.service` and `donor-hub.service` were stopped and disabled on 2026-11-22
+(Derek's OK); their data is still in `/var/lib/triage`. Don't delete it without asking.
 
 ## Pieces
 

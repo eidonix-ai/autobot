@@ -1,0 +1,31 @@
+# Autobot on the triage host (192.168.5.123). Install with deploy/install.sh.
+[Unit]
+Description=Autobot web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=autobot
+Group=autobot
+ExecStart=/usr/local/bin/autobot serve -db /var/lib/autobot/autobot.db -addr 192.168.5.123:8080
+Restart=on-failure
+RestartSec=5
+
+# All state is the one SQLite file under /var/lib/autobot.
+StateDirectory=autobot
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

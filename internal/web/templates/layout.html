@@ -1,0 +1,27 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{with .Title}}{{.}} · {{end}}Autobot</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Autobot</a>
+  {{with .Me}}
+  <nav>
+    <a href="/">Workspaces</a>
+    {{if .IsAdmin}}<a href="/admin/users">Users</a>{{end}}
+    <a href="/account">{{.Name}}</a>
+    <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="link">Sign out</button></form>
+  </nav>
+  {{end}}
+</header>
+<main>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+{{with .Notice}}<p class="notice">{{.}}</p>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>{{end}}

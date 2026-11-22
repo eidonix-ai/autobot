@@ -1,0 +1,19 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/charter">Charter</a> /</p>
+<h1>Edit the project charter</h1>
+{{with .Conflict}}
+<p class="error">{{or .Author "Someone"}} saved revision {{.Rev}} on {{ts .CreatedAt}} while you were editing, so your changes were not saved.
+Your text is still below. <a href="{{$.WS.Path}}/charter" target="_blank" rel="noopener">Open the current charter in a new tab</a>, bring their changes into yours, then save. Saving now replaces revision {{.Rev}} with your text.</p>
+{{end}}
+<form method="post" action="{{.WS.Path}}/charter" class="editor">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="base_rev" value="{{.BaseRev}}">
+  <textarea name="body" aria-label="Charter (Markdown)" spellcheck="true">
+{{.Body}}</textarea>
+  <div class="row">
+    <button>Save</button>
+    <a href="{{.WS.Path}}/charter">Cancel</a>
+    <span class="hint">Markdown. Every save is kept as a revision.</span>
+  </div>
+</form>
+{{end}}

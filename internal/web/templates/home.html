@@ -1,0 +1,24 @@
+{{define "content"}}
+<h1>Workspaces</h1>
+{{if .Workspaces}}
+<ul class="cards">
+{{range .Workspaces}}
+  <li><a href="{{.Path}}"><strong>{{.Name}}</strong><span class="muted">created {{ts .CreatedAt}}</span></a></li>
+{{end}}
+</ul>
+{{else}}
+<p class="muted">{{if .Me.IsAdmin}}No workspaces yet. Create the first one below.{{else}}You have not been assigned to a workspace yet. Ask an admin to add you to one.{{end}}</p>
+{{end}}
+
+{{if .Me.IsAdmin}}
+<section class="panel">
+<h2>New workspace</h2>
+<form method="post" action="/workspaces" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input name="name" value="{{.Form.Get "name"}}" placeholder="owner/repo" aria-label="GitHub repository" required autocomplete="off" spellcheck="false">
+  <button>Create</button>
+</form>
+<p class="hint">Name it exactly as the repository is named on GitHub, for example NVIDIA/hyperflare-inference. A pasted github.com link works too.</p>
+</section>
+{{end}}
+{{end}}

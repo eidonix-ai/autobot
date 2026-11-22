@@ -1,0 +1,20 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<div class="titlebar">
+  <h1>Project charter</h1>
+  {{if .IsLatest}}<a class="button" href="{{.WS.Path}}/charter/edit">Edit</a>{{end}}
+</div>
+{{if not .IsLatest}}<p class="notice">This is revision {{.Charter.Rev}}, an older version. <a href="{{.WS.Path}}/charter">See the current charter</a>.</p>{{end}}
+
+<article class="panel markdown">{{.HTML}}</article>
+
+<details class="panel">
+  <summary>Revisions ({{len .History}})</summary>
+  <ul class="history">
+  {{range .History}}
+    <li><a href="{{$.WS.Path}}/charter?rev={{.Rev}}">Revision {{.Rev}}</a>{{if eq .Rev $.Charter.Rev}} <strong>(shown)</strong>{{end}}
+      <span class="muted">{{or .Author "unknown"}}, {{ts .CreatedAt}}</span></li>
+  {{end}}
+  </ul>
+</details>
+{{end}}

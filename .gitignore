@@ -1,0 +1,4 @@
+/autobot
+*.db
+*.db-wal
+*.db-shm

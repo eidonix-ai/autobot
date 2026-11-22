@@ -1,0 +1,26 @@
+{{define "content"}}
+<p class="crumbs"><a href="/admin/users">Users</a> /</p>
+<h1>{{.U.Username}}</h1>
+<form method="post" action="/admin/users/{{.U.ID}}" class="panel stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Display name <input name="display_name" value="{{.U.DisplayName}}" autocomplete="off"></label>
+
+  <fieldset>
+    <legend>Role</legend>
+    <label class="check"><input type="checkbox" name="is_admin"{{if .U.IsAdmin}} checked{{end}}> Admin: creates workspaces, manages users, and can open every workspace</label>
+    <label class="check"><input type="checkbox" name="disabled"{{if .U.Disabled}} checked{{end}}> Disabled: cannot sign in</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Assigned workspaces</legend>
+    {{range .Workspaces}}
+    <label class="check"><input type="checkbox" name="workspace" value="{{.ID}}"{{if index $.Assigned .ID}} checked{{end}}> {{.Name}}</label>
+    {{else}}
+    <p class="muted">There are no workspaces yet.</p>
+    {{end}}
+  </fieldset>
+
+  <label>New password <input type="password" name="password" minlength="8" autocomplete="new-password" placeholder="Leave blank to keep the current one"></label>
+  <button>Save</button>
+</form>
+{{end}}

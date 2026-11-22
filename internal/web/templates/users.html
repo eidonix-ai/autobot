@@ -1,0 +1,31 @@
+{{define "content"}}
+<h1>Users</h1>
+<div class="scroll">
+<table class="list">
+<thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Workspaces</th></tr></thead>
+<tbody>
+{{range .Users}}
+<tr{{if .Disabled}} class="disabled"{{end}}>
+  <td><a href="/admin/users/{{.ID}}">{{.Username}}</a></td>
+  <td>{{.DisplayName}}</td>
+  <td>{{if .IsAdmin}}Admin{{else}}Regular{{end}}{{if .Disabled}}, disabled{{end}}</td>
+  <td>{{if .IsAdmin}}<span class="muted">all, as an admin</span>{{else}}{{with index $.Assignments .ID}}{{join . ", "}}{{else}}<span class="muted">none</span>{{end}}{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+
+<section class="panel">
+<h2>Add a user</h2>
+<form method="post" action="/admin/users" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Username <input name="username" value="{{.Form.Get "username"}}" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+  <label>Display name <input name="display_name" value="{{.Form.Get "display_name"}}" autocomplete="off"></label>
+  <label>Starting password <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+  <label class="check"><input type="checkbox" name="is_admin"{{if .Form.Get "is_admin"}} checked{{end}}> Admin</label>
+  <button>Add user</button>
+</form>
+<p class="hint">They can change the password from their account page after signing in.</p>
+</section>
+{{end}}

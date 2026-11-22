@@ -1,0 +1,42 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> /</p>
+<h1>{{.WS.Name}}</h1>
+<p class="muted"><a href="{{.WS.GitHubURL}}">github.com/{{.WS.Name}}</a></p>
+
+<div class="grid">
+<section class="panel">
+  <h2>Project charter</h2>
+  <p>Revision {{.Charter.Rev}}{{with .Charter.Author}}, saved by {{.}}{{end}} on {{ts .Charter.CreatedAt}}.</p>
+  <p><a class="button" href="{{.WS.Path}}/charter">Open the charter</a></p>
+</section>
+
+<section class="panel">
+  <h2>Resources</h2>
+  <p class="muted">Test hardware from donors will be listed here once the donor connector is built.</p>
+</section>
+
+<section class="panel">
+  <h2>Case files</h2>
+  <p class="muted">Review cases for this repository's pull requests and issues will be listed here.</p>
+</section>
+
+<section class="panel">
+  <h2>Members</h2>
+  {{if .Members}}
+  <ul class="plain">{{range .Members}}<li>{{.Name}} <span class="muted">{{.Username}}</span></li>{{end}}</ul>
+  {{else}}
+  <p class="muted">No one is assigned yet.</p>
+  {{end}}
+  <p class="hint">Admins can open every workspace.{{if .Me.IsAdmin}} Assign people from <a href="/admin/users">Users</a>.{{end}}</p>
+</section>
+</div>
+
+<section class="panel">
+  <h2>History</h2>
+  {{if .Events}}
+  <ul class="history">{{range .Events}}<li><time>{{ts .At}}</time> {{or .Actor "Someone"}} {{.Summary}}</li>{{end}}</ul>
+  {{else}}
+  <p class="muted">Nothing has happened yet.</p>
+  {{end}}
+</section>
+{{end}}

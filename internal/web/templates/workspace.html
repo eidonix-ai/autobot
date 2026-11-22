@@ -25,8 +25,8 @@
 <section class="panel tile">
   <h2><button class="tile-link" popovertarget="models-modal">Inference</button></h2>
   {{if .Available}}
-  <p class="status"><span class="dot {{if .ChatModels}}on{{else}}off{{end}}"></span> {{if .ChatModels}}{{.ChatModels}} model{{if ne .ChatModels 1}}s{{end}} configured{{else}}No models{{end}}</p>
-  <p class="status"><span class="dot {{if .DecisionModels}}on{{else}}off{{end}}"></span> {{if .DecisionModels}}{{.DecisionModels}} decision model{{if ne .DecisionModels 1}}s{{end}} configured{{else}}No decision models{{end}}</p>
+  <p class="status"><span class="dot {{if .ChatModels}}on{{else}}off{{end}}"></span> {{if .ChatModels}}{{.ChatModels}}{{else}}No{{end}} text model{{if ne .ChatModels 1}}s{{end}}</p>
+  <p class="status"><span class="dot {{if .DecisionModels}}on{{else}}off{{end}}"></span> {{if .DecisionModels}}{{.DecisionModels}}{{else}}No{{end}} decision model{{if ne .DecisionModels 1}}s{{end}}</p>
   {{else}}
   <p class="status"><span class="dot off"></span> 🙁 (No models assigned)</p>
   {{end}}
@@ -89,7 +89,7 @@
   <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th><th>Use</th></tr></thead>
   <tbody>{{range .Available}}<tr>
     <td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td>
-    <td class="muted">{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}decisions{{else}}chat{{end}}</td>
+    <td class="muted">{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}decisions{{else}}text{{end}}</td>
   </tr>{{end}}</tbody>
   </table></div>
   {{else}}<p class="muted">🙁 (No models assigned)</p>{{end}}

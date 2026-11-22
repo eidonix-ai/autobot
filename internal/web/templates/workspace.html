@@ -26,7 +26,7 @@
 <section class="panel tile">
   <h2><button class="tile-link" popovertarget="models-modal">Models</button></h2>
   {{if .Available}}
-  <p class="status"><span class="dot on"></span> 🙂 {{len .Available}} model{{if ne (len .Available) 1}}s{{end}} configured</p>
+  <p class="status"><span class="dot on"></span> {{len .Available}} model{{if ne (len .Available) 1}}s{{end}} configured</p>
   {{else}}
   <p class="status"><span class="dot off"></span> 🙁 (No models assigned)</p>
   {{end}}

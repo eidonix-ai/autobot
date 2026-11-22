@@ -63,8 +63,12 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
    own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
    fan out and merge; loops are refused for now. Templates use {tags}; a step's "Output to" tag is
-   kept per case (one PR or issue) and replaced by the next write. Placed and configured so far;
-   the engine and the agent harness are next. Web search comes from Tavily or Brave providers,
+   kept per case (one PR or issue) and replaced by the next write. Shift-click tests one block with
+   values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
+   through finish, refuses "met" with open plan steps or with files cited but never read, warns
+   near its turn budget, and trims old tool output when sending; transcripts are stored per
+   message, gzipped. Built so far: PR and web tools, personas. Next: machine sessions in the
+   connector (bash on donated hardware), sub-agents, long tests that resume the agent, the engine. Web search comes from Tavily or Brave providers,
    lent like inference; decision routes are detected per provider with its key.
 
 ## Testing

@@ -183,3 +183,10 @@ ul.models .model { overflow: hidden; text-overflow: ellipsis; white-space: nowra
   background: var(--text); color: var(--bg); pointer-events: none; opacity: 0; z-index: 10;
 }
 .info:hover::after, .info:focus::after { opacity: 1; }
+
+/* A card that opens its full page when clicked anywhere; links and (i)s inside stay their own. */
+.panel.tile { position: relative; transition: border-color 0.15s; }
+.panel.tile:hover { border-color: var(--accent); }
+.panel.tile h2 a.tile-link { color: inherit; text-decoration: none; }
+.panel.tile a.tile-link::after { content: ""; position: absolute; inset: 0; border-radius: 8px; }
+.panel.tile a:not(.tile-link), .panel.tile .info { position: relative; z-index: 1; }

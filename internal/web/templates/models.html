@@ -1,0 +1,20 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>Models</h1>
+<form method="get" action="{{.WS.Path}}/models" class="row search">
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search by model, provider or lender" aria-label="Search models" autofocus>
+  <button>Search</button>
+  {{if .Q}}<a href="{{.WS.Path}}/models">Clear</a>{{end}}
+</form>
+<p class="muted">{{if .Q}}{{len .Models}} of {{.Total}}{{else}}{{.Total}} model{{if ne .Total 1}}s{{end}}{{end}}</p>
+{{if .Models}}
+<div class="scroll"><table class="list dense members">
+<thead><tr><th>Model</th><th>Provider</th><th>Lent by</th><th>Use</th></tr></thead>
+<tbody>{{range .Models}}<tr>
+  <td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td>
+  <td class="muted">{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}decisions{{else}}chat{{end}}</td>
+</tr>{{end}}</tbody>
+</table></div>
+{{end}}
+<p><a href="/providers">Lend Inference</a></p>
+{{end}}

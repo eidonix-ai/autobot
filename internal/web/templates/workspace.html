@@ -29,11 +29,12 @@
   <p><a href="{{.WS.Path}}/machines/new">Add a machine</a></p>
 </section>
 
-<section class="panel">
-  <h2>Models</h2>
+<section class="panel tile">
+  <h2><a class="tile-link" href="{{.WS.Path}}/models">Models</a></h2>
   {{if .Available}}
-  <ul class="plain models">{{range .Available}}{{$about := printf "%s · lent by %s" .ProviderName .Owner}}{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}{{$about = printf "%s · decisions" $about}}{{end}}
-    <li><span class="model">{{.Model}}</span> <span class="info" data-tip="{{$about}}" aria-label="{{$about}}" tabindex="0">ⓘ</span></li>{{end}}</ul>
+  <ul class="plain models">{{range $i, $m := .Available}}{{if lt $i 5}}{{$about := printf "%s · lent by %s" $m.ProviderName $m.Owner}}{{if or (eq $m.Kind "decisions") (eq $m.Kind "systemone")}}{{$about = printf "%s · decisions" $about}}{{end}}
+    <li><span class="model">{{$m.Model}}</span> <span class="info" data-tip="{{$about}}" aria-label="{{$about}}" tabindex="0">ⓘ</span></li>{{end}}{{end}}</ul>
+  {{if gt (len .Available) 5}}<p class="muted">… and {{sub (len .Available) 5}} more</p>{{end}}
   {{else}}
   <p class="muted">🙁 (No models assigned)</p>
   {{end}}
@@ -51,15 +52,13 @@
   {{end}}
 </section>
 
-<section class="panel">
-  <h2>Members</h2>
+<section class="panel tile">
+  <h2><a class="tile-link" href="{{.WS.Path}}/members">Members</a></h2>
   {{if .Members}}
-  <p class="names">{{range $i, $m := .Members}}{{if lt $i 10}}{{if $i}}, {{end}}<a href="{{$.WS.Path}}/members/{{$m.Username}}">{{$m.Name}}</a>{{end}}{{end}}{{if gt (len .Members) 10}}, <a href="{{.WS.Path}}/members">… and {{sub (len .Members) 10}} more</a>{{end}}</p>
-  {{if gt (len .Members) 10}}{{else}}<p><a href="{{.WS.Path}}/members" class="muted">All members</a></p>{{end}}
+  <p class="names">{{range $i, $m := .Members}}{{if lt $i 10}}{{if $i}}, {{end}}{{$m.Name}}{{end}}{{end}}{{if gt (len .Members) 10}}, <span class="muted">… and {{sub (len .Members) 10}} more</span>{{end}}</p>
   {{else}}
   <p class="muted">No one is assigned yet.</p>
   {{end}}
-  <p class="hint">Admins can open every workspace.{{if .Me.IsAdmin}} Change who is assigned in <a href="{{.WS.Path}}/settings">Settings</a>.{{end}}</p>
 </section>
 </div>
 

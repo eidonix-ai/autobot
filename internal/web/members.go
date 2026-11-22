@@ -67,3 +67,25 @@ func (s *Server) memberPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "member.html", map[string]any{"Title": m.Name() + " · " + ws.Name, "WS": ws, "M": m,
 		"Lends": lends, "LendOrder": order, "Events": events})
 }
+
+// modelsPage lists every model available to a workspace, densely, with a search box.
+func (s *Server) modelsPage(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.openWorkspace(w, r)
+	if !ok {
+		return
+	}
+	all, err := s.st.AvailableModels(ws.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	var shown []store.AvailableModel
+	for _, m := range all {
+		if q == "" || strings.Contains(strings.ToLower(m.Model+" "+m.ProviderName+" "+m.Owner), q) {
+			shown = append(shown, m)
+		}
+	}
+	s.render(w, r, http.StatusOK, "models.html", map[string]any{"Title": "Models · " + ws.Name, "WS": ws,
+		"Models": shown, "Total": len(all), "Q": r.URL.Query().Get("q")})
+}

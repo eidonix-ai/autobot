@@ -26,8 +26,8 @@ const usage = `Usage:
   autobot useradd [-db FILE] [-admin] [-name "Display Name"] USERNAME
   autobot passwd  [-db FILE] USERNAME              set a user's password (signs them out)
 
-useradd and passwd read the password from the terminal, or from the first line of stdin.
-Create the first admin with useradd -admin before starting the service.
+The first visitor to the web interface creates the first admin account. useradd and passwd
+are for recovery; they read the password from the terminal, or from the first line of stdin.
 `
 
 func main() {
@@ -73,7 +73,7 @@ func serve(args []string) error {
 	if users, err := st.Users(); err != nil {
 		return err
 	} else if len(users) == 0 {
-		log.Printf("no users yet: create the first admin with `autobot useradd -db %s -admin USERNAME`", *db)
+		log.Printf("no users yet: the first visitor to the web interface creates the admin account")
 	}
 	ui, err := web.New(st)
 	if err != nil {

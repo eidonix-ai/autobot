@@ -233,3 +233,75 @@ func TestPostsNeedFormToken(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestFirstTimeSetup(t *testing.T) {
+	e := newEnv(t)
+	b := e.browser()
+	if code, loc := redirect(t, b, "/login"); code != http.StatusSeeOther || loc != "/setup" {
+		t.Fatalf("/login with no users: %d %q, want /setup", code, loc)
+	}
+	if code, body := b.get("/setup"); code != http.StatusOK || !strings.Contains(body, "Create admin account") {
+		t.Fatalf("setup page: %d", code)
+	}
+
+	form := url.Values{"username": {"derek"}, "display_name": {"Derek"}, "password": {"password123"}, "confirm": {"password123"}}
+
+	// A form posted from another site is refused, so a web page cannot plant its own admin.
+	for _, h := range []map[string]string{{"Sec-Fetch-Site": "cross-site"}, {"Origin": "https://evil.example"}} {
+		req, _ := http.NewRequest("POST", e.srv.URL+"/setup", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+		resp, err := b.c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("cross-site setup with %v: %d, want 403", h, resp.StatusCode)
+		}
+	}
+	if has, _ := e.st.HasUsers(); has {
+		t.Fatal("cross-site post created a user")
+	}
+
+	mismatch := url.Values{"username": {"derek"}, "password": {"password123"}, "confirm": {"password124"}}
+	if code, _, body := b.post("/setup", mismatch); code != http.StatusBadRequest || !strings.Contains(body, "did not match") {
+		t.Fatalf("mismatched passwords: %d", code)
+	}
+
+	if code, loc, _ := b.post("/setup", form); code != http.StatusSeeOther || loc != "/" {
+		t.Fatalf("setup: %d %q", code, loc)
+	}
+	// Signed in as the new admin.
+	if code, body := b.get("/"); code != http.StatusOK || !strings.Contains(body, `href="/admin/users"`) {
+		t.Fatalf("home after setup: %d, admin nav missing", code)
+	}
+
+	// Setup is closed for good.
+	other := e.browser()
+	if code, loc := redirect(t, other, "/setup"); code != http.StatusSeeOther || loc != "/login" {
+		t.Fatalf("setup page after setup: %d %q", code, loc)
+	}
+	second := url.Values{"username": {"mallory"}, "password": {"password123"}, "confirm": {"password123"}}
+	if code, loc, _ := other.post("/setup", second); code != http.StatusSeeOther || loc != "/login" {
+		t.Fatalf("second setup: %d %q", code, loc)
+	}
+	if _, err := e.st.UserByUsername("mallory"); err == nil {
+		t.Fatal("second setup created a user")
+	}
+	if code, _ := other.get("/login"); code != http.StatusOK {
+		t.Fatalf("login page after setup: %d", code)
+	}
+}
+
+func redirect(t *testing.T, b *browser, path string) (int, string) {
+	t.Helper()
+	resp, err := b.c.Get(b.e.srv.URL + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode, resp.Header.Get("Location")
+}

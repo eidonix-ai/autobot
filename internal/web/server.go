@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	_ "time/tzdata" // the Eastern-time display works on hosts without a zoneinfo database
 
@@ -37,6 +38,7 @@ type Server struct {
 	pages map[string]*template.Template
 	md    goldmark.Markdown
 	mux   *http.ServeMux
+	ready atomic.Bool // set once a user exists; users are never deleted, so it never goes back
 }
 
 // New builds the web interface.
@@ -78,6 +80,8 @@ func (s *Server) routes() {
 	static, _ := fs.Sub(assets, "static")
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 
+	s.mux.HandleFunc("GET /setup", s.setupPage)
+	s.mux.HandleFunc("POST /setup", s.setup)
 	s.mux.HandleFunc("GET /login", s.loginPage)
 	s.mux.HandleFunc("POST /login", s.login)
 	s.mux.Handle("POST /logout", s.auth(s.logout))
@@ -97,15 +101,32 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /admin/users/{id}", s.admin(s.updateUser))
 }
 
-// Handler is the root handler, with security headers on every response.
+// Handler is the root handler. It sets security headers on every response and refuses form posts
+// sent from other sites, which protects the sign-in and setup forms that have no session token.
 func (s *Server) Handler() http.Handler {
+	guarded := http.NewCrossOriginProtection().Handler(s.mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
-		s.mux.ServeHTTP(w, r)
+		guarded.ServeHTTP(w, r)
 	})
+}
+
+// setupNeeded reports whether no user exists yet, in which case the first visitor creates the admin.
+func (s *Server) setupNeeded() (bool, error) {
+	if s.ready.Load() {
+		return false, nil
+	}
+	has, err := s.st.HasUsers()
+	if err != nil {
+		return false, err
+	}
+	if has {
+		s.ready.Store(true)
+	}
+	return !has, nil
 }
 
 type session struct {

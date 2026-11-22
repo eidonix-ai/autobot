@@ -67,24 +67,68 @@ func hashPassword(pw string) (string, error) {
 	return string(h), err
 }
 
-// CreateUser adds a user. Usernames are stored in lower case and are unique.
-func (s *Store) CreateUser(username, displayName, password string, admin bool) (*User, error) {
+// ErrSetupDone means the first admin has already been created.
+var ErrSetupDone = errors.New("setup is already done")
+
+// newUser checks a new user's username and password and returns the stored username and hash.
+func newUser(username, password string) (string, string, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
 	if !usernameRE.MatchString(username) {
-		return nil, invalid("Usernames are 1 to 32 lower-case letters, digits, dots, dashes or underscores.")
+		return "", "", invalid("Usernames are 1 to 32 lower-case letters, digits, dots, dashes or underscores.")
 	}
 	hash, err := hashPassword(password)
+	return username, hash, err
+}
+
+func insertUser(q querier, username, displayName, hash string, admin bool) (int64, error) {
+	res, err := q.Exec(`INSERT INTO users (username, display_name, password_hash, is_admin, created_at)
+		VALUES (?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING`,
+		username, strings.TrimSpace(displayName), hash, admin, now())
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, invalid("A user named %q already exists.", username)
+	}
+	return res.LastInsertId()
+}
+
+// CreateUser adds a user. Usernames are stored in lower case and are unique.
+func (s *Store) CreateUser(username, displayName, password string, admin bool) (*User, error) {
+	username, hash, err := newUser(username, password)
+	if err != nil {
+		return nil, err
+	}
+	id, err := insertUser(s.db, username, displayName, hash, admin)
+	if err != nil {
+		return nil, err
+	}
+	return s.User(id)
+}
+
+// HasUsers reports whether any user exists. Users are never deleted, so once true it stays true.
+func (s *Store) HasUsers() (bool, error) {
+	var has bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM users)`).Scan(&has)
+	return has, err
+}
+
+// CreateFirstAdmin creates an admin only while no user exists at all, and returns ErrSetupDone
+// otherwise. The check and the insert are one statement, so of two simultaneous attempts exactly
+// one succeeds.
+func (s *Store) CreateFirstAdmin(username, displayName, password string) (*User, error) {
+	username, hash, err := newUser(username, password)
 	if err != nil {
 		return nil, err
 	}
 	res, err := s.db.Exec(`INSERT INTO users (username, display_name, password_hash, is_admin, created_at)
-		VALUES (?, ?, ?, ?, ?) ON CONFLICT (username) DO NOTHING`,
-		username, strings.TrimSpace(displayName), hash, admin, now())
+		SELECT ?, ?, ?, 1, ? WHERE NOT EXISTS (SELECT 1 FROM users)`,
+		username, strings.TrimSpace(displayName), hash, now())
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, invalid("A user named %q already exists.", username)
+		return nil, ErrSetupDone
 	}
 	id, _ := res.LastInsertId()
 	return s.User(id)

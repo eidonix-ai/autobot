@@ -26,12 +26,13 @@ Requires Go 1.27. There is no Node and no C toolchain; SQLite is the pure-Go `mo
 
 ```sh
 go build -o autobot ./cmd/autobot
-./autobot useradd -db autobot.db -admin -name "Your Name" yourname   # prompts for a password
 ./autobot serve -db autobot.db -addr 127.0.0.1:8080
 ```
 
-Then sign in at http://127.0.0.1:8080 and create a workspace. `autobot passwd USERNAME` resets a
-password from the command line (for a locked-out admin).
+Open http://127.0.0.1:8080. While there are no users, the first visitor is taken to a setup page
+and creates the first admin account; after that the page is closed for good. For recovery,
+`autobot useradd -admin USERNAME` adds an admin and `autobot passwd USERNAME` resets a password from
+the command line.
 
 Build for the Linux host with `GOOS=linux GOARCH=amd64 go build -o autobot ./cmd/autobot`.
 
@@ -51,7 +52,11 @@ stopped, or with `sqlite3 autobot.db ".backup copy.db"` while it runs.
 - Passwords are bcrypt hashes; session cookies are HttpOnly and SameSite=Lax, and the database stores
   only a hash of each session token. Every form post carries a per-session token.
 - The charter renders Markdown with raw HTML escaped and `javascript:` links dropped.
-- The first admin is created on the command line, so there is no "first visitor becomes admin" window.
+- Until setup is done, anyone who can reach the site can create the first admin, so finish setup
+  as soon as the service is first started. Only one admin can come out of setup, however many
+  people submit at once.
+- Form posts from other sites are refused (Go's `http.CrossOriginProtection`), so a web page cannot
+  submit the setup or sign-in form through a visitor's browser.
 - There is no sign-in rate limit yet. Keep the service on the LAN, behind the nginx allow list,
   until there is one.
 

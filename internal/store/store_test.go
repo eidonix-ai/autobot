@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,5 +238,41 @@ func TestUsernames(t *testing.T) {
 	}
 	if _, err := st.CreateUser("short", "", "1234567", false); !isInput(err) {
 		t.Error("7-character password accepted")
+	}
+}
+
+func TestCreateFirstAdmin(t *testing.T) {
+	st := open(t)
+	if has, _ := st.HasUsers(); has {
+		t.Fatal("new database has users")
+	}
+	if _, err := st.CreateFirstAdmin("x", "", "short"); !isInput(err) {
+		t.Fatalf("weak password: %v, want input error", err)
+	}
+
+	// Many simultaneous attempts: exactly one becomes the admin.
+	const n = 20
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			_, err := st.CreateFirstAdmin(fmt.Sprintf("user%d", i), "", "password123")
+			errs <- err
+		}()
+	}
+	won := 0
+	for range n {
+		switch err := <-errs; {
+		case err == nil:
+			won++
+		case !errors.Is(err, ErrSetupDone):
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	users, _ := st.Users()
+	if won != 1 || len(users) != 1 || !users[0].IsAdmin {
+		t.Fatalf("%d winners, users %+v; want exactly one admin", won, users)
+	}
+	if _, err := st.CreateFirstAdmin("late", "", "password123"); !errors.Is(err, ErrSetupDone) {
+		t.Fatalf("setup after the first user: %v", err)
 	}
 }

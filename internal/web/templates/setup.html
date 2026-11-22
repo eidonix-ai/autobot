@@ -1,0 +1,14 @@
+{{define "content"}}
+<section class="panel narrow">
+<h1>Set up Autobot</h1>
+<p>No one has an account yet. Create the first admin account; you will be signed in with it.</p>
+<form method="post" action="/setup" class="stack">
+  <label>Username <input name="username" value="{{.Form.Get "username"}}" required autofocus autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+  <label>Display name <input name="display_name" value="{{.Form.Get "display_name"}}" autocomplete="name"></label>
+  <label>Password <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+  <label>Password again <input type="password" name="confirm" required minlength="8" autocomplete="new-password"></label>
+  <button>Create admin account</button>
+</form>
+<p class="hint">This page only works until the first account exists. After that, admins add everyone else from Users.</p>
+</section>
+{{end}}

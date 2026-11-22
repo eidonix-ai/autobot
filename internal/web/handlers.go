@@ -10,13 +10,82 @@ import (
 	"github.com/eidonix-ai/autobot/internal/store"
 )
 
+// --- first-time setup ---
+
+// toSetup sends the visitor to the setup page while no user exists, and reports whether it did.
+func (s *Server) toSetup(w http.ResponseWriter, r *http.Request) bool {
+	need, err := s.setupNeeded()
+	if err != nil {
+		s.fail(w, err)
+		return true
+	}
+	if need {
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+	}
+	return need
+}
+
+func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
+	need, err := s.setupNeeded()
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if !need {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	s.render(w, r, http.StatusOK, "setup.html", map[string]any{"Title": "Set up Autobot"})
+}
+
+func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxForm)
+	r.ParseForm()
+	f := r.PostForm
+	again := func(msg string) {
+		s.render(w, r, http.StatusBadRequest, "setup.html", map[string]any{"Title": "Set up Autobot", "Form": f, "Error": msg})
+	}
+	if f.Get("password") != f.Get("confirm") {
+		again("The two passwords did not match.")
+		return
+	}
+	u, err := s.st.CreateFirstAdmin(f.Get("username"), f.Get("display_name"), f.Get("password"))
+	if errors.Is(err, store.ErrSetupDone) {
+		s.ready.Store(true)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if msg, ok := inputError(err); ok {
+		again(msg)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.ready.Store(true)
+	token, err := s.st.CreateSession(u.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	setSessionCookie(w, r, token, int(store.SessionTTL.Seconds()))
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 // --- signing in and out ---
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
+	if s.toSetup(w, r) {
+		return
+	}
 	s.render(w, r, http.StatusOK, "login.html", map[string]any{"Title": "Sign in", "Next": safeNext(r.URL.Query().Get("next"))})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if s.toSetup(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxForm)
 	r.ParseForm()
 	next := safeNext(r.PostForm.Get("next"))

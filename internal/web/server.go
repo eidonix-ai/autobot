@@ -78,6 +78,8 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		"short": func(s string, n int) string { s = strings.TrimPrefix(s, "sha256:"); return s[:min(n, len(s))] },
 		"ago":   func(t time.Time) string { return time.Since(t).Round(time.Second).String() + " ago" },
 		"pct":   func(p float64) float64 { return p * 100 },
+		"sub":   func(a, b int) int { return a - b },
+		"tsShort": func(t time.Time) string { return t.In(eastern).Format("Jan 2, 3:04 PM") },
 	}
 	s := &Server{
 		st:     st,
@@ -146,6 +148,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /connector/v1/runs/{id}/output", s.connectorAPI(s.runOutput))
 	s.mux.Handle("POST /connector/v1/runs/{id}/result", s.connectorAPI(s.runResult))
 
+	s.mux.Handle("GET /w/{owner}/{repo}/members", s.auth(s.membersPage))
+	s.mux.Handle("GET /w/{owner}/{repo}/members/{username}", s.auth(s.memberPage))
+	s.mux.Handle("GET /w/{owner}/{repo}/cases", s.auth(s.casesPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/cases/{number}", s.auth(s.casePage))
 	s.mux.Handle("GET /w/{owner}/{repo}/cases/{number}/edit", s.auth(s.caseEdit))
 	s.mux.Handle("POST /w/{owner}/{repo}/cases/{number}", s.auth(s.caseSave))

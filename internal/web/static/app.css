@@ -157,3 +157,15 @@ select {
   border: 1px solid var(--line); border-radius: 6px; padding: 0.45rem 0.6rem; width: 100%;
 }
 select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+details.more { margin-top: 0.4rem; }
+.scrollbox { max-height: 22rem; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 0 0.8rem; }
+table.dense th, table.dense td { padding: 0.3rem 0.7rem; font-size: 0.9rem; }
+table.dense td:nth-child(2) { width: 100%; }
+a.plainlink { color: var(--text); text-decoration: none; }
+a.plainlink:hover { color: var(--accent); }
+form.search { margin-bottom: 0.6rem; }
+form.search input { flex: 1 1 20rem; }
+
+td.nowrap, .nowrap { white-space: nowrap; }
+p.names { line-height: 1.7; }

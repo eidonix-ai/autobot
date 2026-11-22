@@ -320,6 +320,7 @@ func (s *Store) DeleteProvider(id int64) error {
 type AvailableModel struct {
 	ProviderID   int64
 	ProviderName string
+	OwnerID      int64
 	Owner        string // who lends it, and pays for it
 	Kind         string
 	Model        string
@@ -329,7 +330,7 @@ type AvailableModel struct {
 // model of every provider lent to it whose owner is still enabled and still assigned to the
 // workspace (or an admin). A provider with no permitted models, or lent nowhere, contributes nothing.
 func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, `+authorName+`, p.kind, m.model_id FROM provider_loans l
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.owner_id, `+authorName+`, p.kind, m.model_id FROM provider_loans l
 		JOIN providers p ON p.id = l.provider_id
 		JOIN users u ON u.id = p.owner_id AND u.disabled = 0
 		JOIN provider_models m ON m.provider_id = p.id
@@ -343,7 +344,7 @@ func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
 	var out []AvailableModel
 	for rows.Next() {
 		var a AvailableModel
-		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.Owner, &a.Kind, &a.Model); err != nil {
+		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.OwnerID, &a.Owner, &a.Kind, &a.Model); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

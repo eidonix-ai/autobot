@@ -444,3 +444,25 @@ func (s *Store) SetMembers(workspaceID int64, userIDs []int64, actor *User) erro
 func (s *Store) WorkspaceByID(id int64) (*Workspace, error) {
 	return scanWorkspace(s.db.QueryRow(`SELECT id, name, created_at FROM workspaces WHERE id = ?`, id))
 }
+
+// EventsBy returns a person's most recent history in a workspace, newest first.
+func (s *Store) EventsBy(workspaceID, userID int64, limit int) ([]Event, error) {
+	rows, err := s.db.Query(`SELECT `+authorName+`, e.summary, e.created_at FROM events e
+		LEFT JOIN users u ON u.id = e.actor_id WHERE e.workspace_id = ? AND e.actor_id = ? ORDER BY e.id DESC LIMIT ?`,
+		workspaceID, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var e Event
+		var at int64
+		if err := rows.Scan(&e.Actor, &e.Summary, &at); err != nil {
+			return nil, err
+		}
+		e.At = time.Unix(at, 0)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

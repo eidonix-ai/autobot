@@ -42,7 +42,9 @@
 <section class="panel">
   <h2>Case files</h2>
   {{if .Cases}}
-  <ul class="plain">{{range .Cases}}<li><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a> {{.Title}} <span class="muted">· {{ts .UpdatedAt}}</span></li>{{end}}</ul>
+  <p>{{.CaseCount}} case{{if ne .CaseCount 1}}s{{end}}. Most recently changed:</p>
+  <ul class="plain">{{range .Cases}}<li><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a> <span class="muted">{{.Title}}</span></li>{{end}}</ul>
+  <p><a class="button" href="{{.WS.Path}}/cases">Open case files</a></p>
   {{else}}
   <p class="muted">No cases yet. Cases open when intake picks up a new issue or pull request.</p>
   {{end}}
@@ -51,7 +53,8 @@
 <section class="panel">
   <h2>Members</h2>
   {{if .Members}}
-  <ul class="plain">{{range .Members}}<li>{{.Name}} <span class="muted">{{.Username}}</span></li>{{end}}</ul>
+  <p class="names">{{range $i, $m := .Members}}{{if lt $i 10}}{{if $i}}, {{end}}<a href="{{$.WS.Path}}/members/{{$m.Username}}">{{$m.Name}}</a>{{end}}{{end}}{{if gt (len .Members) 10}}, <a href="{{.WS.Path}}/members">… and {{sub (len .Members) 10}} more</a>{{end}}</p>
+  {{if gt (len .Members) 10}}{{else}}<p><a href="{{.WS.Path}}/members" class="muted">All members</a></p>{{end}}
   {{else}}
   <p class="muted">No one is assigned yet.</p>
   {{end}}
@@ -62,7 +65,12 @@
 <section class="panel">
   <h2>History</h2>
   {{if .Events}}
-  <ul class="history">{{range .Events}}<li><time>{{ts .At}}</time> {{or .Actor "Someone"}} {{.Summary}}</li>{{end}}</ul>
+  <ul class="history">{{range $i, $e := .Events}}{{if lt $i 2}}<li><time>{{ts $e.At}}</time> {{or $e.Actor "Autobot"}} {{$e.Summary}}</li>{{end}}{{end}}</ul>
+  {{if gt (len .Events) 2}}
+  <details class="more"><summary>All changes ({{len .Events}})</summary>
+    <ul class="history scrollbox">{{range .Events}}<li><time>{{ts .At}}</time> {{or .Actor "Autobot"}} {{.Summary}}</li>{{end}}</ul>
+  </details>
+  {{end}}
   {{else}}
   <p class="muted">Nothing has happened yet.</p>
   {{end}}

@@ -180,7 +180,11 @@ func (s *Server) casePage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Contributions": contributions,
+	newest := make([]store.Contribution, len(contributions))
+	for i, x := range contributions {
+		newest[len(contributions)-1-i] = x
+	}
+	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Newest": newest,
 		"HTML": template.HTML(html.String()), "API": publicURL(r) + "/api/v1/cases/" + c.UUID, "Private": s.facts(r.Context(), ws).private}
 	if r.URL.Query().Has("saved") {
 		data["Notice"] = "Saved."
@@ -270,4 +274,25 @@ func secretHelp(f repoFacts) string {
 		b.WriteString("or sent a value that does not match. If the file changed in the last five minutes, try again shortly.\n")
 	}
 	return b.String()
+}
+
+// casesPage lists a workspace's cases densely, with a search box.
+func (s *Server) casesPage(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.openWorkspace(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query().Get("q")
+	cases, err := s.st.FindCases(ws.ID, q, 1000)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	total, err := s.st.CaseCount(ws.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, http.StatusOK, "cases.html", map[string]any{"Title": "Case files · " + ws.Name, "WS": ws,
+		"Cases": cases, "Q": q, "Total": total})
 }

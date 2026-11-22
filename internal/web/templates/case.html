@@ -8,13 +8,12 @@
 
 <section class="panel">
 <h2>History</h2>
-<div class="scroll"><table class="list">
-<thead><tr><th>When</th><th>By</th><th>What</th></tr></thead>
-<tbody>{{range .Contributions}}<tr>
-  <td>{{ts .StartedAt}}</td><td>{{.Author}}</td>
-  <td>{{if .Open}}<span class="muted">writing, not yet added</span>{{else if .Note}}edited: {{.Note}}{{else if .StartLine}}added {{if eq .StartLine .EndLine}}line {{.StartLine}}{{else}}lines {{.StartLine}}–{{.EndLine}}{{end}}{{else}}<span class="muted">added nothing</span>{{end}}</td>
-</tr>{{end}}</tbody>
-</table></div>
+<ul class="history">{{range $i, $c := .Newest}}{{if lt $i 2}}{{template "contribution" $c}}{{end}}{{end}}</ul>
+{{if gt (len .Newest) 2}}
+<details class="more"><summary>All changes ({{len .Newest}})</summary>
+  <ul class="history scrollbox">{{range .Newest}}{{template "contribution" .}}{{end}}</ul>
+</details>
+{{end}}
 </section>
 
 <section class="panel">
@@ -23,3 +22,6 @@
 <p class="hint">{{if .Private}}The repository is private, so an agent must send the contents of <code>.github/autobot-secret.txt</code> as a bearer token, for example <code>curl -H "Authorization: Bearer $(cat .github/autobot-secret.txt)" {{.API}}</code>.{{else}}The repository is public, so the address is enough.{{end}} The address is random; share it only where the case belongs.</p>
 </section>
 {{end}}
+
+{{define "contribution"}}<li><time>{{ts .StartedAt}}</time> {{.Author}}
+  {{if .Open}}<span class="muted">is writing; not yet added</span>{{else if .Note}}edited: {{.Note}}{{else if .StartLine}}added {{if eq .StartLine .EndLine}}line {{.StartLine}}{{else}}lines {{.StartLine}}–{{.EndLine}}{{end}}{{else}}<span class="muted">added nothing</span>{{end}}</li>{{end}}

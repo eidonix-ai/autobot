@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata" // Eastern time in case headlines, on hosts without a zoneinfo database
@@ -370,4 +371,57 @@ func CaseHeadline(at time.Time, repo, kind string, number int, title string) str
 	}
 	return fmt.Sprintf("Opened %s ET for [%s %s #%d](https://github.com/%s/%s/%d): %s",
 		at.In(eastern).Format("2006-01-02 15:04"), repo, label, number, repo, path, number, strings.TrimSpace(title))
+}
+
+// CaseSummary is one row of a workspace's list of cases.
+type CaseSummary struct {
+	Number    int
+	Kind      string
+	Title     string
+	Lines     int
+	UpdatedAt time.Time
+}
+
+// Label is how the case is named: "PR #459" or "Issue #12".
+func (c CaseSummary) Label() string { return Case{Number: c.Number, Kind: c.Kind}.Label() }
+
+// FindCases lists a workspace's cases, most recently changed first, matching q when it is not
+// empty: a number (with or without #) matches that issue or PR, anything else matches the title.
+func (s *Store) FindCases(workspaceID int64, q string, limit int) ([]CaseSummary, error) {
+	q = strings.TrimSpace(q)
+	query := `SELECT number, kind, title, length(contents) - length(replace(contents, char(10), '')), updated_at
+		FROM cases WHERE workspace_id = ?`
+	args := []any{workspaceID}
+	if n, err := strconv.Atoi(strings.TrimPrefix(q, "#")); err == nil {
+		query += ` AND number = ?`
+		args = append(args, n)
+	} else if q != "" {
+		query += ` AND title LIKE ? ESCAPE '\'`
+		args = append(args, "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(q)+"%")
+	}
+	query += ` ORDER BY updated_at DESC, number DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CaseSummary
+	for rows.Next() {
+		var c CaseSummary
+		var at int64
+		if err := rows.Scan(&c.Number, &c.Kind, &c.Title, &c.Lines, &at); err != nil {
+			return nil, err
+		}
+		c.UpdatedAt = time.Unix(at, 0)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CaseCount is how many cases a workspace has.
+func (s *Store) CaseCount(workspaceID int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM cases WHERE workspace_id = ?`, workspaceID).Scan(&n)
+	return n, err
 }

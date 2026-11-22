@@ -1,0 +1,30 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/members">Members</a> /</p>
+<h1>{{.M.Name}}</h1>
+<p class="muted">{{.M.Username}} · {{if .M.IsAdmin}}admin{{else}}user{{end}}{{if .M.Disabled}}, disabled{{end}} · in Autobot since {{ts .M.CreatedAt}}</p>
+
+<div class="grid">
+<section class="panel">
+  <h2>Lends to this workspace</h2>
+  {{if .LendOrder}}
+  <ul class="plain">{{range .LendOrder}}<li><strong>{{.}}</strong>: {{join (index $.Lends .) ", "}}</li>{{end}}</ul>
+  {{else}}
+  <p class="muted">No providers.</p>
+  {{end}}
+</section>
+</div>
+
+<section class="panel">
+  <h2>Recent activity here</h2>
+  {{if .Events}}
+  <ul class="history">{{range $i, $e := .Events}}{{if lt $i 2}}<li><time>{{ts $e.At}}</time> {{$e.Summary}}</li>{{end}}{{end}}</ul>
+  {{if gt (len .Events) 2}}
+  <details class="more"><summary>All activity ({{len .Events}})</summary>
+    <ul class="history scrollbox">{{range .Events}}<li><time>{{ts .At}}</time> {{.Summary}}</li>{{end}}</ul>
+  </details>
+  {{end}}
+  {{else}}
+  <p class="muted">Nothing yet.</p>
+  {{end}}
+</section>
+{{end}}

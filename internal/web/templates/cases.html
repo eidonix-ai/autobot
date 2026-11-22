@@ -1,0 +1,21 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>Case files</h1>
+<form method="get" action="{{.WS.Path}}/cases" class="row search">
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search by number or title, such as 460 or checkpoint" aria-label="Search case files" autofocus>
+  <button>Search</button>
+  {{if .Q}}<a href="{{.WS.Path}}/cases">Clear</a>{{end}}
+</form>
+<p class="muted">{{if .Q}}{{len .Cases}} of {{.Total}} cases match.{{else}}{{.Total}} case{{if ne .Total 1}}s{{end}}, most recently changed first.{{end}}</p>
+{{if .Cases}}
+<div class="scroll"><table class="list dense">
+<thead><tr><th>Case</th><th>Title</th><th>Lines</th><th>Changed</th></tr></thead>
+<tbody>{{range .Cases}}<tr>
+  <td class="nowrap"><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a></td>
+  <td><a href="{{$.WS.Path}}/cases/{{.Number}}" class="plainlink">{{.Title}}</a></td>
+  <td>{{.Lines}}</td>
+  <td class="muted nowrap">{{tsShort .UpdatedAt}}</td>
+</tr>{{end}}</tbody>
+</table></div>
+{{end}}
+{{end}}

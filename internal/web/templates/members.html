@@ -1,0 +1,16 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>Members</h1>
+<p class="muted">{{len .Members}} member{{if ne (len .Members) 1}}s{{end}}. Admins can open every workspace without being members.</p>
+{{if .Members}}
+<div class="scroll"><table class="list dense">
+<thead><tr><th>Name</th><th>Username</th><th>Role</th></tr></thead>
+<tbody>{{range .Members}}<tr>
+  <td><a href="{{$.WS.Path}}/members/{{.Username}}">{{.Name}}</a></td>
+  <td class="muted">{{.Username}}</td>
+  <td>{{if .IsAdmin}}Admin{{else}}User{{end}}{{if .Disabled}}, disabled{{end}}</td>
+</tr>{{end}}</tbody>
+</table></div>
+{{end}}
+{{if .Me.IsAdmin}}<p class="hint">Change who is assigned in <a href="{{.WS.Path}}/settings">Settings</a>.</p>{{end}}
+{{end}}

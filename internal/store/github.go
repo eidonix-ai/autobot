@@ -15,9 +15,9 @@ import (
 // changed since it was saved. The fix is to save the token again.
 var ErrTokenUnreadable = errors.New("the saved GitHub token cannot be decrypted with the current key; save it again")
 
-var errNoKey = errors.New("no encryption key is configured, so GitHub tokens cannot be stored")
+var errNoKey = errors.New("no encryption key is configured, so secrets cannot be stored")
 
-// UseKey sets the 32-byte key that seals GitHub tokens. Call it once, before serving.
+// UseKey sets the 32-byte key that seals GitHub tokens and provider API keys. Call it once, before serving.
 func (s *Store) UseKey(key []byte) error {
 	if len(key) != 32 {
 		return errors.New("the encryption key must be 32 bytes")
@@ -36,25 +36,41 @@ func tokenLabel(workspaceID int64) []byte {
 }
 
 func (s *Store) seal(workspaceID int64, token string) ([]byte, error) {
+	return s.sealWith(tokenLabel(workspaceID), token)
+}
+
+func (s *Store) unseal(workspaceID int64, sealed []byte) (string, error) {
+	plain, err := s.unsealWith(tokenLabel(workspaceID), sealed)
+	if errors.Is(err, errUnreadable) {
+		return "", ErrTokenUnreadable
+	}
+	return plain, err
+}
+
+// errUnreadable means a sealed value does not open with the current key and label.
+var errUnreadable = errors.New("the sealed value cannot be decrypted")
+
+// sealWith encrypts secret, binding it to label so that it opens only under the same label.
+func (s *Store) sealWith(label []byte, secret string) ([]byte, error) {
 	if s.aead == nil {
 		return nil, errNoKey
 	}
 	nonce := make([]byte, s.aead.NonceSize())
 	rand.Read(nonce)
-	return s.aead.Seal(nonce, nonce, []byte(token), tokenLabel(workspaceID)), nil
+	return s.aead.Seal(nonce, nonce, []byte(secret), label), nil
 }
 
-func (s *Store) unseal(workspaceID int64, sealed []byte) (string, error) {
+func (s *Store) unsealWith(label, sealed []byte) (string, error) {
 	if s.aead == nil {
 		return "", errNoKey
 	}
 	n := s.aead.NonceSize()
 	if len(sealed) < n {
-		return "", ErrTokenUnreadable
+		return "", errUnreadable
 	}
-	plain, err := s.aead.Open(nil, sealed[:n], sealed[n:], tokenLabel(workspaceID))
+	plain, err := s.aead.Open(nil, sealed[:n], sealed[n:], label)
 	if err != nil {
-		return "", ErrTokenUnreadable
+		return "", errUnreadable
 	}
 	return string(plain), nil
 }

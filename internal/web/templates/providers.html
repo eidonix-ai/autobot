@@ -1,0 +1,40 @@
+{{define "content"}}
+<h1>Providers</h1>
+{{if .Providers}}
+<div class="scroll">
+<table class="list">
+<thead><tr><th>Name</th><th>Kind</th><th>Endpoint</th><th>Models</th><th>API key</th></tr></thead>
+<tbody>
+{{range .Providers}}
+<tr>
+  <td><a href="/admin/providers/{{.ID}}">{{.Name}}</a></td>
+  <td>{{if eq .Kind "anthropic"}}Anthropic{{else}}OpenAI-compatible{{end}}</td>
+  <td>{{.Endpoint}}</td>
+  <td>{{if .ModelCount}}{{.ModelCount}}{{else}}<span class="muted">none</span>{{end}}</td>
+  <td>{{if .HasKey}}set{{else}}<span class="muted">not set</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No providers yet. Add the first one below.</p>
+{{end}}
+
+<section class="panel">
+<h2>Add a provider</h2>
+<form method="post" action="/admin/providers" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Provider
+    <select name="preset">
+      {{range .Presets}}<option value="{{.Key}}"{{if eq (or ($.Form.Get "preset") "openrouter") .Key}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </label>
+  <label>Name <input name="name" value="{{.Form.Get "name"}}" placeholder="Leave blank to use the provider's own name" autocomplete="off"></label>
+  <label>API key <input type="password" name="api_key" autocomplete="off" placeholder="Optional for some local endpoints"></label>
+  <label>Endpoint, for Custom only <input name="endpoint" value="{{.Form.Get "endpoint"}}" placeholder="https://llm.example.com/v1" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+  <button>Add provider</button>
+</form>
+<p class="hint">Autobot may call only the providers listed here, and only the models you permit on each one's page. The key is encrypted and never shown again.</p>
+</section>
+{{end}}

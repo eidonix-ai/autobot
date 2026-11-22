@@ -146,6 +146,14 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /admin/users", s.admin(s.createUser))
 	s.mux.Handle("GET /admin/users/{id}", s.admin(s.userPage))
 	s.mux.Handle("POST /admin/users/{id}", s.admin(s.updateUser))
+
+	s.mux.Handle("GET /admin/providers", s.admin(s.providerList))
+	s.mux.Handle("POST /admin/providers", s.admin(s.createProvider))
+	s.mux.Handle("GET /admin/providers/{id}", s.admin(s.provider))
+	s.mux.Handle("POST /admin/providers/{id}", s.admin(s.updateProvider))
+	s.mux.Handle("POST /admin/providers/{id}/discover", s.admin(s.discoverModels))
+	s.mux.Handle("POST /admin/providers/{id}/models", s.admin(s.setProviderModels))
+	s.mux.Handle("POST /admin/providers/{id}/delete", s.admin(s.deleteProvider))
 }
 
 // Handler is the root handler. It sets security headers on every response and refuses form posts

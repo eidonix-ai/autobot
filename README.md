@@ -31,6 +31,12 @@ This is the proof of concept. Piece 1 is done: users, workspaces and the project
   machine's owner starts the connector (below). Each machine's page shows its live state, GPU
   readings and the models in its models folder, and admins can run a test on it: a bash script,
   optionally on a branch, tag or commit of the repository. Output streams to the run's page.
+- **Providers** (admins, app-wide): the LLM inference providers Autobot may call, each with its kind
+  (OpenAI-compatible or Anthropic), endpoint, API key and the models it may use. Add one from a preset
+  (OpenAI, Anthropic, OpenRouter, Together AI, Groq, Fireworks, DeepInfra, Mistral, xAI, Google Gemini)
+  or a custom endpoint such as a local vLLM. "Discover models" asks the endpoint for its model list where it
+  offers one; model IDs can always be typed by hand. API keys are encrypted like GitHub tokens and never
+  shown again.
 - **Case files** are a placeholder until that piece is built.
 
 ## The connector on a donated machine
@@ -80,12 +86,13 @@ Build for the Linux host with `GOOS=linux GOARCH=amd64 go build -o autobot ./cmd
 | --- | --- |
 | `cmd/autobot` | the binary: `serve`, `useradd`, `passwd` |
 | `internal/store` | the SQLite database: schema migrations, users and sessions, workspaces, charter, history |
+| `internal/providers` | asking an inference provider which models it offers |
 | `internal/web` | the web interface: handlers, embedded templates and CSS (no JavaScript) |
 
 All settings and data live in the one SQLite file. Back it up by copying it while the service is
 stopped, or with `sqlite3 autobot.db ".backup copy.db"` while it runs.
 
-GitHub tokens in the database are encrypted (AES-256-GCM) with a key kept outside it: on the host,
+GitHub tokens and provider API keys in the database are encrypted (AES-256-GCM) with a key kept outside it: on the host,
 `/etc/autobot/secret.key` (root only, handed to the service by systemd); when run by hand, the key
 is `DB.key` next to the database, created on first start. Back the key up separately. Without it the
 saved tokens cannot be read and must be entered again; nothing else is lost.

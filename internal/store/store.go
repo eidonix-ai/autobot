@@ -24,7 +24,7 @@ func invalid(format string, a ...any) error { return &InputError{fmt.Sprintf(for
 // Store is the database. It is safe for concurrent use.
 type Store struct {
 	db   *sql.DB
-	aead cipher.AEAD // seals GitHub tokens; set once at start by UseKey
+	aead cipher.AEAD // seals GitHub tokens and provider API keys; set once at start by UseKey
 }
 
 // querier is satisfied by both *sql.DB and *sql.Tx, so helpers can run inside or outside a transaction.
@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -195,4 +195,24 @@ CREATE INDEX test_runs_by_machine ON test_runs(machine_id, id);
 // run's connector downloads straight from GitHub.
 const schemaV4 = `
 ALTER TABLE test_runs ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+`
+
+// The LLM inference providers Autobot may call, and the models it may use from each. The API key is
+// sealed with the key file like a GitHub token; auth names how Autobot signs in (only api_key so far).
+const schemaV5 = `
+CREATE TABLE providers (
+	id         INTEGER PRIMARY KEY,
+	name       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+	kind       TEXT    NOT NULL,                -- openai (any OpenAI-compatible API) or anthropic
+	endpoint   TEXT    NOT NULL,
+	auth       TEXT    NOT NULL DEFAULT 'api_key',
+	api_key    BLOB    NOT NULL DEFAULT x'',    -- sealed; empty when there is no key
+	created_by INTEGER REFERENCES users(id),
+	updated_at INTEGER NOT NULL
+);
+CREATE TABLE provider_models (
+	provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+	model_id    TEXT    NOT NULL,
+	PRIMARY KEY (provider_id, model_id)
+);
 `

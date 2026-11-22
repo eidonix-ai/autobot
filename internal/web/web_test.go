@@ -79,10 +79,12 @@ type env struct {
 	t   *testing.T
 	st  *store.Store
 	srv *httptest.Server
+	dir string // holds the database file
 }
 
 func newEnv(t *testing.T) *env {
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +97,7 @@ func newEnv(t *testing.T) *env {
 	}
 	srv := httptest.NewServer(ui.Handler())
 	t.Cleanup(func() { srv.Close(); st.Close() })
-	return &env{t, st, srv}
+	return &env{t, st, srv, dir}
 }
 
 // browser is one person's cookie jar.

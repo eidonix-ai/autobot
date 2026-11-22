@@ -27,7 +27,36 @@ This is the proof of concept. Piece 1 is done: users, workspaces and the project
   Competitors and Roadmap. Every save is kept as a revision; if two people edit at once, the second
   save is refused with their text kept, so nobody's edit is silently lost.
 - **History** lists what happened in a workspace: creation, charter edits, assignments.
-- **Resources** and **case files** are placeholders until their pieces are built.
+- **Resources**: donated test machines. An admin adds a machine and gets its token once; the
+  machine's owner starts the connector (below). Each machine's page shows its live state, GPU
+  readings and the models in its models folder, and admins can run a test on it: a bash script,
+  optionally on a branch, tag or commit of the repository. Output streams to the run's page.
+- **Case files** are a placeholder until that piece is built.
+
+## The connector on a donated machine
+
+`cmd/autobot-connector` runs on each donated machine as one Docker container
+(`deploy/connector/compose.yml`). It checks in with Autobot every two seconds over HTTPS with its
+machine token. For a run, it downloads the repository at the exact commit from GitHub and starts a
+fresh job container from the work image:
+
+- no network, so the job cannot reach the machine, its local network or the internet;
+- a read-only root filesystem, uid 1000, no capabilities, no privilege gain;
+- capped CPU, memory (no swap) and processes, with scratch only in a size-capped in-memory `/work`;
+- only the GPUs the run asked for, and the code and models folder mounted read-only.
+
+The container is removed when the run ends. `docker compose run --rm connector check` starts a job
+container with these settings and confirms each one from inside. The connector holds the Docker
+socket, as any CI runner does, so a donated machine should be used only for testing.
+
+Setting up a machine, once an admin has added it in Autobot and has its token:
+
+```sh
+cd deploy/connector
+cp example.env .env && chmod 600 .env     # fill in the token, work image and models folder
+docker compose up -d --build
+docker compose run --rm connector check
+```
 
 ## Run it
 

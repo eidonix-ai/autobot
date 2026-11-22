@@ -37,7 +37,7 @@
   <button class="secondary">Remove the GitHub identity</button>
 </form>
 {{end}}
-<p class="hint">Use a fine-grained token that can reach only this repository. The token is checked with GitHub before it is saved, stored encrypted, and never shown again. For reviews Autobot will need Metadata (read), Contents (read), Pull requests (read and write) and Issues (read and write).</p>
+<p class="hint">Which token: if the GitHub user's own account or organization owns the repository, a fine-grained token limited to this repository, with Metadata (read), Contents (read), Pull requests (read and write) and Issues (read and write). For someone else's public repository (such as NVIDIA's), fine-grained tokens are read-only, so use a classic token with only the public_repo scope. The token is checked with GitHub before it is saved, stored encrypted, and never shown again.</p>
 </section>
 
 <section class="panel">

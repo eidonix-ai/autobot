@@ -99,3 +99,39 @@ func TestProviderModelsAndChecks(t *testing.T) {
 		t.Fatalf("second delete: %v", err)
 	}
 }
+
+// A model counts as a decision model when its provider's kind answers decisions or its endpoint was
+// found to serve a decision route; an Anthropic provider never does.
+func TestModelUses(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
+	add := func(name, kind string) *Provider {
+		p, err := st.CreateProvider(ProviderEdit{Name: name, Kind: kind, Endpoint: "https://" + name + ".example/v1"}, admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.SetProviderModels(p.ID, []string{name + "-m"})
+		st.LendProvider(p, []int64{ws.ID}, admin)
+		return p
+	}
+	both := add("both", KindOpenAI)
+	add("text", KindOpenAI)
+	add("native", KindDecisions)
+	claude := add("claude", KindAnthropic)
+	st.SetProviderRoutes(both.ID, false, true)
+	st.SetProviderRoutes(claude.ID, true, true) // ignored: Anthropic has no decision routes
+	want := map[string]string{"both-m": "text, decisions", "text-m": "text", "native-m": "decisions", "claude-m": "text"}
+	all, err := st.AvailableModels(ws.ID)
+	if err != nil || len(all) != len(want) {
+		t.Fatalf("%v %+v", err, all)
+	}
+	for _, a := range all {
+		if a.Use() != want[a.Model] {
+			t.Errorf("%s: %q, want %q", a.Model, a.Use(), want[a.Model])
+		}
+	}
+	if p, _ := st.Provider(both.ID); p.DecisionAPI() != KindSystemOne || p.RoutesChecked.IsZero() {
+		t.Errorf("provider %+v", p)
+	}
+}

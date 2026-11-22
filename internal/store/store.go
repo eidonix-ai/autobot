@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -303,4 +303,12 @@ CREATE TABLE workflows (
 	updated_at   INTEGER NOT NULL,
 	PRIMARY KEY (workspace_id, kind)
 );
+`
+
+// What a provider's endpoint was found to serve besides its kind's own API: the decision routes
+// /decisions and /systemone, and when it was last asked (0: never).
+const schemaV10 = `
+ALTER TABLE providers ADD COLUMN decisions_route INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE providers ADD COLUMN systemone_route INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE providers ADD COLUMN routes_checked  INTEGER NOT NULL DEFAULT 0;
 `

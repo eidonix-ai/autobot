@@ -198,3 +198,46 @@ func tidy(models []Model) []Model {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+
+// Routes reports whether an OpenAI-compatible endpoint also serves the decision routes: /decisions
+// (the native protocol) and /systemone (System One's). Each is asked with an empty request and the
+// key: a 404, 405 or 501 means the route is not there; a JSON answer of 2xx, 400 or 422 means it is
+// (an empty request is refused, but by the route). Anything else, a refused key included, is an error.
+func Routes(ctx context.Context, endpoint, key string) (decisions, systemone bool, err error) {
+	endpoint = strings.TrimRight(endpoint, "/")
+	var errD, errS error
+	done := make(chan struct{})
+	go func() { decisions, errD = probe(ctx, endpoint+"/decisions", key); close(done) }()
+	systemone, errS = probe(ctx, endpoint+"/systemone", key)
+	<-done
+	return decisions, systemone, errors.Join(errD, errS)
+}
+
+func probe(ctx context.Context, target, key string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader("{}"))
+	if err != nil {
+		return false, errors.New("The endpoint is not a usable web address.")
+	}
+	req.Header.Set("User-Agent", "autobot")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, unreachable(req.URL, err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	code, isJSON := resp.StatusCode, strings.Contains(resp.Header.Get("Content-Type"), "json")
+	switch {
+	case code == http.StatusNotFound || code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented:
+		return false, nil
+	case code == http.StatusUnauthorized || code == http.StatusForbidden:
+		return false, fmt.Errorf("The endpoint answered %s: check the API key.", resp.Status)
+	case isJSON && (code/100 == 2 || code == http.StatusBadRequest || code == http.StatusUnprocessableEntity):
+		return true, nil
+	}
+	return false, fmt.Errorf("%s answered %s, so Autobot could not tell whether it serves %s.", req.URL.Host, resp.Status, req.URL.Path)
+}

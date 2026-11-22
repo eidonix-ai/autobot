@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"errors"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -99,6 +101,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	s.checkRoutes(r.Context(), p) // a failure shows as "not checked", with a button to ask again
 	http.Redirect(w, r, providerPath(p.ID)+"?created=1", http.StatusSeeOther)
 }
 
@@ -198,6 +201,8 @@ func (s *Server) provider(w http.ResponseWriter, r *http.Request) {
 		data["Notice"] = "Provider added. Discover its models or enter them below."
 	case r.URL.Query().Has("saved"):
 		data["Notice"] = "Saved."
+	case r.URL.Query().Has("checked"):
+		data["Notice"] = "Checked."
 	}
 	s.providerPage(w, r, http.StatusOK, p, nil, nil, data)
 }
@@ -221,7 +226,58 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if p, err = s.st.Provider(p.ID); err == nil { // the endpoint or key may have changed
+		s.checkRoutes(r.Context(), p)
+	}
 	http.Redirect(w, r, providerPath(p.ID)+"?saved=1", http.StatusSeeOther)
+}
+
+// checkRoutes asks the provider's endpoint which decision routes it serves, with its saved key,
+// and records the answer. An Anthropic provider has none, and is not asked.
+func (s *Server) checkRoutes(ctx context.Context, p *store.Provider) error {
+	if p.Kind == store.KindAnthropic {
+		return s.st.SetProviderRoutes(p.ID, false, false)
+	}
+	key, err := s.st.ProviderKey(p.ID)
+	if err != nil {
+		return err
+	}
+	d, sys, err := providers.Routes(ctx, p.Endpoint, key)
+	if err != nil {
+		return err
+	}
+	return s.st.SetProviderRoutes(p.ID, d, sys)
+}
+
+// CheckNewRoutes asks every provider not yet asked which decision routes it serves. It runs once
+// when Autobot starts, so providers added before detection existed are counted correctly.
+func (s *Server) CheckNewRoutes(ctx context.Context) {
+	all, err := s.st.Providers(0)
+	if err != nil {
+		log.Printf("checking decision routes: %v", err)
+		return
+	}
+	for _, p := range all {
+		if p.RoutesChecked.IsZero() {
+			if err := s.checkRoutes(ctx, p); err != nil {
+				log.Printf("checking decision routes of provider %d: %v", p.ID, err)
+			}
+		}
+	}
+}
+
+// recheckRoutes is the provider page's "Check again".
+func (s *Server) recheckRoutes(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.targetProvider(w, r)
+	if !ok {
+		return
+	}
+	err := s.checkRoutes(r.Context(), p)
+	if err != nil {
+		s.providerPage(w, r, http.StatusBadGateway, p, nil, nil, map[string]any{"Error": "Could not check the decision routes. " + err.Error()})
+		return
+	}
+	http.Redirect(w, r, providerPath(p.ID)+"?checked=1", http.StatusSeeOther)
 }
 
 // discoverModels asks the provider, with its saved connection settings, which models it offers.
@@ -247,6 +303,11 @@ func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 	}
 	if found == nil {
 		found = []providers.Model{} // asked, and the answer was empty
+	}
+	if s.checkRoutes(r.Context(), p) == nil {
+		if fresh, err := s.st.Provider(p.ID); err == nil {
+			p = fresh
+		}
 	}
 	s.providerPage(w, r, http.StatusOK, p, found, nil, map[string]any{})
 }
@@ -325,7 +386,8 @@ func (s *Server) tryDecision(w http.ResponseWriter, r *http.Request) {
 	for _, m := range p.Models {
 		permitted = permitted || m == model
 	}
-	if !permitted || (p.Kind != store.KindDecisions && p.Kind != store.KindSystemOne) {
+	api := p.DecisionAPI()
+	if !permitted || api == "" {
 		s.providerPage(w, r, http.StatusBadRequest, p, nil, nil, map[string]any{"Error": "Choose one of this provider's permitted models."})
 		return
 	}
@@ -334,7 +396,7 @@ func (s *Server) tryDecision(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	answers, err := decisions.Ask(r.Context(), p.Kind, p.Endpoint, key, model, sampleInput, sampleQuestions(p.Kind))
+	answers, err := decisions.Ask(r.Context(), api, p.Endpoint, key, model, sampleInput, sampleQuestions(api))
 	data := map[string]any{"Form": r.PostForm}
 	if err != nil {
 		data["Error"] = "The decision failed: " + err.Error() + "."

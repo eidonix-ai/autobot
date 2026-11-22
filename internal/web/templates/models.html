@@ -12,7 +12,7 @@
 <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th><th>Use</th></tr></thead>
 <tbody>{{range .Models}}<tr>
   <td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td>
-  <td class="muted">{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}decisions{{else}}text{{end}}</td>
+  <td class="muted">{{.Use}}</td>
 </tr>{{end}}</tbody>
 </table></div>
 {{end}}

@@ -121,6 +121,7 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go ui.Watch(ctx)
+	go ui.CheckNewRoutes(ctx)
 	done := make(chan error, 1)
 	go func() {
 		<-ctx.Done()

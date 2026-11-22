@@ -175,6 +175,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /providers/{id}", s.auth(s.updateProvider))
 	s.mux.Handle("POST /providers/{id}/discover", s.auth(s.discoverModels))
 	s.mux.Handle("POST /providers/{id}/try", s.auth(s.tryDecision))
+	s.mux.Handle("POST /providers/{id}/routes", s.auth(s.recheckRoutes))
 	s.mux.Handle("POST /providers/{id}/lend", s.auth(s.lendProvider))
 	s.mux.Handle("POST /providers/{id}/models", s.auth(s.setProviderModels))
 	s.mux.Handle("POST /providers/{id}/delete", s.auth(s.deleteProvider))

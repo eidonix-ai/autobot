@@ -38,6 +38,42 @@ type Provider struct {
 	ModelCount int      // how many models are permitted
 	Models     []string // the permitted models, sorted; filled by Provider, not by Providers
 	UpdatedAt  time.Time
+
+	DecisionsRoute bool      // the endpoint was found to serve /decisions
+	SystemOneRoute bool      // the endpoint was found to serve /systemone
+	RoutesChecked  time.Time // when that was last asked; zero if never
+}
+
+// Text reports whether the provider answers chat requests (the text models an agent uses).
+func (p *Provider) Text() bool { return textKind(p.Kind) }
+
+// DecisionAPI is the protocol the provider answers decisions with: its kind's, else a route its
+// endpoint was found to serve (the native one first), else "".
+func (p *Provider) DecisionAPI() string {
+	return decisionAPI(p.Kind, p.DecisionsRoute, p.SystemOneRoute)
+}
+
+func textKind(kind string) bool { return kind == KindOpenAI || kind == KindAnthropic }
+
+func decisionAPI(kind string, decisions, systemone bool) string {
+	switch {
+	case kind == KindDecisions || kind == KindSystemOne:
+		return kind
+	case kind == KindAnthropic:
+		return ""
+	case decisions:
+		return KindDecisions
+	case systemone:
+		return KindSystemOne
+	}
+	return ""
+}
+
+// SetProviderRoutes records which decision routes the provider's endpoint was found to serve.
+func (s *Store) SetProviderRoutes(id int64, decisions, systemone bool) error {
+	_, err := s.db.Exec(`UPDATE providers SET decisions_route = ?, systemone_route = ?, routes_checked = ? WHERE id = ?`,
+		decisions, systemone, now(), id)
+	return err
 }
 
 // ProviderEdit is what a person enters for a provider. An empty Key keeps the saved key, unless
@@ -95,14 +131,15 @@ func ValidModelID(id string) bool {
 	return !strings.ContainsFunc(id, func(r rune) bool { return !unicode.IsPrint(r) || unicode.IsSpace(r) })
 }
 
-const providerCols = `p.id, p.owner_id, ` + authorName + `, p.name, p.kind, p.endpoint, length(p.api_key) > 0, p.updated_at`
+const providerCols = `p.id, p.owner_id, ` + authorName + `, p.name, p.kind, p.endpoint, length(p.api_key) > 0, p.updated_at, p.decisions_route, p.systemone_route, p.routes_checked`
 
 const providerFrom = ` FROM providers p LEFT JOIN users u ON u.id = p.owner_id`
 
 func scanProvider(row scanner, extra ...any) (*Provider, error) {
 	var p Provider
-	var at int64
-	dest := append([]any{&p.ID, &p.OwnerID, &p.Owner, &p.Name, &p.Kind, &p.Endpoint, &p.HasKey, &at}, extra...)
+	var at, checked int64
+	dest := append([]any{&p.ID, &p.OwnerID, &p.Owner, &p.Name, &p.Kind, &p.Endpoint, &p.HasKey, &at,
+		&p.DecisionsRoute, &p.SystemOneRoute, &checked}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -110,6 +147,9 @@ func scanProvider(row scanner, extra ...any) (*Provider, error) {
 		return nil, err
 	}
 	p.UpdatedAt = time.Unix(at, 0)
+	if checked != 0 {
+		p.RoutesChecked = time.Unix(checked, 0)
+	}
 	return &p, nil
 }
 
@@ -324,13 +364,26 @@ type AvailableModel struct {
 	Owner        string // who lends it, and pays for it
 	Kind         string
 	Model        string
+	Text         bool   // it answers chat requests
+	DecisionAPI  string // the protocol it answers decisions with, or ""
+}
+
+// Use says what the model can be used for: "text", "decisions" or both.
+func (a AvailableModel) Use() string {
+	switch {
+	case a.Text && a.DecisionAPI != "":
+		return "text, decisions"
+	case a.DecisionAPI != "":
+		return "decisions"
+	}
+	return "text"
 }
 
 // AvailableModels lists the models a workspace may use, by provider then model: every permitted
 // model of every provider lent to it whose owner is still enabled and still assigned to the
 // workspace (or an admin). A provider with no permitted models, or lent nowhere, contributes nothing.
 func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, p.owner_id, `+authorName+`, p.kind, m.model_id FROM provider_loans l
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.owner_id, `+authorName+`, p.kind, m.model_id, p.decisions_route, p.systemone_route FROM provider_loans l
 		JOIN providers p ON p.id = l.provider_id
 		JOIN users u ON u.id = p.owner_id AND u.disabled = 0
 		JOIN provider_models m ON m.provider_id = p.id
@@ -344,9 +397,11 @@ func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
 	var out []AvailableModel
 	for rows.Next() {
 		var a AvailableModel
-		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.OwnerID, &a.Owner, &a.Kind, &a.Model); err != nil {
+		var decisions, systemone bool
+		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.OwnerID, &a.Owner, &a.Kind, &a.Model, &decisions, &systemone); err != nil {
 			return nil, err
 		}
+		a.Text, a.DecisionAPI = textKind(a.Kind), decisionAPI(a.Kind, decisions, systemone)
 		out = append(out, a)
 	}
 	return out, rows.Err()

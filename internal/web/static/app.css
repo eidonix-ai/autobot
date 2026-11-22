@@ -250,3 +250,6 @@ nav.tabs a.on { color: var(--text); border-color: var(--line); background: var(-
 .wf-node .wf-name { position: absolute; left: -0.95rem; bottom: calc(100% + 0.85rem); white-space: nowrap; font-size: 0.85rem;
   font-weight: 600; color: var(--text); max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
 .wf-node .wf-title { font-size: 0.8rem; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+form.routes { gap: 1rem; align-items: center; margin-top: 0.8rem; }
+form.routes .dot { margin-left: 0; }

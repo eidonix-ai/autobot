@@ -444,12 +444,12 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/users/"+strconv.FormatInt(u.ID, 10)+"?saved=1", http.StatusSeeOther)
 }
 
-// countKind counts the available models that answer decisions (System One, /v1/decisions), or
-// the ones that do not (chat models).
+// countKind counts the available models that answer decisions (natively or through System One),
+// or the ones that answer chat (text models). A model on a provider that does both counts in both.
 func countKind(available []store.AvailableModel, decisions bool) int {
 	n := 0
 	for _, a := range available {
-		if (a.Kind == store.KindDecisions || a.Kind == store.KindSystemOne) == decisions {
+		if (decisions && a.DecisionAPI != "") || (!decisions && a.Text) {
 			n++
 		}
 	}

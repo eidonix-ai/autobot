@@ -26,6 +26,13 @@
   <button>Save</button>
 </form>
 {{end}}
+<form method="post" action="/providers/{{.P.ID}}/routes" class="row routes">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <span><span class="dot {{if .P.Text}}on{{else}}off{{end}}"></span>Text</span>
+  <span><span class="dot {{if or (eq .P.Kind "decisions") .P.DecisionsRoute}}on{{else}}off{{end}}"></span>/decisions</span>
+  <span><span class="dot {{if or (eq .P.Kind "systemone") .P.SystemOneRoute}}on{{else}}off{{end}}"></span>/systemone</span>
+  {{if .IsOwner}}<button class="secondary">{{if .P.RoutesChecked.IsZero}}Check{{else}}Check again{{end}}</button>{{end}}
+</form>
 <p class="hint">Owned by {{.P.Owner}}; last changed {{ts .P.UpdatedAt}}. The endpoint is the base address, such as https://openrouter.ai/api/v1; Autobot adds /models itself. The key is encrypted and never shown again.</p>
 </section>
 
@@ -74,7 +81,7 @@
 {{end}}
 </section>
 
-{{if and .IsOwner (or (eq .P.Kind "decisions") (eq .P.Kind "systemone"))}}
+{{if and .IsOwner .P.DecisionAPI}}
 <section class="panel">
 <h2>Try a decision</h2>
 <form method="post" action="/providers/{{.P.ID}}/try" class="row">
@@ -82,7 +89,7 @@
   <select name="model" aria-label="Model">{{range .P.Models}}<option value="{{.}}"{{if eq . ($.Form.Get "model")}} selected{{end}}>{{.}}</option>{{end}}</select>
   <button class="secondary"{{if not .P.Models}} disabled{{end}}>Ask</button>
 </form>
-<p class="hint">Asks the model a fixed sample: a short review of a code change, with a choice question{{if eq .P.Kind "systemone"}}, a score question{{end}} and a yes/no question. {{if not .P.Models}}Permit a model first.{{end}}</p>
+<p class="hint">Asks the model a fixed sample: a short review of a code change, with a choice question{{if eq .P.DecisionAPI "systemone"}}, a score question{{end}} and a yes/no question. {{if not .P.Models}}Permit a model first.{{end}}</p>
 {{with .Tried}}
 <div class="scroll"><table class="list">
 <thead><tr><th>Question</th><th>Answer</th><th>Probabilities</th></tr></thead>

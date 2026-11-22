@@ -90,21 +90,27 @@
 
 <div id="models-modal" class="modal" popover>
   <div class="modal-head"><h2>Inference</h2><button class="close" popovertarget="models-modal" popovertargetaction="hide" aria-label="Close">✕</button></div>
-  {{if .Available}}
+  <h3>Text models</h3>
+  {{if .ChatModels}}
   <div class="scroll"><table class="list dense members">
-  <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th><th>Use</th></tr></thead>
-  <tbody>{{range .Available}}<tr>
-    <td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td>
-    <td class="muted">{{.Use}}</td>
-  </tr>{{end}}</tbody>
+  <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th></tr></thead>
+  <tbody>{{range .Available}}{{if .Text}}<tr><td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td></tr>{{end}}{{end}}</tbody>
   </table></div>
-  {{else}}<p class="muted">🙁 (No models assigned)</p>{{end}}
+  {{else}}<p class="muted">None</p>{{end}}
+  <h3>Decision models</h3>
+  {{if .DecisionModels}}
+  <div class="scroll"><table class="list dense members">
+  <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th></tr></thead>
+  <tbody>{{range .Available}}{{if .DecisionAPI}}<tr><td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td></tr>{{end}}{{end}}</tbody>
+  </table></div>
+  {{else}}<p class="muted">None</p>{{end}}
+  <h3>Web search</h3>
   {{if .Search}}
   <div class="scroll"><table class="list dense members">
-  <thead><tr><th>Web search</th><th>Lent by</th></tr></thead>
+  <thead><tr><th>Provider</th><th>Lent by</th></tr></thead>
   <tbody>{{range .Search}}<tr><td>{{.ProviderName}}</td><td class="muted">{{.Owner}}</td></tr>{{end}}</tbody>
   </table></div>
-  {{end}}
+  {{else}}<p class="muted">None</p>{{end}}
   <p><a href="/providers">Assign Inference</a></p>
 </div>
 

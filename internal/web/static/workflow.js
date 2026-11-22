@@ -18,7 +18,36 @@
 
   var editor = new Drawflow(root);
   editor.reroute = false;
+  editor.zoom_min = 0.3; editor.zoom_max = 2;
+  editor.zoom_enter = function () {};   // the wheel zooms by our rule below, not only with Ctrl
   editor.start();
+
+  // The dot grid is the canvas's background, so it is moved and scaled with the canvas: a drag on
+  // the background then plainly pans everything, rather than seeming to move a node. (Drawflow
+  // reads the first class of the element pressed, so "parent-drawflow" comes first in the page.)
+  // Drawflow scales about the canvas's centre, so the canvas's origin sits at
+  // translate + half its size × (1 − zoom).
+  function moveGrid(x, y) {
+    var z = editor.zoom, size = 22 * z, pc = editor.precanvas;
+    root.style.backgroundSize = size + 'px ' + size + 'px';
+    root.style.backgroundPosition = (x + pc.clientWidth / 2 * (1 - z)) + 'px ' + (y + pc.clientHeight / 2 * (1 - z)) + 'px';
+  }
+  editor.on('translate', function (p) { moveGrid(p.x, p.y); });
+
+  // The wheel zooms about the point under the mouse, which stays where it is.
+  root.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var z = Math.min(editor.zoom_max, Math.max(editor.zoom_min, editor.zoom * Math.exp(-e.deltaY * 0.002)));
+    if (z === editor.zoom) { return; }
+    var at = canvasPoint(e.clientX, e.clientY);
+    editor.zoom = z;
+    editor.zoom_refresh();
+    var r = editor.precanvas.getBoundingClientRect();
+    editor.canvas_x += e.clientX - (r.x + at.x * z);
+    editor.canvas_y += e.clientY - (r.y + at.y * z);
+    editor.precanvas.style.transform = 'translate(' + editor.canvas_x + 'px, ' + editor.canvas_y + 'px) scale(' + z + ')';
+    moveGrid(editor.canvas_x, editor.canvas_y);
+  }, { passive: false });
 
   var dfToID = {}, idToDf = {};   // Drawflow's numeric ids and ours
   var loading = true;

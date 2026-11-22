@@ -252,19 +252,20 @@ func (s *Server) checkRoutes(ctx context.Context, p *store.Provider) error {
 	return s.st.SetProviderRoutes(p.ID, d, sys)
 }
 
-// CheckNewRoutes asks every provider not yet asked which decision routes it serves. It runs once
-// when Autobot starts, so providers added before detection existed are counted correctly.
-func (s *Server) CheckNewRoutes(ctx context.Context) {
+// CheckRoutes asks every OpenAI-compatible provider which decision routes it serves. It runs once
+// when Autobot starts, so a route added to a gateway since is found without anyone asking.
+func (s *Server) CheckRoutes(ctx context.Context) {
 	all, err := s.st.Providers(0)
 	if err != nil {
 		log.Printf("checking decision routes: %v", err)
 		return
 	}
 	for _, p := range all {
-		if p.RoutesChecked.IsZero() {
-			if err := s.checkRoutes(ctx, p); err != nil {
-				log.Printf("checking decision routes of provider %d: %v", p.ID, err)
-			}
+		if p.Kind != store.KindOpenAI {
+			continue
+		}
+		if err := s.checkRoutes(ctx, p); err != nil {
+			log.Printf("checking decision routes of provider %d: %v", p.ID, err)
 		}
 	}
 }

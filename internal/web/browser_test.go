@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -148,6 +149,34 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 				t.Fatal("a layout save lost a node's settings")
 			}
 		}
+	}
+
+	// A drag on the background pans the canvas, and the dot grid moves with it.
+	var grid, transform string
+	err = chromedp.Run(ctx,
+		chromedp.MouseEvent(input.MouseMoved, 1200, 800),
+		chromedp.MouseEvent(input.MousePressed, 1200, 800, chromedp.ButtonLeft, chromedp.ClickCount(1)),
+		chromedp.MouseEvent(input.MouseMoved, 1250, 830, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, 1250, 830, chromedp.ButtonLeft, chromedp.ClickCount(1)),
+		chromedp.Evaluate(`document.getElementById('wf').style.backgroundPosition`, &grid),
+		chromedp.Evaluate(`document.querySelector('#wf .drawflow').style.transform`, &transform),
+	)
+	if err != nil || grid != "50px 30px" || !strings.HasPrefix(transform, "translate(50px, 30px)") {
+		t.Fatalf("panning: grid %q, canvas %q, %v", grid, transform, err)
+	}
+
+	// The wheel zooms about the mouse: the point under it stays put while the node grows.
+	rect := func(v *[]float64) chromedp.Action {
+		return chromedp.Evaluate(`(function(){var r=document.getElementById('node-1').getBoundingClientRect();return [r.x,r.y,r.width]})()`, v)
+	}
+	var before, after []float64
+	err = chromedp.Run(ctx, rect(&before),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			return input.DispatchMouseEvent(input.MouseWheel, before[0]+10, before[1]+10).WithDeltaX(0).WithDeltaY(-200).Do(ctx)
+		}),
+		chromedp.Sleep(100*time.Millisecond), rect(&after))
+	if err != nil || len(after) != 3 || after[2] < before[2]*1.3 || math.Abs(after[0]-(before[0]+10-10*after[2]/before[2])) > 1.5 {
+		t.Fatalf("zoom: before %v, after %v, %v", before, after, err)
 	}
 
 	// With SHOTS set to a folder, save pictures of the canvas and the settings modal.

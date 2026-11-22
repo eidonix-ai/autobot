@@ -405,12 +405,30 @@ func TestWorkspaceSettings(t *testing.T) {
 	a := e.signIn("alice")
 	tok := d.csrf()
 
-	// Regular members cannot see or use settings.
-	if code, _ := a.get("/w/o/r/settings"); code != http.StatusNotFound {
-		t.Errorf("member sees settings: %d", code)
+	// Members configure their workspace, but renaming it, choosing its members and deleting it
+	// stay with admins.
+	if code, body := a.get("/w/o/r/settings"); code != http.StatusOK || !strings.Contains(body, "GitHub identity") ||
+		strings.Contains(body, "Delete this workspace") || strings.Contains(body, "settings/name") {
+		t.Errorf("member settings page: %d", code)
 	}
-	if code, _, _ := a.post("/w/o/r/settings/delete", url.Values{"csrf": {a.csrf()}, "confirm": {"o/r"}}); code != http.StatusNotFound {
-		t.Errorf("member deletes: %d", code)
+	atok := a.csrf()
+	for op, form := range map[string]url.Values{
+		"delete":  {"csrf": {atok}, "confirm": {"o/r"}},
+		"name":    {"csrf": {atok}, "name": {"o/r2"}},
+		"members": {"csrf": {atok}},
+	} {
+		if code, _, _ := a.post("/w/o/r/settings/"+op, form); code != http.StatusNotFound {
+			t.Errorf("member POSTs settings/%s: %d", op, code)
+		}
+	}
+	if code, _, _ := a.post("/w/o/r/settings/github", url.Values{"csrf": {atok}, "gh_login": {"flare-autobot"}, "gh_token": {"tok-good"}}); code != http.StatusSeeOther {
+		t.Errorf("member sets the GitHub identity: %d", code)
+	}
+	if _, err := e.st.Workspace("o/r"); err != nil {
+		t.Fatal("a member's post removed or renamed the workspace")
+	}
+	if code, _, _ := a.post("/w/o/r/settings/github/remove", url.Values{"csrf": {atok}}); code != http.StatusSeeOther {
+		t.Errorf("member removes the GitHub identity: %d", code)
 	}
 	if code, body := d.get("/w/o/r/settings"); code != http.StatusOK || !strings.Contains(body, "Delete this workspace") {
 		t.Fatalf("admin settings page: %d", code)

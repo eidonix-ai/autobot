@@ -35,14 +35,14 @@ func modelServer(t *testing.T) *httptest.Server {
 
 func TestProviderKeyIsNeverExposed(t *testing.T) {
 	e := newEnv(t)
-	e.user("derek", true)
+	owner := e.user("derek", true)
 	admin := e.signIn("derek")
 	tok := admin.csrf()
 	models := modelServer(t)
 
-	code, loc, _ := admin.post("/admin/providers", url.Values{"csrf": {tok}, "preset": {"custom"}, "name": {"Local"},
+	code, loc, _ := admin.post("/providers", url.Values{"csrf": {tok}, "preset": {"custom"}, "name": {"Local"},
 		"endpoint": {models.URL + "/"}, "api_key": {providerSecret}})
-	if code != http.StatusSeeOther || loc != "/admin/providers/1?created=1" {
+	if code != http.StatusSeeOther || loc != "/providers/1?created=1" {
 		t.Fatalf("create: %d %q", code, loc)
 	}
 	p := strings.SplitN(loc, "?", 2)[0]
@@ -52,7 +52,7 @@ func TestProviderKeyIsNeverExposed(t *testing.T) {
 
 	// Every page that could show the key: the list, the page, and each way a form comes back.
 	pages := map[string]string{}
-	_, pages["list"] = admin.get("/admin/providers")
+	_, pages["list"] = admin.get("/providers")
 	_, pages["page"] = admin.get(p)
 	var status int
 	status, _, pages["discover"] = admin.post(p+"/discover", url.Values{"csrf": {tok}})
@@ -64,17 +64,17 @@ func TestProviderKeyIsNeverExposed(t *testing.T) {
 	if status != http.StatusBadRequest || !strings.Contains(pages["bad update"], "full web address") {
 		t.Fatalf("bad update: %d", status)
 	}
-	status, _, pages["bad create"] = admin.post("/admin/providers", url.Values{"csrf": {tok}, "preset": {"custom"},
+	status, _, pages["bad create"] = admin.post("/providers", url.Values{"csrf": {tok}, "preset": {"custom"},
 		"name": {"Other"}, "endpoint": {"ftp://x"}, "api_key": {providerSecret}})
 	if status != http.StatusBadRequest {
 		t.Fatalf("bad create: %d", status)
 	}
 	// A provider whose endpoint refuses the key and echoes it.
-	denied, err := e.st.CreateProvider(storeEdit("Denied", models.URL+"/denied", providerSecret), e.user("other", true))
+	denied, err := e.st.CreateProvider(storeEdit("Denied", models.URL+"/denied", providerSecret), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, _, pages["denied"] = admin.post("/admin/providers/"+itoa(denied.ID)+"/discover", url.Values{"csrf": {tok}})
+	status, _, pages["denied"] = admin.post("/providers/"+itoa(denied.ID)+"/discover", url.Values{"csrf": {tok}})
 	if status != http.StatusBadGateway || !strings.Contains(pages["denied"], "401 Unauthorized: check the API key") {
 		t.Fatalf("denied discovery: %d", status)
 	}
@@ -110,7 +110,7 @@ func TestProviderPages(t *testing.T) {
 	models := modelServer(t)
 
 	// A preset fills in kind and endpoint, and names the provider after itself.
-	code, loc, _ := admin.post("/admin/providers", url.Values{"csrf": {tok}, "preset": {"anthropic"}, "api_key": {providerSecret}})
+	code, loc, _ := admin.post("/providers", url.Values{"csrf": {tok}, "preset": {"anthropic"}, "api_key": {providerSecret}})
 	if code != http.StatusSeeOther {
 		t.Fatalf("add preset: %d", code)
 	}
@@ -118,7 +118,7 @@ func TestProviderPages(t *testing.T) {
 	if err != nil || p.Name != "Anthropic" || p.Kind != "anthropic" || p.Endpoint != "https://api.anthropic.com" || !p.HasKey {
 		t.Fatalf("preset: %+v, %v", p, err)
 	}
-	if code, _, body := admin.post("/admin/providers", url.Values{"csrf": {tok}, "preset": {"anthropic"}}); code != http.StatusBadRequest || !strings.Contains(body, "already exists") {
+	if code, _, body := admin.post("/providers", url.Values{"csrf": {tok}, "preset": {"anthropic"}}); code != http.StatusBadRequest || !strings.Contains(body, "You already have a provider named") {
 		t.Fatalf("duplicate name: %d", code)
 	}
 
@@ -167,7 +167,7 @@ func TestProviderPages(t *testing.T) {
 	if code, _, _ := admin.post(path+"/delete", url.Values{"csrf": {tok}, "confirm": {"nope"}}); code != http.StatusBadRequest {
 		t.Fatalf("delete without the name: %d", code)
 	}
-	if code, loc, _ := admin.post(path+"/delete", url.Values{"csrf": {tok}, "confirm": {"anthropic"}}); code != http.StatusSeeOther || loc != "/admin/providers?deleted=1" {
+	if code, loc, _ := admin.post(path+"/delete", url.Values{"csrf": {tok}, "confirm": {"anthropic"}}); code != http.StatusSeeOther || loc != "/providers?deleted=1" {
 		t.Fatalf("delete: %d %q", code, loc)
 	}
 	if _, err := e.st.Provider(1); !errors.Is(err, store.ErrNotFound) {
@@ -175,30 +175,78 @@ func TestProviderPages(t *testing.T) {
 	}
 }
 
-func TestProvidersAreAdminOnly(t *testing.T) {
+// A provider is its owner's: only the owner changes it or lends it, an admin may only look, and
+// other users cannot see it. A workspace uses only what is lent to it, and only while the owner is
+// enabled.
+func TestProvidersBelongToTheirOwner(t *testing.T) {
 	e := newEnv(t)
-	admin := e.user("derek", true)
-	e.user("alice", false)
-	if _, err := e.st.CreateProvider(storeEdit("OpenRouter", "https://openrouter.ai/api/v1", ""), admin); err != nil {
+	derek := e.user("derek", true)
+	e.user("bob", true)
+	alice := e.user("alice", false)
+	wsA, _ := e.st.CreateWorkspace("o/a", derek, "", "")
+	wsB, _ := e.st.CreateWorkspace("o/b", derek, "", "")
+	e.st.UpdateUser(alice.ID, store.UserUpdate{Workspaces: []int64{wsA.ID}}, derek)
+	mine, err := e.st.CreateProvider(storeEdit("OpenRouter", "https://openrouter.ai/api/v1", providerSecret), derek)
+	if err != nil {
 		t.Fatal(err)
 	}
-	alice := e.signIn("alice")
-	tok := alice.csrf()
-	if _, body := alice.get("/"); strings.Contains(body, "/admin/providers") {
-		t.Error("a regular user is shown the Providers link")
+	path := "/providers/" + itoa(mine.ID)
+
+	// Another user cannot see it at all.
+	a := e.signIn("alice")
+	atok := a.csrf()
+	if _, body := a.get("/providers"); strings.Contains(body, `href="`+path+`"`) {
+		t.Error("another user's provider is listed")
 	}
-	for _, p := range []string{"/admin/providers", "/admin/providers/1"} {
-		if code, _ := alice.get(p); code != http.StatusNotFound {
-			t.Errorf("GET %s as a regular user: %d", p, code)
+	form := url.Values{"csrf": {atok}, "name": {"Mine"}, "kind": {"openai"}, "endpoint": {"https://x.example"}, "confirm": {"OpenRouter"}, "workspace": {itoa(wsA.ID)}}
+	if code, _ := a.get(path); code != http.StatusNotFound {
+		t.Errorf("another user opens it: %d", code)
+	}
+	for _, op := range []string{"", "/discover", "/models", "/lend", "/delete"} {
+		if code, _, _ := a.post(path+op, form); code != http.StatusNotFound {
+			t.Errorf("another user POSTs %s: %d", op, code)
 		}
 	}
-	form := url.Values{"csrf": {tok}, "preset": {"openai"}, "name": {"Mine"}, "kind": {"openai"}, "endpoint": {"https://x.example"}, "confirm": {"OpenRouter"}}
-	for _, p := range []string{"/admin/providers", "/admin/providers/1", "/admin/providers/1/discover", "/admin/providers/1/models", "/admin/providers/1/delete"} {
-		if code, _, _ := alice.post(p, form); code != http.StatusNotFound {
-			t.Errorf("POST %s as a regular user: %d", p, code)
+
+	// An admin who does not own it can look, but change nothing.
+	b := e.signIn("bob")
+	btok := b.csrf()
+	if code, body := b.get(path); code != http.StatusOK || !strings.Contains(body, "belongs to derek") || strings.Contains(body, providerSecret) {
+		t.Fatalf("admin view: %d", code)
+	}
+	form.Set("csrf", btok)
+	for _, op := range []string{"", "/discover", "/models", "/lend", "/delete", "/try"} {
+		if code, _, _ := b.post(path+op, form); code != http.StatusForbidden {
+			t.Errorf("admin who is not the owner POSTs %s: %d", op, code)
 		}
 	}
-	if list, _ := e.st.Providers(); len(list) != 1 {
-		t.Errorf("a regular user changed the providers: %d left", len(list))
+	if p, _ := e.st.Provider(mine.ID); p.Name != "OpenRouter" {
+		t.Fatalf("an admin changed another owner's provider: %q", p.Name)
+	}
+	if loans, _ := e.st.ProviderLoans(mine.ID); len(loans) != 0 {
+		t.Fatal("an admin lent another owner's provider")
+	}
+
+	// A user lends her own provider, but only to workspaces she is assigned to.
+	hers, _ := e.st.CreateProvider(storeEdit("Hers", "https://api.deepseek.com", providerSecret), alice)
+	e.st.SetProviderModels(hers.ID, []string{"deepseek-chat"})
+	hpath := "/providers/" + itoa(hers.ID)
+	if code, _, _ := a.post(hpath+"/lend", url.Values{"csrf": {atok}, "workspace": {itoa(wsB.ID)}}); code != http.StatusForbidden {
+		t.Errorf("lent to a workspace she is not assigned to: %d", code)
+	}
+	if code, _, _ := a.post(hpath+"/lend", url.Values{"csrf": {atok}, "workspace": {itoa(wsA.ID)}}); code != http.StatusSeeOther {
+		t.Fatalf("lend: %d", code)
+	}
+	if got, _ := e.st.AvailableModels(wsA.ID); len(got) != 1 || got[0].Model != "deepseek-chat" || got[0].Owner != "alice" {
+		t.Fatalf("available in o/a: %+v", got)
+	}
+	if got, _ := e.st.AvailableModels(wsB.ID); len(got) != 0 {
+		t.Fatalf("available in o/b, where nothing is lent: %+v", got)
+	}
+
+	// A disabled owner's providers stop working everywhere.
+	e.st.UpdateUser(alice.ID, store.UserUpdate{Disabled: true, Workspaces: []int64{wsA.ID}}, derek)
+	if got, _ := e.st.AvailableModels(wsA.ID); len(got) != 0 {
+		t.Fatalf("a disabled owner's models are still available: %+v", got)
 	}
 }

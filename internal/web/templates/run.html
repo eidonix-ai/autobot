@@ -2,7 +2,7 @@
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.MachinePath}}">{{.Run.MachineName}}</a> /</p>
 <div class="titlebar">
   <h1>Run {{.Run.ID}} <span class="state {{.Run.State}}">{{.Run.State}}</span></h1>
-  {{if and .Me.IsAdmin .Run.Active}}
+  {{if .Run.Active}}
   <form method="post" action="{{.WS.Path}}/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary">Stop</button></form>
   {{end}}
 </div>

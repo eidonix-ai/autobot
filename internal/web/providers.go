@@ -48,10 +48,23 @@ func (s *Server) providerList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) providersPage(w http.ResponseWriter, r *http.Request, status int, data map[string]any) {
-	list, err := s.st.Providers()
+	list, err := s.st.Providers(me(r).ID)
 	if err != nil {
 		s.fail(w, err)
 		return
+	}
+	var others []*store.Provider
+	if me(r).IsAdmin { // an admin sees everyone's, read-only
+		all, err := s.st.Providers(0)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		for _, p := range all {
+			if p.OwnerID != me(r).ID {
+				others = append(others, p)
+			}
+		}
 	}
 	if data == nil {
 		data = map[string]any{}
@@ -59,12 +72,7 @@ func (s *Server) providersPage(w http.ResponseWriter, r *http.Request, status in
 	if r.URL.Query().Has("deleted") {
 		data["Notice"] = "Provider deleted."
 	}
-	available, err := s.st.AvailableModels()
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	data["Title"], data["Providers"], data["Presets"], data["Available"] = "Providers", list, presets, available
+	data["Title"], data["Providers"], data["Others"], data["Presets"] = "Providers", list, others, presets
 	s.render(w, r, status, "providers.html", data)
 }
 
@@ -94,13 +102,14 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, providerPath(p.ID)+"?created=1", http.StatusSeeOther)
 }
 
-func providerPath(id int64) string { return "/admin/providers/" + strconv.FormatInt(id, 10) }
+func providerPath(id int64) string { return "/providers/" + strconv.FormatInt(id, 10) }
 
-// targetProvider resolves the provider in the URL.
-func (s *Server) targetProvider(w http.ResponseWriter, r *http.Request) (*store.Provider, bool) {
+// viewProvider resolves the provider in the URL for viewing: its owner and admins may; to anyone
+// else it does not exist.
+func (s *Server) viewProvider(w http.ResponseWriter, r *http.Request) (*store.Provider, bool) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	p, err := s.st.Provider(id)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && p.OwnerID != me(r).ID && !me(r).IsAdmin) {
 		http.NotFound(w, r)
 		return nil, false
 	}
@@ -109,6 +118,27 @@ func (s *Server) targetProvider(w http.ResponseWriter, r *http.Request) (*store.
 		return nil, false
 	}
 	return p, true
+}
+
+// targetProvider resolves the provider in the URL for a change, which only its owner may make: an
+// admin can look but not change.
+func (s *Server) targetProvider(w http.ResponseWriter, r *http.Request) (*store.Provider, bool) {
+	p, ok := s.viewProvider(w, r)
+	if ok && p.OwnerID != me(r).ID {
+		http.Error(w, "Only the provider's owner can change it.", http.StatusForbidden)
+		return nil, false
+	}
+	return p, ok
+}
+
+// lendable lists the workspaces a provider's owner may lend it to: every workspace for an admin,
+// otherwise the ones the owner is assigned to.
+func (s *Server) lendable(p *store.Provider) ([]store.Workspace, error) {
+	owner, err := s.st.User(p.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	return s.st.Workspaces(owner)
 }
 
 // modelRow is one line of the models checklist.
@@ -142,12 +172,23 @@ func (s *Server) providerPage(w http.ResponseWriter, r *http.Request, status int
 		rows = append(rows, modelRow{ID: id, Name: names[id], Checked: checked[id]})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	workspaces, err := s.lendable(p)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	loans, err := s.st.ProviderLoans(p.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	data["Title"], data["P"], data["Rows"], data["Discovered"] = p.Name+" · Providers", p, rows, discovered != nil
+	data["IsOwner"], data["Workspaces"], data["Loans"] = p.OwnerID == me(r).ID, workspaces, loans
 	s.render(w, r, status, "provider.html", data)
 }
 
 func (s *Server) provider(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.targetProvider(w, r)
+	p, ok := s.viewProvider(w, r)
 	if !ok {
 		return
 	}
@@ -252,7 +293,7 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/providers?deleted=1", http.StatusSeeOther)
+	http.Redirect(w, r, "/providers?deleted=1", http.StatusSeeOther)
 }
 
 // sampleQuestions is what "Try a decision" asks: enough to show the protocol works end to end.
@@ -302,4 +343,36 @@ func (s *Server) tryDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Tried"], data["Notice"] = answers, "Answered by "+model+"."
 	s.providerPage(w, r, http.StatusOK, p, nil, nil, data)
+}
+
+// lendProvider sets the workspaces the provider is lent to. Only the owner may, and only to
+// workspaces the owner is assigned to.
+func (s *Server) lendProvider(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.targetProvider(w, r)
+	if !ok {
+		return
+	}
+	workspaces, err := s.lendable(p)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	allowed := map[int64]bool{}
+	for _, ws := range workspaces {
+		allowed[ws.ID] = true
+	}
+	var ids []int64
+	for _, v := range r.PostForm["workspace"] {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || !allowed[id] {
+			http.Error(w, "You can lend a provider only to workspaces you are assigned to.", http.StatusForbidden)
+			return
+		}
+		ids = append(ids, id)
+	}
+	if err := s.st.LendProvider(p, ids, me(r)); err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, providerPath(p.ID)+"?saved=1", http.StatusSeeOther)
 }

@@ -2,7 +2,7 @@
 <p class="crumbs"><a href="/">Workspaces</a> /</p>
 <div class="titlebar">
   <h1>{{.WS.Name}}</h1>
-  {{if .Me.IsAdmin}}<a class="button secondary" href="{{.WS.Path}}/settings">Settings</a>{{end}}
+  <a class="button secondary" href="{{.WS.Path}}/settings">Settings</a>
 </div>
 <p class="muted"><a href="{{.WS.GitHubURL}}">github.com/{{.WS.Name}}</a></p>
 
@@ -26,17 +26,17 @@
   {{else}}
   <p class="muted">No donated machines yet.</p>
   {{end}}
-  {{if .Me.IsAdmin}}<p><a href="{{.WS.Path}}/machines/new">Add a machine</a></p>{{end}}
+  <p><a href="{{.WS.Path}}/machines/new">Add a machine</a></p>
 </section>
 
 <section class="panel">
   <h2>Models</h2>
   {{if .Available}}
-  <ul class="plain">{{range .Available}}<li>{{.Model}} <span class="muted">{{.ProviderName}}{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}, decisions{{end}}</span></li>{{end}}</ul>
+  <ul class="plain">{{range .Available}}<li>{{.Model}} <span class="muted">{{.ProviderName}}, lent by {{.Owner}}{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}, decisions{{end}}</span></li>{{end}}</ul>
   {{else}}
-  <p class="muted">No models are available yet.</p>
+  <p class="muted">No provider is lent to this workspace yet.</p>
   {{end}}
-  {{if .Me.IsAdmin}}<p><a href="/admin/providers">Configure providers</a></p>{{end}}
+  <p class="hint">Lend one of <a href="/providers">your providers</a> to make its models available here.</p>
 </section>
 
 <section class="panel">

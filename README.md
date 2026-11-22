@@ -31,12 +31,17 @@ This is the proof of concept. Piece 1 is done: users, workspaces and the project
   machine's owner starts the connector (below). Each machine's page shows its live state, GPU
   readings and the models in its models folder, and admins can run a test on it: a bash script,
   optionally on a branch, tag or commit of the repository. Output streams to the run's page.
-- **Providers** (admins, app-wide): the LLM inference providers Autobot may call, each with its kind
-  (OpenAI-compatible or Anthropic), endpoint, API key and the models it may use. Add one from a preset
-  (OpenAI, Anthropic, OpenRouter, Together AI, Groq, Fireworks, DeepInfra, Mistral, xAI, Google Gemini)
-  or a custom endpoint such as a local vLLM. "Discover models" asks the endpoint for its model list where it
-  offers one; model IDs can always be typed by hand. API keys are encrypted like GitHub tokens and never
-  shown again.
+- **Roles**: an admin is a super-admin who creates, renames and deletes workspaces, chooses their
+  members and manages users, and can see everything. A user runs the workspaces they are assigned
+  to: everything inside them (settings, GitHub identity, machines, test runs, the charter) is theirs
+  to configure.
+- **Providers** belong to the user who pays for them: an endpoint, an API key (encrypted, never
+  shown again, not even to admins), and the models it may use, which are opt-in. The owner lends a
+  provider to the workspaces they are assigned to; a workspace's Models card lists what is lent to it
+  and by whom. Only the owner changes or lends a provider; an admin can look but not change. A
+  disabled owner's providers stop working everywhere. Presets: OpenAI, Anthropic, OpenRouter,
+  Together AI, Groq, Fireworks, DeepInfra, Mistral, xAI, Google Gemini, DeepSeek, System One, or a
+  custom endpoint. Decision providers speak `/v1/decisions` or System One's `/v1/systemone`.
 - **Case files** are a placeholder until that piece is built.
 
 ## The connector on a donated machine

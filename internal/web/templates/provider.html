@@ -1,10 +1,14 @@
 {{define "content"}}
-<p class="crumbs"><a href="/admin/providers">Providers</a> /</p>
+<p class="crumbs"><a href="/providers">Providers</a> /</p>
 <h1>{{.P.Name}}</h1>
+{{if not .IsOwner}}<p class="notice">This provider belongs to {{.P.Owner}}. You can see it as an admin; only {{.P.Owner}} can change it or lend it.</p>{{end}}
 
 <section class="panel">
 <h2>Connection</h2>
-<form method="post" action="/admin/providers/{{.P.ID}}" class="stack">
+{{if not .IsOwner}}
+<ul class="plain"><li>Kind: {{.P.Kind}}</li><li>Endpoint: {{.P.Endpoint}}</li><li>API key: {{if .P.HasKey}}set{{else}}not set{{end}}</li></ul>
+{{else}}
+<form method="post" action="/providers/{{.P.ID}}" class="stack">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   {{$kind := or (.Form.Get "kind") .P.Kind}}
   <label>Name <input name="name" value="{{or (.Form.Get "name") .P.Name}}" required autocomplete="off"></label>
@@ -21,17 +25,21 @@
   {{if .P.HasKey}}<label class="check"><input type="checkbox" name="remove_key"{{if .Form.Get "remove_key"}} checked{{end}}> Remove the key</label>{{end}}
   <button>Save</button>
 </form>
-<p class="hint">Added by {{or .P.CreatedBy "unknown"}}; last changed {{ts .P.UpdatedAt}}. The endpoint is the base address, such as https://openrouter.ai/api/v1; Autobot adds /models itself. The key is encrypted and never shown again.</p>
+{{end}}
+<p class="hint">Owned by {{.P.Owner}}; last changed {{ts .P.UpdatedAt}}. The endpoint is the base address, such as https://openrouter.ai/api/v1; Autobot adds /models itself. The key is encrypted and never shown again.</p>
 </section>
 
 <section class="panel">
 <h2>Models</h2>
-<form method="post" action="/admin/providers/{{.P.ID}}/discover" class="row">
+{{if not .IsOwner}}
+{{if .P.Models}}<ul class="plain">{{range .P.Models}}<li>{{.}}</li>{{end}}</ul>{{else}}<p class="muted">No models are permitted, so it cannot be used.</p>{{end}}
+{{else}}
+<form method="post" action="/providers/{{.P.ID}}/discover" class="row">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <button class="secondary">Discover models</button>
   <span class="hint">Asks {{.P.Endpoint}} which models it offers, using the saved connection.</span>
 </form>
-<form method="post" action="/admin/providers/{{.P.ID}}/models" class="stack wide spaced">
+<form method="post" action="/providers/{{.P.ID}}/models" class="stack wide spaced">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <fieldset class="models">
     <legend>Models Autobot may use{{if .Discovered}}: {{len .Rows}} listed{{end}}</legend>
@@ -45,12 +53,31 @@
   <button>Save models</button>
 </form>
 <p class="hint">Saving replaces the permitted models with the ticked ones plus the IDs typed above. Use the exact ID a request must name, such as anthropic/claude-sonnet-4.5 on OpenRouter. Not every provider can list its models; typing the IDs always works.</p>
+{{end}}
 </section>
 
-{{if or (eq .P.Kind "decisions") (eq .P.Kind "systemone")}}
+<section class="panel">
+<h2>Workspaces it is lent to</h2>
+{{if .IsOwner}}
+<form method="post" action="/providers/{{.P.ID}}/lend" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset>
+    <legend>Workspaces that may use this provider's permitted models</legend>
+    {{range .Workspaces}}<label class="check"><input type="checkbox" name="workspace" value="{{.ID}}"{{if index $.Loans .ID}} checked{{end}}> {{.Name}}</label>
+    {{else}}<p class="muted">You are not assigned to any workspace yet.</p>{{end}}
+  </fieldset>
+  <button>Save</button>
+</form>
+<p class="hint">Only you can lend it. Its usage is billed to your key; a workspace sees the models and your name, never the key.</p>
+{{else}}
+{{if .Loans}}<ul class="plain">{{range .Workspaces}}{{if index $.Loans .ID}}<li>{{.Name}}</li>{{end}}{{end}}</ul>{{else}}<p class="muted">Lent to no workspace.</p>{{end}}
+{{end}}
+</section>
+
+{{if and .IsOwner (or (eq .P.Kind "decisions") (eq .P.Kind "systemone"))}}
 <section class="panel">
 <h2>Try a decision</h2>
-<form method="post" action="/admin/providers/{{.P.ID}}/try" class="row">
+<form method="post" action="/providers/{{.P.ID}}/try" class="row">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <select name="model" aria-label="Model">{{range .P.Models}}<option value="{{.}}"{{if eq . ($.Form.Get "model")}} selected{{end}}>{{.}}</option>{{end}}</select>
   <button class="secondary"{{if not .P.Models}} disabled{{end}}>Ask</button>
@@ -67,13 +94,15 @@
 </section>
 {{end}}
 
+{{if .IsOwner}}
 <section class="panel danger">
 <h2>Delete this provider</h2>
 <p>Deleting removes the provider, its saved key and its permitted models. It cannot be undone.</p>
-<form method="post" action="/admin/providers/{{.P.ID}}/delete" class="row">
+<form method="post" action="/providers/{{.P.ID}}/delete" class="row">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input name="confirm" placeholder="Type {{.P.Name}} to confirm" aria-label="Provider name, to confirm" autocomplete="off" spellcheck="false">
   <button class="danger">Delete provider</button>
 </form>
 </section>
+{{end}}
 {{end}}

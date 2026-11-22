@@ -229,7 +229,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	available, err := s.st.AvailableModels()
+	available, err := s.st.AvailableModels(ws.ID)
 	if err != nil {
 		s.fail(w, err)
 		return

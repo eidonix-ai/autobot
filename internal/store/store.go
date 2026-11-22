@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -214,5 +214,41 @@ CREATE TABLE provider_models (
 	provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
 	model_id    TEXT    NOT NULL,
 	PRIMARY KEY (provider_id, model_id)
+);
+`
+
+// A provider belongs to the user who pays for it, who lends it to workspaces. Names need only be
+// unique per owner. API keys are the only sign-in, so the auth column goes. SQLite cannot change a
+// table's constraints, so providers and provider_models are rebuilt (models first, so dropping the
+// old providers table cascades nothing).
+const schemaV6 = `
+CREATE TABLE providers_new (
+	id         INTEGER PRIMARY KEY,
+	owner_id   INTEGER NOT NULL REFERENCES users(id),
+	name       TEXT    NOT NULL COLLATE NOCASE,
+	kind       TEXT    NOT NULL,
+	endpoint   TEXT    NOT NULL,
+	api_key    BLOB    NOT NULL DEFAULT x'',
+	updated_at INTEGER NOT NULL,
+	UNIQUE (owner_id, name)
+);
+INSERT INTO providers_new (id, owner_id, name, kind, endpoint, api_key, updated_at)
+	SELECT id, COALESCE(created_by, (SELECT min(id) FROM users WHERE is_admin = 1)), name, kind, endpoint, api_key, updated_at
+	FROM providers;
+CREATE TABLE provider_models_new (
+	provider_id INTEGER NOT NULL REFERENCES providers_new(id) ON DELETE CASCADE,
+	model_id    TEXT    NOT NULL,
+	PRIMARY KEY (provider_id, model_id)
+);
+INSERT INTO provider_models_new SELECT provider_id, model_id FROM provider_models;
+DROP TABLE provider_models;
+DROP TABLE providers;
+ALTER TABLE providers_new RENAME TO providers;
+ALTER TABLE provider_models_new RENAME TO provider_models;
+-- The workspaces each provider is lent to.
+CREATE TABLE provider_loans (
+	provider_id  INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	PRIMARY KEY (provider_id, workspace_id)
 );
 `

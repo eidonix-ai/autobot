@@ -24,18 +24,19 @@ const (
 	KindSystemOne = "systemone" // System One's /v1/systemone
 )
 
-// Provider is an inference provider. Its API key is never part of this value; ask for it with
-// ProviderKey when a call needs it.
+// Provider is an inference provider, owned by the user who pays for it. Only the owner changes it
+// or lends it to workspaces. Its API key is never part of this value; ask for it with ProviderKey
+// when a call needs it.
 type Provider struct {
 	ID         int64
+	OwnerID    int64
+	Owner      string // the owner's display name
 	Name       string
 	Kind       string
 	Endpoint   string
-	Auth       string // how Autobot signs in: "api_key"
 	HasKey     bool
 	ModelCount int      // how many models are permitted
 	Models     []string // the permitted models, sorted; filled by Provider, not by Providers
-	CreatedBy  string
 	UpdatedAt  time.Time
 }
 
@@ -94,12 +95,14 @@ func ValidModelID(id string) bool {
 	return !strings.ContainsFunc(id, func(r rune) bool { return !unicode.IsPrint(r) || unicode.IsSpace(r) })
 }
 
-const providerCols = `p.id, p.name, p.kind, p.endpoint, p.auth, length(p.api_key) > 0, ` + authorName + `, p.updated_at`
+const providerCols = `p.id, p.owner_id, ` + authorName + `, p.name, p.kind, p.endpoint, length(p.api_key) > 0, p.updated_at`
+
+const providerFrom = ` FROM providers p LEFT JOIN users u ON u.id = p.owner_id`
 
 func scanProvider(row scanner, extra ...any) (*Provider, error) {
 	var p Provider
 	var at int64
-	dest := append([]any{&p.ID, &p.Name, &p.Kind, &p.Endpoint, &p.Auth, &p.HasKey, &p.CreatedBy, &at}, extra...)
+	dest := append([]any{&p.ID, &p.OwnerID, &p.Owner, &p.Name, &p.Kind, &p.Endpoint, &p.HasKey, &at}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -110,10 +113,11 @@ func scanProvider(row scanner, extra ...any) (*Provider, error) {
 	return &p, nil
 }
 
-// Providers lists every provider by name, with how many models each permits.
-func (s *Store) Providers() ([]*Provider, error) {
-	rows, err := s.db.Query(`SELECT ` + providerCols + `, (SELECT count(*) FROM provider_models m WHERE m.provider_id = p.id)
-		FROM providers p LEFT JOIN users u ON u.id = p.created_by ORDER BY p.name`)
+// Providers lists providers by owner then name, with how many models each permits: the owner's own
+// when ownerID is not 0, otherwise everyone's (for an admin's read-only view).
+func (s *Store) Providers(ownerID int64) ([]*Provider, error) {
+	rows, err := s.db.Query(`SELECT `+providerCols+`, (SELECT count(*) FROM provider_models m WHERE m.provider_id = p.id)`+
+		providerFrom+` WHERE ? = 0 OR p.owner_id = ? ORDER BY p.owner_id <> ?, u.username, p.name`, ownerID, ownerID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +137,7 @@ func (s *Store) Providers() ([]*Provider, error) {
 
 // Provider returns one provider with its permitted models, or ErrNotFound.
 func (s *Store) Provider(id int64) (*Provider, error) {
-	p, err := scanProvider(s.db.QueryRow(`SELECT `+providerCols+` FROM providers p
-		LEFT JOIN users u ON u.id = p.created_by WHERE p.id = ?`, id))
+	p, err := scanProvider(s.db.QueryRow(`SELECT `+providerCols+providerFrom+` WHERE p.id = ?`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -171,10 +174,10 @@ func (s *Store) ProviderKey(id int64) (string, error) {
 	return key, err
 }
 
-// nameTaken reports whether a provider other than exceptID already has the name.
-func nameTaken(q querier, name string, exceptID int64) (bool, error) {
+// nameTaken reports whether another of the owner's providers already has the name.
+func nameTaken(q querier, ownerID int64, name string, exceptID int64) (bool, error) {
 	var taken bool
-	err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM providers WHERE name = ? AND id <> ?)`, name, exceptID).Scan(&taken)
+	err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM providers WHERE owner_id = ? AND name = ? AND id <> ?)`, ownerID, name, exceptID).Scan(&taken)
 	return taken, err
 }
 
@@ -189,12 +192,12 @@ func (s *Store) CreateProvider(e ProviderEdit, actor *User) (*Provider, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	if taken, err := nameTaken(tx, e.Name, 0); err != nil {
+	if taken, err := nameTaken(tx, actor.ID, e.Name, 0); err != nil {
 		return nil, err
 	} else if taken {
-		return nil, invalid("A provider named %s already exists.", e.Name)
+		return nil, invalid("You already have a provider named %s.", e.Name)
 	}
-	res, err := tx.Exec(`INSERT INTO providers (name, kind, endpoint, created_by, updated_at) VALUES (?, ?, ?, ?, ?)`,
+	res, err := tx.Exec(`INSERT INTO providers (name, kind, endpoint, owner_id, updated_at) VALUES (?, ?, ?, ?, ?)`,
 		e.Name, e.Kind, e.Endpoint, actor.ID, now())
 	if err != nil {
 		return nil, err
@@ -232,10 +235,16 @@ func (s *Store) UpdateProvider(id int64, e ProviderEdit) error {
 		return err
 	}
 	defer tx.Rollback()
-	if taken, err := nameTaken(tx, e.Name, id); err != nil {
+	var owner int64
+	if err := tx.QueryRow(`SELECT owner_id FROM providers WHERE id = ?`, id).Scan(&owner); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if taken, err := nameTaken(tx, owner, e.Name, id); err != nil {
 		return err
 	} else if taken {
-		return invalid("Another provider is already named %s.", e.Name)
+		return invalid("You already have another provider named %s.", e.Name)
 	}
 	res, err := tx.Exec(`UPDATE providers SET name = ?, kind = ?, endpoint = ?, updated_at = ? WHERE id = ?`,
 		e.Name, e.Kind, e.Endpoint, now(), id)
@@ -307,19 +316,24 @@ func (s *Store) DeleteProvider(id int64) error {
 	return nil
 }
 
-// AvailableModel is a model Autobot may use: permitted on a provider.
+// AvailableModel is a model a workspace may use: permitted on a provider lent to it.
 type AvailableModel struct {
 	ProviderID   int64
 	ProviderName string
+	Owner        string // who lends it, and pays for it
 	Kind         string
 	Model        string
 }
 
-// AvailableModels lists every permitted model across all providers, by provider then model. A
-// provider with no permitted models contributes nothing: it cannot be used.
-func (s *Store) AvailableModels() ([]AvailableModel, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, p.kind, m.model_id FROM provider_models m
-		JOIN providers p ON p.id = m.provider_id ORDER BY p.name, m.model_id`)
+// AvailableModels lists the models a workspace may use, by provider then model: every permitted
+// model of every provider lent to it whose owner is still enabled. A provider with no permitted
+// models, or lent nowhere, contributes nothing.
+func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
+	rows, err := s.db.Query(`SELECT p.id, p.name, `+authorName+`, p.kind, m.model_id FROM provider_loans l
+		JOIN providers p ON p.id = l.provider_id
+		JOIN users u ON u.id = p.owner_id AND u.disabled = 0
+		JOIN provider_models m ON m.provider_id = p.id
+		WHERE l.workspace_id = ? ORDER BY p.name, m.model_id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,10 +341,79 @@ func (s *Store) AvailableModels() ([]AvailableModel, error) {
 	var out []AvailableModel
 	for rows.Next() {
 		var a AvailableModel
-		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.Kind, &a.Model); err != nil {
+		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.Owner, &a.Kind, &a.Model); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ProviderLoans returns the set of workspace IDs a provider is lent to.
+func (s *Store) ProviderLoans(providerID int64) (map[int64]bool, error) {
+	rows, err := s.db.Query(`SELECT workspace_id FROM provider_loans WHERE provider_id = ?`, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// LendProvider sets the workspaces a provider is lent to, replacing the set, and records each change
+// in the workspace's history. The caller has checked that the owner may lend to each of them.
+func (s *Store) LendProvider(p *Provider, workspaceIDs []int64, actor *User) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	have := map[int64]bool{}
+	rows, err := tx.Query(`SELECT workspace_id FROM provider_loans WHERE provider_id = ?`, p.ID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		have[id] = true
+	}
+	rows.Close()
+	want := map[int64]bool{}
+	for _, id := range workspaceIDs {
+		want[id] = true
+	}
+	for id := range want {
+		if have[id] {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO provider_loans (provider_id, workspace_id) VALUES (?, ?)`, p.ID, id); err != nil {
+			return err
+		}
+		if err := addEvent(tx, id, actor, "lent the provider "+p.Name+" to this workspace"); err != nil {
+			return err
+		}
+	}
+	for id := range have {
+		if want[id] {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM provider_loans WHERE provider_id = ? AND workspace_id = ?`, p.ID, id); err != nil {
+			return err
+		}
+		if err := addEvent(tx, id, actor, "withdrew the provider "+p.Name+" from this workspace"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

@@ -34,7 +34,6 @@
 </section>
 {{end}}{{end}}
 
-{{if .Me.IsAdmin}}
 <section class="panel">
 <h2>Run a test</h2>
 <form method="post" action="{{.M.Path}}/runs" class="stack wide">
@@ -52,7 +51,6 @@
 </form>
 <p class="hint">The run starts in a fresh container with no network, a read-only system and only its scratch folder writable. The code, if any, is in <code>/work/source</code> and the script starts there; models are read-only in <code>/models</code>. The script stops at the first failing command, and each command is shown in the output.</p>
 </section>
-{{end}}
 
 <section class="panel">
 <h2>Runs</h2>
@@ -62,7 +60,6 @@
 {{else}}<p class="muted">None yet.</p>{{end}}
 </section>
 
-{{if .Me.IsAdmin}}
 <section class="panel danger">
 <h2>Remove this machine</h2>
 <p>Its token stops working at once and any run in progress ends. Its past runs stay in the history.</p>
@@ -72,5 +69,4 @@
   <button class="danger">Remove machine</button>
 </form>
 </section>
-{{end}}
 {{end}}

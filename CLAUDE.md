@@ -46,9 +46,12 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    fresh job container with no network, a read-only root, no root user and capped resources. The
    old autobot-connector repository's runner/link/hub design was replaced, not reused (Derek,
    2026-11-22: "We value simple, robust designs").
-3. Providers (done): app-wide LLM providers with API keys only (no subscription logins: Derek,
-   2026-11-22, after the vendors' terms were checked), opt-in permitted models, model discovery,
-   and decision providers for /v1/decisions and System One's /v1/systemone (internal/decisions).
+3. Providers (done): owned by the user who pays for them and lent by the owner to workspaces they
+   are assigned to; admins can view but not change others'. API keys only (no subscription
+   logins: Derek, 2026-11-22, after the vendors' terms were checked). Opt-in permitted models,
+   model discovery, decision providers for /v1/decisions and System One's /v1/systemone.
+   Roles (Derek, 2026-11-22): admin is a super-admin (workspaces, members, users, sees all); a user
+   configures everything inside their assigned workspaces but cannot create, rename or delete them.
 4. Next: to be decided with Derek.
 
 ## Testing

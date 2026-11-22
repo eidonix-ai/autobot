@@ -41,7 +41,11 @@
 
 <section class="panel">
   <h2>Case files</h2>
-  <p class="muted">Review cases for this repository's pull requests and issues will be listed here.</p>
+  {{if .Cases}}
+  <ul class="plain">{{range .Cases}}<li><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a> {{.Title}} <span class="muted">· {{ts .UpdatedAt}}</span></li>{{end}}</ul>
+  {{else}}
+  <p class="muted">No cases yet. Cases open when intake picks up a new issue or pull request.</p>
+  {{end}}
 </section>
 
 <section class="panel">

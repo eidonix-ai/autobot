@@ -15,6 +15,14 @@
 {{end}}
 
 <section class="panel">
+<h2>Case files for contributors' agents</h2>
+<p>Autobot's comments can link to a case file, which a contributor's agent may read for more detail at <code>/api/v1/cases/&lt;uuid&gt;</code>. Each case's address is random and unguessable. For a public repository, the address is enough.</p>
+<p>For a private repository, the agent must also send a secret that only people with access to the repository can read: the contents of <code>{{.SecretPath}}</code> on the default branch, as a bearer token. To set it up, commit a file there containing, for example:</p>
+<pre class="secret">{{.NewSecret}}</pre>
+<p class="hint">Autobot reads the file with this workspace's GitHub identity and never writes to the repository. To rotate the secret, commit a new value; the old one stops working within five minutes. Rotate it when someone loses access to the repository.</p>
+</section>
+
+<section class="panel">
 <h2>GitHub identity</h2>
 {{if .GH}}
   {{with .Live}}

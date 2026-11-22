@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -251,4 +251,37 @@ CREATE TABLE provider_loans (
 	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 	PRIMARY KEY (provider_id, workspace_id)
 );
+`
+
+// Case files: one per issue or pull request, a Markdown log of findings. Writers add to it in
+// contributions: a draft its author may revise until it is finalized, when it is appended to the
+// file and becomes immutable, with the lines it occupies recorded. People may edit the file
+// directly; each such edit is recorded with a note of the lines it changed. The uuid is what the
+// case is shared by: random, unguessable, never listed.
+const schemaV7 = `
+CREATE TABLE cases (
+	uuid         TEXT    PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	number       INTEGER NOT NULL,
+	kind         TEXT    NOT NULL,            -- pr or issue
+	title        TEXT    NOT NULL,
+	contents     TEXT    NOT NULL,
+	version      INTEGER NOT NULL DEFAULT 1,  -- goes up with every change, for edit conflicts
+	created_at   INTEGER NOT NULL,
+	updated_at   INTEGER NOT NULL,
+	UNIQUE (workspace_id, number)
+);
+CREATE TABLE case_contributions (
+	id           INTEGER PRIMARY KEY,
+	case_uuid    TEXT    NOT NULL REFERENCES cases(uuid) ON DELETE CASCADE,
+	author       TEXT    NOT NULL,            -- a person's name, an agent's, or Autobot
+	kind         TEXT    NOT NULL,            -- system, agent, human (later: compact)
+	draft        TEXT    NOT NULL DEFAULT '', -- an open contribution's text, not yet in the file
+	note         TEXT    NOT NULL DEFAULT '', -- a human edit: which lines it changed
+	start_line   INTEGER,                     -- the lines a finalized contribution was appended as
+	end_line     INTEGER,
+	started_at   INTEGER NOT NULL,
+	finalized_at INTEGER
+);
+CREATE INDEX case_contributions_by_case ON case_contributions(case_uuid, id);
 `

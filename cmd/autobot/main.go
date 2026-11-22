@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +34,9 @@ const usage = `Usage:
   autobot machine [-db FILE] add OWNER/REPO NAME   add a donated machine; prints its token once
   autobot run     [-db FILE] [-ref REF] [-gpus N] [-minutes M] OWNER/REPO MACHINE < SCRIPT
                                                    queue a test run, as the first admin; prints its id
+  autobot case    [-db FILE] open OWNER/REPO NUMBER   open the case for an issue or PR (public repos)
+  autobot case    [-db FILE] note OWNER/REPO NUMBER AUTHOR < TEXT
+                                                   add a finalized contribution to a case
   autobot charter [-db FILE] get OWNER/REPO        print a workspace's current charter
   autobot charter [-db FILE] [-as USERNAME] set OWNER/REPO < FILE
                                                    save FILE as the next charter revision
@@ -61,6 +65,8 @@ func main() {
 		err = machine(os.Args[2:])
 	case "run":
 		err = queueRun(os.Args[2:])
+	case "case":
+		err = caseCmd(os.Args[2:])
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -300,6 +306,64 @@ func queueRun(args []string) error {
 		return err
 	}
 	fmt.Println(run.ID)
+	return nil
+}
+
+// caseCmd opens a case or adds a note to one, as intake and Autobot's agents will.
+func caseCmd(args []string) error {
+	fs := flag.NewFlagSet("case", flag.ExitOnError)
+	db := dbFlag(fs)
+	fs.Parse(args)
+	op := fs.Arg(0)
+	if !(op == "open" && fs.NArg() == 3) && !(op == "note" && fs.NArg() == 4) {
+		return errors.New("usage: autobot case [-db FILE] open OWNER/REPO NUMBER | note OWNER/REPO NUMBER AUTHOR < TEXT")
+	}
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ws, err := st.Workspace(fs.Arg(1))
+	if err != nil {
+		return fmt.Errorf("workspace %s: %w", fs.Arg(1), err)
+	}
+	number, err := strconv.Atoi(fs.Arg(2))
+	if err != nil {
+		return fmt.Errorf("%q is not an issue or PR number", fs.Arg(2))
+	}
+	if op == "open" {
+		// Without the service's key the command has no token, so it reads public repositories only.
+		c, created, err := web.OpenCase(context.Background(), st, &github.Client{}, "", ws, number)
+		if err != nil {
+			return err
+		}
+		what := "opened"
+		if !created {
+			what = "already open:"
+		}
+		fmt.Printf("%s %s %s, case %s\n", what, ws.Name, c.Label(), c.UUID)
+		return nil
+	}
+	c, err := st.CaseByNumber(ws.ID, number)
+	if err != nil {
+		return fmt.Errorf("no case for #%d in %s: %w", number, ws.Name, err)
+	}
+	text, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return err
+	}
+	id, err := st.StartContribution(c.UUID, fs.Arg(3))
+	if err != nil {
+		return err
+	}
+	if err := st.SetDraft(id, string(text)); err != nil {
+		return err
+	}
+	contrib, err := st.FinalizeContribution(id)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("added lines %d-%d to %s\n", contrib.StartLine, contrib.EndLine, c.Label())
 	return nil
 }
 

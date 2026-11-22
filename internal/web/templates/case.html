@@ -1,0 +1,25 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<div class="titlebar">
+  <h1>{{.Case.Label}}: {{.Case.Title}}</h1>
+  <a class="button secondary" href="{{.WS.Path}}/cases/{{.Case.Number}}/edit">Edit</a>
+</div>
+<article class="panel markdown">{{.HTML}}</article>
+
+<section class="panel">
+<h2>History</h2>
+<div class="scroll"><table class="list">
+<thead><tr><th>When</th><th>By</th><th>What</th></tr></thead>
+<tbody>{{range .Contributions}}<tr>
+  <td>{{ts .StartedAt}}</td><td>{{.Author}}</td>
+  <td>{{if .Open}}<span class="muted">writing, not yet added</span>{{else if .Note}}edited: {{.Note}}{{else if .StartLine}}added {{if eq .StartLine .EndLine}}line {{.StartLine}}{{else}}lines {{.StartLine}}–{{.EndLine}}{{end}}{{else}}<span class="muted">added nothing</span>{{end}}</td>
+</tr>{{end}}</tbody>
+</table></div>
+</section>
+
+<section class="panel">
+<h2>For contributors' agents</h2>
+<p>This case file, as Markdown: <code>{{.API}}</code></p>
+<p class="hint">{{if .Private}}The repository is private, so an agent must send the contents of <code>.github/autobot-secret.txt</code> as a bearer token, for example <code>curl -H "Authorization: Bearer $(cat .github/autobot-secret.txt)" {{.API}}</code>.{{else}}The repository is public, so the address is enough.{{end}} The address is random; share it only where the case belongs.</p>
+</section>
+{{end}}

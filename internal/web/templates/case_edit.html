@@ -1,0 +1,18 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.Path}}">{{.Case.Label}}</a> /</p>
+<h1>Edit the case file</h1>
+{{with .Conflict}}
+<p class="error">The case file changed while you were editing, so your changes were not saved. Your text is still below. <a href="{{$.Path}}" target="_blank" rel="noopener">Open the current case in a new tab</a>, bring the new lines into yours, then save. Saving now replaces the current file with your text.</p>
+{{end}}
+<form method="post" action="{{.Path}}" class="editor">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="base_version" value="{{.BaseVersion}}">
+  <textarea name="body" aria-label="Case file (Markdown)" spellcheck="true">
+{{.Body}}</textarea>
+  <div class="row">
+    <button>Save</button>
+    <a href="{{.Path}}">Cancel</a>
+    <span class="hint">Markdown. Case files are normally only added to; your edit is recorded in the history with the lines it changed.</span>
+  </div>
+</form>
+{{end}}

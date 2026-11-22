@@ -48,6 +48,16 @@ func (fakeGitHub) Tarball(_ context.Context, token, name, commit string) (io.Rea
 	return io.NopCloser(strings.NewReader("tarball of " + name + "@" + commit + " token=" + token)), nil
 }
 
+// fakeSecret is what o/secret's .github/autobot-secret.txt holds; "" for no file.
+var fakeSecret = ""
+
+func (fakeGitHub) File(_ context.Context, token, name, path string) (string, error) {
+	if strings.ToLower(name) == "o/secret" && token == "tok-good" && path == ".github/autobot-secret.txt" && fakeSecret != "" {
+		return fakeSecret + "\n", nil
+	}
+	return "", github.ErrNoRepo
+}
+
 func (fakeGitHub) Private(_ context.Context, token, name string) (bool, error) {
 	_, private := fakePrivate[strings.ToLower(name)]
 	return private, nil
@@ -80,6 +90,7 @@ type env struct {
 	st  *store.Store
 	srv *httptest.Server
 	dir string // holds the database file
+	ui  *Server
 }
 
 func newEnv(t *testing.T) *env {
@@ -97,7 +108,7 @@ func newEnv(t *testing.T) *env {
 	}
 	srv := httptest.NewServer(ui.Handler())
 	t.Cleanup(func() { srv.Close(); st.Close() })
-	return &env{t, st, srv, dir}
+	return &env{t, st, srv, dir, ui}
 }
 
 // browser is one person's cookie jar.

@@ -52,7 +52,13 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    model discovery, decision providers for /v1/decisions and System One's /v1/systemone.
    Roles (Derek, 2026-11-22): admin is a super-admin (workspaces, members, users, sees all); a user
    configures everything inside their assigned workspaces but cannot create, rename or delete them.
-4. Next: to be decided with Derek.
+4. Case files (done): one per issue or PR, a Markdown log opened by intake (workflows, not built
+   yet; `autobot case open` meanwhile). Writers add contributions: a draft they may revise until
+   finalized, then appended and immutable, with its line range. Human edits are recorded with a
+   line note. GET /api/v1/cases/{uuid} serves the Markdown to contributors' agents: public repos by
+   uuid alone; private repos also need the secret in .github/autobot-secret.txt (committed by the
+   repo's people, read live by Autobot), and a request without it gets instructions to set it up.
+5. Next: to be decided with Derek.
 
 ## Testing
 

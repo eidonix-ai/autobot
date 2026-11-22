@@ -3,6 +3,7 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,4 +232,50 @@ func (c *Client) Tarball(ctx context.Context, token, name, commit string) (io.Re
 		return nil, fmt.Errorf("GitHub answered %s for %s at %s", resp.Status, name, commit[:min(12, len(commit))])
 	}
 	return resp.Body, nil
+}
+
+// Item is an issue or pull request, as GitHub numbers both in one sequence.
+type Item struct {
+	Number int
+	Kind   string // "pr" or "issue"
+	Title  string
+	State  string // "open" or "closed"
+}
+
+// Item reads issue or pull request number of owner/repo.
+func (c *Client) Item(ctx context.Context, token, name string, number int) (*Item, error) {
+	var it struct {
+		Number      int       `json:"number"`
+		Title       string    `json:"title"`
+		State       string    `json:"state"`
+		PullRequest *struct{} `json:"pull_request"`
+	}
+	if _, err := c.get(ctx, token, fmt.Sprintf("/repos/%s/issues/%d", name, number), &it); err != nil {
+		if errors.Is(err, ErrNoRepo) {
+			return nil, fmt.Errorf("%s has no issue or pull request #%d that Autobot can see", name, number)
+		}
+		return nil, err
+	}
+	kind := "issue"
+	if it.PullRequest != nil {
+		kind = "pr"
+	}
+	return &Item{Number: it.Number, Kind: kind, Title: it.Title, State: it.State}, nil
+}
+
+// File reads a file from owner/repo's default branch, up to 64 KB. A missing file is ErrNoRepo.
+func (c *Client) File(ctx context.Context, token, name, path string) (string, error) {
+	var f struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+		Size     int    `json:"size"`
+	}
+	if _, err := c.get(ctx, token, "/repos/"+name+"/contents/"+path, &f); err != nil {
+		return "", err
+	}
+	if f.Encoding != "base64" || f.Size > 64<<10 {
+		return "", fmt.Errorf("%s in %s is not a small text file", path, name)
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(f.Content, "\n", ""))
+	return string(b), err
 }

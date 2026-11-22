@@ -37,13 +37,14 @@ const (
 
 // Server is the web interface over a store.
 type Server struct {
-	st    *store.Store
-	gh    GitHub
-	live  *live
-	pages map[string]*template.Template
-	md    goldmark.Markdown
-	mux   *http.ServeMux
-	ready atomic.Bool // set once a user exists; users are never deleted, so it never goes back
+	st     *store.Store
+	gh     GitHub
+	live   *live
+	access *repoAccess
+	pages  map[string]*template.Template
+	md     goldmark.Markdown
+	mux    *http.ServeMux
+	ready  atomic.Bool // set once a user exists; users are never deleted, so it never goes back
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -52,6 +53,7 @@ type GitHub interface {
 	CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error)
 	CommitSHA(ctx context.Context, token, name, ref string) (string, error)
 	Private(ctx context.Context, token, name string) (bool, error)
+	File(ctx context.Context, token, name, path string) (string, error)
 	Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error)
 }
 
@@ -78,10 +80,11 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		"pct":   func(p float64) float64 { return p * 100 },
 	}
 	s := &Server{
-		st:    st,
-		gh:    gh,
-		live:  &live{started: time.Now(), byID: map[int64]liveStatus{}},
-		pages: map[string]*template.Template{},
+		st:     st,
+		gh:     gh,
+		live:   &live{started: time.Now(), byID: map[int64]liveStatus{}},
+		access: &repoAccess{byWS: map[int64]repoFacts{}},
+		pages:  map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
 		md:  goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID())),
 		mux: http.NewServeMux(),
@@ -142,6 +145,12 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /connector/v1/runs/{id}/source", s.connectorAPI(s.runSource))
 	s.mux.Handle("POST /connector/v1/runs/{id}/output", s.connectorAPI(s.runOutput))
 	s.mux.Handle("POST /connector/v1/runs/{id}/result", s.connectorAPI(s.runResult))
+
+	s.mux.Handle("GET /w/{owner}/{repo}/cases/{number}", s.auth(s.casePage))
+	s.mux.Handle("GET /w/{owner}/{repo}/cases/{number}/edit", s.auth(s.caseEdit))
+	s.mux.Handle("POST /w/{owner}/{repo}/cases/{number}", s.auth(s.caseSave))
+	// Read by contributors' agents: public repositories' cases by uuid; private ones with the secret.
+	s.mux.HandleFunc("GET /api/v1/cases/{uuid}", s.apiCase)
 
 	s.mux.Handle("GET /admin/users", s.admin(s.users))
 	s.mux.Handle("POST /admin/users", s.admin(s.createUser))

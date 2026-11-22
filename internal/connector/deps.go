@@ -395,6 +395,10 @@ func (d *deps) download(ctx context.Context, rawURL, sum string) (string, error)
 	if got := hex.EncodeToString(h.Sum(nil)); got != sum {
 		return "", fmt.Errorf("checksum mismatch: the lockfile says %s, the download is %s", sum[:12], got[:12])
 	}
+	// Public files, read by the job's own user.
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return "", err
+	}
 	return dest, os.Rename(tmp.Name(), dest)
 }
 

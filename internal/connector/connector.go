@@ -90,6 +90,7 @@ type Connector struct {
 	github  string // GitHub's download host, for public repositories
 
 	mu      sync.Mutex
+	img     *imageInfo // what the work image has, found on first use
 	run     *activeRun
 	models  []protocol.Model
 	problem string
@@ -160,6 +161,58 @@ func (c *Connector) cleanUp(ctx context.Context) {
 		c.docker.remove(ctx, id)
 	}
 	os.RemoveAll(filepath.Join(c.cfg.DataDir, "runs"))
+	os.RemoveAll(filepath.Join(c.cfg.DataDir, "cache", "tmp"))
+}
+
+// arch is this machine's CPU as Python wheel names spell it.
+func (c *Connector) arch() string {
+	if runtime.GOARCH == "arm64" {
+		return "aarch64"
+	}
+	return "x86_64"
+}
+
+// probeScript lists the work image's Python version and installed packages.
+const probeScript = `import sys, re, importlib.metadata as m
+print(f"cp{sys.version_info.major}{sys.version_info.minor}")
+for d in m.distributions():
+    n = d.metadata.get("Name")
+    if n:
+        print(re.sub(r"[-_.]+", "-", n).lower() + "==" + d.version)`
+
+// image finds what the work image already has, once, by running its Python in a job container.
+func (c *Connector) image(ctx context.Context) (imageInfo, error) {
+	c.mu.Lock()
+	if c.img != nil {
+		defer c.mu.Unlock()
+		return *c.img, nil
+	}
+	c.mu.Unlock()
+	s := spec{Name: fmt.Sprintf("autobot-probe-%d", time.Now().UnixNano()), Image: c.imageID,
+		Cmd: []string{"python3", "-c", probeScript}, CPUs: 1, MemoryGiB: 2, ScratchGB: 1}
+	bg := context.Background()
+	id, err := c.docker.create(bg, s)
+	if err != nil {
+		return imageInfo{}, err
+	}
+	defer c.docker.remove(bg, id)
+	if err := c.docker.start(bg, id); err != nil {
+		return imageInfo{}, err
+	}
+	var out bytes.Buffer
+	c.docker.logs(ctx, id, &out)
+	if code, err := c.docker.wait(ctx, id); err != nil || code != 0 {
+		return imageInfo{}, fmt.Errorf("python3 in the work image exited %d: %v", code, err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	info := imageInfo{pythonTag: strings.TrimSpace(lines[0]), installed: map[string]bool{}}
+	for _, l := range lines[1:] {
+		info.installed[strings.TrimSpace(l)] = true
+	}
+	c.mu.Lock()
+	c.img = &info
+	c.mu.Unlock()
+	return info, nil
 }
 
 func (c *Connector) watchModels(ctx context.Context) {
@@ -288,11 +341,24 @@ func (c *Connector) report(run int64, res protocol.Result) {
 	}
 }
 
-// prelude runs before the job's own script: it copies the code into the job's scratch folder,
-// then runs the script with -e (stop at the first failure) and -x (show each command), with its
-// commands and their output in one stream so they stay in order.
+// prelude runs before the job's own script. It copies the code into the job's scratch folder,
+// points Cargo at the fetched crates (keeping the image's git dependencies), installs the fetched
+// Python wheels ahead of the image's packages, then runs the script with -e (stop at the first
+// failure) and -x (show each command), its commands and output in one stream so they stay in order.
 const prelude = `set -e
 mkdir -p "$TMPDIR"
+if [ -d /deps/crates ]; then
+  image_cargo="${CARGO_HOME:-$HOME/.cargo}"
+  export CARGO_HOME=/work/cargo
+  mkdir -p "$CARGO_HOME"
+  if [ -d "$image_cargo/git" ]; then cp -a "$image_cargo/git" "$CARGO_HOME/"; fi
+  printf '[source.crates-io]\nreplace-with = "autobot-deps"\n\n[source.autobot-deps]\ndirectory = "/deps/crates"\n\n[net]\noffline = true\n' > "$CARGO_HOME/config.toml"
+fi
+if [ -s /deps/wheels/requirements.txt ]; then
+  echo "Installing $(wc -l < /deps/wheels/requirements.txt) Python packages the work image lacks"
+  uv pip install --quiet --offline --no-index --find-links /deps/wheels --no-deps --target /work/python -r /deps/wheels/requirements.txt
+  export PYTHONPATH="/work/python${PYTHONPATH:+:$PYTHONPATH}"
+fi
 if [ -d /input/source ]; then cp -a /input/source /work/source; cd /work/source; fi
 printf '%s\n' "$1" > "$TMPDIR/run.sh"
 exec bash -ex "$TMPDIR/run.sh" 2>&1`
@@ -336,6 +402,12 @@ func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun)
 			return c.ended(ctx, r, res)
 		}
 		s.Binds = append(s.Binds, filepath.Join(dir, "source")+":/input/source:ro")
+		binds, err := c.prepareDeps(ctx, filepath.Join(dir, "source"), dir, out)
+		if err != nil {
+			res.Error = "dependencies: " + err.Error()
+			return c.ended(ctx, r, res)
+		}
+		s.Binds = append(s.Binds, binds...)
 	}
 
 	// The container outlives a cancelled ctx just long enough to be killed and removed.

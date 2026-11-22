@@ -58,7 +58,14 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    line note. GET /api/v1/cases/{uuid} serves the Markdown to contributors' agents: public repos by
    uuid alone; private repos also need the secret in .github/autobot-secret.txt (committed by the
    repo's people, read live by Autobot), and a request without it gets instructions to set it up.
-5. Next: to be decided with Derek.
+5. Workflows (in progress): a canvas per kind (pull requests, issues), polling only, no webhooks.
+   Event blocks (PR Ready, PR Draft, PR Activity, Issue Opened) with summon phrase and stop tag
+   (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
+   own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
+   fan out and merge; loops are refused for now. Templates use {tags}; a step's "Output to" tag is
+   kept per case (one PR or issue) and replaced by the next write. Placed and configured so far;
+   the engine and the agent harness are next. Web search comes from Tavily or Brave providers,
+   lent like inference; decision routes are detected per provider with its key.
 
 ## Testing
 

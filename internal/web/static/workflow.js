@@ -32,7 +32,7 @@
     root.style.backgroundSize = size + 'px ' + size + 'px';
     root.style.backgroundPosition = (x + pc.clientWidth / 2 * (1 - z)) + 'px ' + (y + pc.clientHeight / 2 * (1 - z)) + 'px';
   }
-  editor.on('translate', function (p) { moveGrid(p.x, p.y); });
+  editor.on('translate', function (p) { moveGrid(p.x, p.y); keepView(editor.zoom, p.x, p.y); });
 
   // The wheel zooms about the point under the mouse, which stays where it is.
   root.addEventListener('wheel', function (e) {
@@ -47,6 +47,7 @@
     editor.canvas_y += e.clientY - (r.y + at.y * z);
     editor.precanvas.style.transform = 'translate(' + editor.canvas_x + 'px, ' + editor.canvas_y + 'px) scale(' + z + ')';
     moveGrid(editor.canvas_x, editor.canvas_y);
+    keepView(z, editor.canvas_x, editor.canvas_y);
   }, { passive: false });
 
   var dfToID = {}, idToDf = {};   // Drawflow's numeric ids and ours
@@ -91,6 +92,65 @@
     if (idToDf[l.from] && idToDf[l.to]) { editor.addConnection(idToDf[l.from], idToDf[l.to], outClass(l.from, l.out), 'input_1'); }
   });
   loading = false;
+
+  // ---- Fit: the whole workflow in view, centred, at no more than full size ----
+  function setView(z, x, y) {
+    editor.zoom = editor.zoom_last_value = z;
+    editor.canvas_x = x; editor.canvas_y = y;
+    editor.precanvas.style.transform = 'translate(' + x + 'px, ' + y + 'px) scale(' + z + ')';
+    moveGrid(x, y);
+    keepView(z, x, y);
+  }
+
+  // The view (pan and zoom) is remembered in this browser, per workflow, so a reload keeps it.
+  var viewKey = 'autobot-view:' + base, viewTimer = null;
+  function keepView(z, x, y) {
+    clearTimeout(viewTimer);
+    viewTimer = setTimeout(function () {
+      try { localStorage.setItem(viewKey, JSON.stringify({ z: z, x: x, y: y })); } catch (e) { /* not kept */ }
+    }, 200);
+  }
+  function keptView() {
+    try {
+      var v = JSON.parse(localStorage.getItem(viewKey));
+      if (v && isFinite(v.z) && isFinite(v.x) && isFinite(v.y)) { return v; }
+    } catch (e) { /* none */ }
+    return null;
+  }
+
+  // The nodes' extent on the canvas, the name above each included, or null when there are none.
+  function extent() {
+    var box = null;
+    Object.keys(dfToID).forEach(function (dfid) {
+      var el = nodeEl(dfid), name = el.querySelector('.wf-name');
+      var x0 = el.offsetLeft, y0 = el.offsetTop - (name ? name.offsetHeight : 0);
+      var x1 = el.offsetLeft + el.offsetWidth, y1 = el.offsetTop + el.offsetHeight;
+      box = box ? { x0: Math.min(box.x0, x0), y0: Math.min(box.y0, y0), x1: Math.max(box.x1, x1), y1: Math.max(box.y1, y1) } : { x0: x0, y0: y0, x1: x1, y1: y1 };
+    });
+    return box;
+  }
+
+  function fit() {
+    var b = extent(), pc = editor.precanvas;
+    if (!b) { setView(1, 0, 0); return; }
+    var pad = 60, W = root.clientWidth, H = root.clientHeight;
+    var z = Math.max(editor.zoom_min, Math.min(1, (W - 2 * pad) / (b.x1 - b.x0), (H - 2 * pad) / (b.y1 - b.y0)));
+    // A canvas point c shows at translate + half the canvas × (1 − zoom) + c × zoom.
+    var x = W / 2 - (b.x0 + b.x1) / 2 * z - pc.clientWidth / 2 * (1 - z);
+    var y = H / 2 - (b.y0 + b.y1) / 2 * z - pc.clientHeight / 2 * (1 - z);
+    setView(z, x, y);
+  }
+  document.getElementById('wf-fit').addEventListener('click', fit);
+
+  // A workflow opens in the view last left; failing that, fitted if any node would be out of sight.
+  (function () {
+    var v = keptView(), b = extent();
+    if (v) {
+      setView(Math.min(editor.zoom_max, Math.max(editor.zoom_min, v.z)), v.x, v.y);
+    } else if (b && (b.x0 < 0 || b.y0 < 0 || b.x1 > root.clientWidth || b.y1 > root.clientHeight)) {
+      fit();
+    }
+  })();
 
   // ---- saving ----
   var saveTimer = null, saving = false, again = false;

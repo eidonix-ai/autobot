@@ -179,6 +179,32 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		t.Fatalf("zoom: before %v, after %v, %v", before, after, err)
 	}
 
+	// Panned out of sight, Fit brings the whole workflow back into view; a reload keeps the view.
+	const inView = `(function(){var c=document.getElementById('wf').getBoundingClientRect(),ok=true;
+		document.querySelectorAll('#wf .drawflow-node').forEach(function(n){var q=n.getBoundingClientRect();
+		ok=ok&&q.left>=c.left&&q.top>=c.top&&q.right<=c.right&&q.bottom<=c.bottom});return ok})()`
+	var lost, found, kept bool
+	var viewBefore, viewAfter string
+	const transformOf = `document.querySelector('#wf .drawflow').style.transform`
+	err = chromedp.Run(ctx,
+		chromedp.MouseEvent(input.MouseMoved, 1250, 780),
+		chromedp.MouseEvent(input.MousePressed, 1250, 780, chromedp.ButtonLeft, chromedp.ClickCount(1)),
+		chromedp.MouseEvent(input.MouseMoved, 700, 500, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, 100, 100, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, 100, 100, chromedp.ButtonLeft, chromedp.ClickCount(1)),
+		chromedp.Evaluate(inView, &lost),
+		chromedp.Click(`#wf-fit`, chromedp.ByQuery),
+		chromedp.Evaluate(inView, &found),
+		chromedp.Evaluate(transformOf, &viewBefore),
+		chromedp.Sleep(400*time.Millisecond),
+		chromedp.Reload(), chromedp.WaitVisible(`#wf .drawflow-node`),
+		chromedp.Evaluate(transformOf, &viewAfter),
+		chromedp.Evaluate(inView, &kept),
+	)
+	if err != nil || lost || !found || !kept || viewBefore != viewAfter {
+		t.Fatalf("Fit and reload: out of view before Fit %v, in view after %v, after reload %v; view %q then %q; %v", !lost, found, kept, viewBefore, viewAfter, err)
+	}
+
 	// With SHOTS set to a folder, save pictures of the canvas and the settings modal.
 	if dir := os.Getenv("SHOTS"); dir != "" {
 		var canvas, modal []byte

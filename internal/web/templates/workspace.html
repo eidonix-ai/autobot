@@ -33,10 +33,11 @@
   <h2>Models</h2>
   {{if .Available}}
   <ul class="plain models">{{range .Available}}{{$about := printf "%s · lent by %s" .ProviderName .Owner}}{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}{{$about = printf "%s · decisions" $about}}{{end}}
-    <li><span class="model">{{.Model}}</span> <span class="info" title="{{$about}}" aria-label="{{$about}}">ⓘ</span></li>{{end}}</ul>
+    <li><span class="model">{{.Model}}</span> <span class="info" data-tip="{{$about}}" aria-label="{{$about}}" tabindex="0">ⓘ</span></li>{{end}}</ul>
   {{else}}
   <p class="muted">None yet.</p>
   {{end}}
+  <p><a href="/providers">Lend Inference</a></p>
 </section>
 
 <section class="panel">

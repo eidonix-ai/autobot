@@ -172,4 +172,12 @@ p.names { line-height: 1.7; }
 
 ul.models li { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
 ul.models .model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.info { color: var(--muted); cursor: help; font-size: 0.85em; flex: none; }
+/* An (i) whose note shows at once on hover or focus: CSS only, no delay, normal cursor. */
+.info { position: relative; color: var(--muted); cursor: default; font-size: 0.85em; flex: none; }
+.info:hover, .info:focus { color: var(--text); outline: none; }
+.info::after {
+  content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 0.35rem);
+  white-space: nowrap; padding: 0.25rem 0.55rem; border-radius: 5px; font-size: 0.8rem;
+  background: var(--text); color: var(--bg); pointer-events: none; opacity: 0; z-index: 10;
+}
+.info:hover::after, .info:focus::after { opacity: 1; }

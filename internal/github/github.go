@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -163,4 +164,26 @@ func tokenKind(token string) string {
 	default:
 		return "token"
 	}
+}
+
+var refRE = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)
+
+// CommitSHA resolves a branch, tag or commit of owner/repo to its full commit hash.
+func (c *Client) CommitSHA(ctx context.Context, token, name, ref string) (string, error) {
+	if !refRE.MatchString(ref) || strings.Contains(ref, "..") {
+		return "", fmt.Errorf("%q is not a branch, tag or commit name", ref)
+	}
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	if _, err := c.get(ctx, token, "/repos/"+name+"/commits/"+ref, &commit); err != nil {
+		if errors.Is(err, ErrNoRepo) {
+			return "", fmt.Errorf("GitHub has no branch, tag or commit %q in %s", ref, name)
+		}
+		if strings.Contains(err.Error(), "422") || strings.Contains(err.Error(), "No commit found") {
+			return "", fmt.Errorf("GitHub has no branch, tag or commit %q in %s", ref, name)
+		}
+		return "", err
+	}
+	return commit.SHA, nil
 }

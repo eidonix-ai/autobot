@@ -15,7 +15,18 @@
 
 <section class="panel">
   <h2>Resources</h2>
-  <p class="muted">Test hardware from donors will be listed here once the donor connector is built.</p>
+  {{if .Machines}}
+  <ul class="plain machines">
+  {{range .Machines}}
+    <li><a href="{{.Path}}"><strong>{{.Name}}</strong></a>
+      <span class="dot {{if .Ready}}on{{else if .Online}}busy{{else}}off{{end}}"></span> {{.State}}
+      {{if .Online}}<br><span class="muted">{{len .Live.GPUs}} GPU{{if ne (len .Live.GPUs) 1}}s{{end}}{{with .Live.GPUs}}: {{(index . 0).Name}}{{end}} · {{len .Live.Models}} model{{if ne (len .Live.Models) 1}}s{{end}}</span>{{end}}</li>
+  {{end}}
+  </ul>
+  {{else}}
+  <p class="muted">No donated machines yet.</p>
+  {{end}}
+  {{if .Me.IsAdmin}}<p><a href="{{.WS.Path}}/machines/new">Add a machine</a></p>{{end}}
 </section>
 
 <section class="panel">

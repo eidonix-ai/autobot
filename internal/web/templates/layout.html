@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{with .Title}}{{.}} · {{end}}Autobot</title>
 <link rel="stylesheet" href="/static/app.css">
+{{with .Refresh}}<meta http-equiv="refresh" content="3; url={{.}}">{{end}}
 </head>
 <body>
 <header class="top">

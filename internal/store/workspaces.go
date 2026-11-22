@@ -439,3 +439,8 @@ func (s *Store) SetMembers(workspaceID int64, userIDs []int64, actor *User) erro
 	}
 	return tx.Commit()
 }
+
+// WorkspaceByID looks a workspace up by id.
+func (s *Store) WorkspaceByID(id int64) (*Workspace, error) {
+	return scanWorkspace(s.db.QueryRow(`SELECT id, name, created_at FROM workspaces WHERE id = ?`, id))
+}

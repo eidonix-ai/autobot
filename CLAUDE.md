@@ -41,7 +41,12 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
 1. Users and workspaces, the project charter, first-time admin setup in the browser, workspace
    settings with names checked on GitHub, a per-workspace GitHub identity (user and encrypted
    token) (done).
-2. Next: to be decided with Derek.
+2. Resources: donated test machines (done). A connector on each machine (cmd/autobot-connector,
+   deployed with deploy/connector) checks in over HTTPS with a machine token and runs each test in a
+   fresh job container with no network, a read-only root, no root user and capped resources. The
+   old autobot-connector repository's runner/link/hub design was replaced, not reused (Derek,
+   2026-11-22: "We value simple, robust designs").
+3. Next: to be decided with Derek.
 
 ## Testing
 

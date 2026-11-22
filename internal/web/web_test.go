@@ -44,6 +44,13 @@ func (fakeGitHub) RepoName(_ context.Context, token, name string) (string, error
 	return "", github.ErrNoRepo
 }
 
+func (fakeGitHub) CommitSHA(_ context.Context, _, _, ref string) (string, error) {
+	if ref == "main" {
+		return "0123456789abcdef0123456789abcdef01234567", nil
+	}
+	return "", errors.New("no such ref")
+}
+
 func (f fakeGitHub) CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error) {
 	if token != "tok-good" {
 		return nil, github.ErrBadToken

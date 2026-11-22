@@ -1,0 +1,23 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>{{.Machine.Name}} added</h1>
+<section class="panel">
+<h2>Its token</h2>
+<p>This is shown only once. Anyone with it can act as this machine; if it is lost or leaked, remove the machine and add it again.</p>
+<pre class="secret">{{.Token}}</pre>
+</section>
+<section class="panel">
+<h2>Start the connector on the machine</h2>
+<p>The machine needs Docker with the NVIDIA Container Toolkit, and should be used only for testing. On it, in a checkout of the Autobot repository:</p>
+<pre>cd deploy/connector
+cp example.env .env      # then edit .env: see below
+docker compose up -d --build
+docker compose run --rm connector check</pre>
+<p>In <code>.env</code>, set at least:</p>
+<pre>AUTOBOT_URL={{.URL}}
+CONNECTOR_TOKEN=<em>the token above</em>
+WORK_IMAGE=<em>the image runs use, such as flare-donor-work:local</em>
+MODELS_DIR=<em>a folder of models, such as /home/you/.cache/huggingface/hub</em></pre>
+<p>The check must end with "The job container is isolated as required." The machine then shows as Ready on <a href="{{.WS.Path}}">the workspace page</a>.</p>
+</section>
+{{end}}

@@ -30,6 +30,7 @@ const usage = `Usage:
   autobot serve   [-db FILE] [-addr HOST:PORT]     run the web service
   autobot useradd [-db FILE] [-admin] [-name "Display Name"] USERNAME
   autobot passwd  [-db FILE] USERNAME              set a user's password (signs them out)
+  autobot machine [-db FILE] add OWNER/REPO NAME   add a donated machine; prints its token once
   autobot charter [-db FILE] get OWNER/REPO        print a workspace's current charter
   autobot charter [-db FILE] [-as USERNAME] set OWNER/REPO < FILE
                                                    save FILE as the next charter revision
@@ -54,6 +55,8 @@ func main() {
 		err = passwd(os.Args[2:])
 	case "charter":
 		err = charter(os.Args[2:])
+	case "machine":
+		err = machine(os.Args[2:])
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -107,6 +110,7 @@ func serve(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go ui.Watch(ctx)
 	done := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
@@ -209,6 +213,53 @@ func passwd(args []string) error {
 	return nil
 }
 
+// machine adds a donated machine to a workspace, recorded as the first admin, and prints the
+// token its connector signs in with. Only the token's hash is kept, so this is the only copy.
+func machine(args []string) error {
+	fs := flag.NewFlagSet("machine", flag.ExitOnError)
+	db := dbFlag(fs)
+	fs.Parse(args)
+	if fs.NArg() != 3 || fs.Arg(0) != "add" {
+		return errors.New("usage: autobot machine [-db FILE] add OWNER/REPO NAME")
+	}
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ws, err := st.Workspace(fs.Arg(1))
+	if err != nil {
+		return fmt.Errorf("workspace %s: %w", fs.Arg(1), err)
+	}
+	admin, err := firstAdmin(st)
+	if err != nil {
+		return err
+	}
+	_, token, err := st.AddMachine(ws.ID, fs.Arg(2), admin)
+	if err != nil {
+		return err
+	}
+	fmt.Println(token)
+	return nil
+}
+
+func firstAdmin(st *store.Store) (*store.User, error) {
+	users, err := st.Users()
+	if err != nil {
+		return nil, err
+	}
+	var first *store.User
+	for i := range users {
+		if users[i].IsAdmin && (first == nil || users[i].ID < first.ID) {
+			first = &users[i]
+		}
+	}
+	if first == nil {
+		return nil, errors.New("there is no admin yet")
+	}
+	return first, nil
+}
+
 // charter prints or replaces a workspace's charter. A replacement is saved as the next revision,
 // exactly as the web editor saves one, recorded under -as (default: the first admin).
 func charter(args []string) error {
@@ -251,19 +302,8 @@ func charter(args []string) error {
 		if author, err = st.UserByUsername(*as); err != nil {
 			return fmt.Errorf("user %q: %w", *as, err)
 		}
-	} else {
-		users, err := st.Users()
-		if err != nil {
-			return err
-		}
-		for i := range users {
-			if users[i].IsAdmin && (author == nil || users[i].ID < author.ID) {
-				author = &users[i]
-			}
-		}
-		if author == nil {
-			return errors.New("there is no admin to record as the author; pass -as USERNAME")
-		}
+	} else if author, err = firstAdmin(st); err != nil {
+		return err
 	}
 	body, err := io.ReadAll(io.LimitReader(os.Stdin, store.MaxCharterBytes+1))
 	if err != nil {

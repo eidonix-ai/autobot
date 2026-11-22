@@ -1,0 +1,12 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>Add a machine</h1>
+<section class="panel">
+<form method="post" action="{{.WS.Path}}/machines" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Name <input name="name" value="{{.Form.Get "name"}}" placeholder="for example cn7" required autocomplete="off" spellcheck="false"></label>
+  <button>Add machine</button>
+</form>
+<p class="hint">The next page shows the machine's token once, and how to start the connector on it.</p>
+</section>
+{{end}}

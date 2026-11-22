@@ -1,0 +1,76 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>{{.M.Name}}</h1>
+<p><span class="dot {{if .M.Ready}}on{{else if .M.Online}}busy{{else}}off{{end}}"></span> {{.M.State}}
+{{if not .M.Live.Seen.IsZero}}<span class="muted">· last checked in {{ago .M.Live.Seen}}</span>{{end}}
+{{with .M.Run}} · <a href="{{$.WS.Path}}/runs/{{.ID}}">open run {{.ID}}</a>{{end}}</p>
+
+{{if not .M.Live.Seen.IsZero}}{{with .M.Live}}
+<div class="grid">
+<section class="panel">
+  <h2>Machine</h2>
+  <ul class="plain">
+    <li>{{.Arch}}, connector {{.Version}}</li>
+    <li>Host memory: {{gib .MemAvailableMiB}} free of {{gib .MemTotalMiB}}</li>
+    <li>Each run gets {{.JobCPUs}} CPUs and {{.JobMemoryGiB}} GiB of memory, {{.JobScratchGiB}} GiB of it as scratch in /work</li>
+    <li>Work image <code>{{short .Image 12}}</code></li>
+  </ul>
+</section>
+<section class="panel">
+  <h2>Models in /models</h2>
+  {{if .Models}}<ul class="plain">{{range .Models}}<li>{{.Name}} <span class="muted">{{bytes .Bytes}} · {{.Path}}</span></li>{{end}}</ul>
+  {{else}}<p class="muted">None.</p>{{end}}
+</section>
+</div>
+<section class="panel">
+  <h2>GPUs</h2>
+  {{if .GPUs}}
+  <div class="scroll"><table class="list">
+  <thead><tr><th>#</th><th>GPU</th><th>Temperature</th><th>Power</th><th>Memory</th><th>Use</th></tr></thead>
+  <tbody>{{range .GPUs}}<tr><td>{{.Index}}</td><td>{{.Name}}</td><td>{{num .TempC 0}} °C</td><td>{{num .PowerW 0}}{{with .PowerLimitW}} / {{num . 0}}{{end}} W</td>
+    <td>{{if .MemTotalMiB}}{{num .MemUsedMiB 0}} / {{num .MemTotalMiB 0}} MiB{{else}}shared with the host{{end}}</td><td>{{num .UtilPct 0}} %</td></tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<p class="muted">None.</p>{{end}}
+</section>
+{{end}}{{end}}
+
+{{if .Me.IsAdmin}}
+<section class="panel">
+<h2>Run a test</h2>
+<form method="post" action="{{.M.Path}}/runs" class="stack wide">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Code from {{.WS.Name}}
+    <input name="ref" value="{{.Form.Get "ref"}}" placeholder="a branch, tag or commit, such as main; blank for none" autocomplete="off" spellcheck="false"></label>
+  <label>Script (bash)
+    <textarea name="script" class="code" rows="8" spellcheck="false">
+{{.Form.Get "script"}}</textarea></label>
+  <div class="row">
+    <label>GPUs <input type="number" name="gpus" min="0" max="8" value="{{.Form.Get "gpus"}}"></label>
+    <label>Time limit (minutes) <input type="number" name="minutes" min="1" max="120" value="{{.Form.Get "minutes"}}"></label>
+  </div>
+  <button{{if not .M.Ready}} disabled{{end}}>Run</button>
+</form>
+<p class="hint">The run starts in a fresh container with no network, a read-only system and only its scratch folder writable. The code, if any, is in <code>/work/source</code> and the script starts there; models are read-only in <code>/models</code>. The script stops at the first failing command, and each command is shown in the output.</p>
+</section>
+{{end}}
+
+<section class="panel">
+<h2>Runs</h2>
+{{if .Runs}}
+<ul class="history">{{range .Runs}}<li><a href="{{$.WS.Path}}/runs/{{.ID}}">Run {{.ID}}</a> <span class="state {{.State}}">{{.State}}</span>
+  <span class="muted">{{.StartedBy}}, {{ts .CreatedAt}}{{with .Ref}} · {{.}}{{end}}{{with .Summary}} · {{.}}{{end}}</span></li>{{end}}</ul>
+{{else}}<p class="muted">None yet.</p>{{end}}
+</section>
+
+{{if .Me.IsAdmin}}
+<section class="panel danger">
+<h2>Remove this machine</h2>
+<p>Its token stops working at once and any run in progress ends. Its past runs stay in the history.</p>
+<form method="post" action="{{.M.Path}}/remove" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input name="confirm" placeholder="Type {{.M.Name}} to confirm" autocomplete="off" spellcheck="false">
+  <button class="danger">Remove machine</button>
+</form>
+</section>
+{{end}}
+{{end}}

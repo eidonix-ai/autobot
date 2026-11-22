@@ -1,0 +1,34 @@
+# The Autobot connector: lends this machine to Autobot for test runs.
+#   cp example.env .env && chmod 600 .env    then fill it in
+#   docker compose up -d --build             start it (and after every update)
+#   docker compose run --rm connector check  confirm job containers are isolated
+#   docker compose logs -f                   watch it
+#   docker compose down                      stop it
+name: autobot-connector
+services:
+  connector:
+    build:
+      context: ../..
+      dockerfile: deploy/connector/Dockerfile
+    image: autobot-connector:local
+    restart: unless-stopped
+    env_file: .env
+    # The connector itself: no root filesystem writes, no capabilities, outbound network only.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    # To read GPU temperature and power with nvidia-smi. Runs get only the GPUs they ask for.
+    devices:
+      - nvidia.com/gpu=all
+    volumes:
+      # To start and remove job containers. This makes the connector as powerful as Docker on this
+      # machine, as with any CI runner, so use the machine only for testing.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Downloaded code, at the same path inside and out so job containers can mount it.
+      - ${DATA_DIR:-/var/lib/autobot-connector}:${DATA_DIR:-/var/lib/autobot-connector}
+      # Models, read-only, at the same path inside and out.
+      - ${MODELS_DIR:?set MODELS_DIR in .env}:${MODELS_DIR}:ro
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}

@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,7 @@ const (
 type Server struct {
 	st    *store.Store
 	gh    GitHub
+	live  *live
 	pages map[string]*template.Template
 	md    goldmark.Markdown
 	mux   *http.ServeMux
@@ -47,6 +49,7 @@ type Server struct {
 type GitHub interface {
 	RepoName(ctx context.Context, token, name string) (string, error)
 	CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error)
+	CommitSHA(ctx context.Context, token, name, ref string) (string, error)
 }
 
 // New builds the web interface.
@@ -58,10 +61,22 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 	funcs := template.FuncMap{
 		"ts":   func(t time.Time) string { return t.In(eastern).Format("Jan 2, 2006 3:04 PM") + " ET" },
 		"join": strings.Join,
+		// num shows a reading with the given number of decimals, or "–" when it is not reported.
+		"num": func(v *float64, digits int) string {
+			if v == nil {
+				return "–"
+			}
+			return strconv.FormatFloat(*v, 'f', digits, 64)
+		},
+		"gib":   func(mib int) string { return strconv.FormatFloat(float64(mib)/1024, 'f', 1, 64) + " GiB" },
+		"bytes": humanBytes,
+		"short": func(s string, n int) string { s = strings.TrimPrefix(s, "sha256:"); return s[:min(n, len(s))] },
+		"ago":   func(t time.Time) string { return time.Since(t).Round(time.Second).String() + " ago" },
 	}
 	s := &Server{
 		st:    st,
 		gh:    gh,
+		live:  &live{started: time.Now(), byID: map[int64]liveStatus{}},
 		pages: map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
 		md:  goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID())),
@@ -109,6 +124,19 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github/remove", s.admin(s.removeGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/members", s.admin(s.setMembers))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/delete", s.admin(s.deleteWorkspace))
+
+	s.mux.Handle("GET /w/{owner}/{repo}/machines/new", s.admin(s.newMachinePage))
+	s.mux.Handle("POST /w/{owner}/{repo}/machines", s.admin(s.addMachine))
+	s.mux.Handle("GET /w/{owner}/{repo}/machines/{id}", s.auth(s.machinePage))
+	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/runs", s.admin(s.startRun))
+	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/remove", s.admin(s.removeMachine))
+	s.mux.Handle("GET /w/{owner}/{repo}/runs/{id}", s.auth(s.runPage))
+	s.mux.Handle("POST /w/{owner}/{repo}/runs/{id}/stop", s.admin(s.stopRun))
+
+	// The connectors on donated machines, signed in by machine token.
+	s.mux.Handle("POST /connector/v1/heartbeat", s.connectorAPI(s.heartbeat))
+	s.mux.Handle("POST /connector/v1/runs/{id}/output", s.connectorAPI(s.runOutput))
+	s.mux.Handle("POST /connector/v1/runs/{id}/result", s.connectorAPI(s.runResult))
 
 	s.mux.Handle("GET /admin/users", s.admin(s.users))
 	s.mux.Handle("POST /admin/users", s.admin(s.createUser))
@@ -256,4 +284,16 @@ func inputError(err error) (string, bool) {
 		return ie.Msg, true
 	}
 	return "", false
+}
+
+// humanBytes shows a size in GB or MB.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return strconv.FormatFloat(float64(n)/(1<<30), 'f', 1, 64) + " GB"
+	case n >= 1<<20:
+		return strconv.FormatFloat(float64(n)/(1<<20), 'f', 0, 64) + " MB"
+	default:
+		return strconv.FormatInt(n>>10, 10) + " KB"
+	}
 }

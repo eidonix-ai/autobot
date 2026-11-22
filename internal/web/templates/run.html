@@ -1,0 +1,24 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.MachinePath}}">{{.Run.MachineName}}</a> /</p>
+<div class="titlebar">
+  <h1>Run {{.Run.ID}} <span class="state {{.Run.State}}">{{.Run.State}}</span></h1>
+  {{if and .Me.IsAdmin .Run.Active}}
+  <form method="post" action="{{.WS.Path}}/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary">Stop</button></form>
+  {{end}}
+</div>
+<section class="panel">
+  <ul class="plain">
+    <li>On {{.Run.MachineName}}, started by {{.Run.StartedBy}} on {{ts .Run.CreatedAt}}</li>
+    <li>{{if .Run.Commit}}Code: {{.WS.Name}} at {{.Run.Ref}} (<a href="{{.WS.GitHubURL}}/commit/{{.Run.Commit}}">{{short .Run.Commit 12}}</a>){{else}}No code checked out{{end}}</li>
+    <li>{{.Run.GPUs}} GPU{{if ne .Run.GPUs 1}}s{{end}}, time limit {{.Run.Timeout}}</li>
+    {{with .Run.Summary}}<li><strong>{{.}}</strong></li>{{end}}
+  </ul>
+  <details><summary>Script</summary><pre>{{.Run.Script}}</pre></details>
+</section>
+<section class="panel">
+  <h2>Output</h2>
+  {{if .Run.Output}}<pre class="output">{{.Run.Output}}</pre>{{else}}<p class="muted">{{if .Run.Active}}Waiting for output…{{else}}No output.{{end}}</p>{{end}}
+  <span id="end"></span>
+  {{if .Run.Active}}<p class="hint">This page refreshes every few seconds while the run is going.</p>{{end}}
+</section>
+{{end}}

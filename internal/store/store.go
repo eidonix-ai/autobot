@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2}
+var migrations = []string{schemaV1, schemaV2, schemaV3}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -157,3 +157,36 @@ func addEvent(q querier, workspaceID int64, actor *User, summary string) error {
 		workspaceID, actorID, summary, now())
 	return err
 }
+
+// Donated test machines and the test runs on them. A machine's agent signs in with a token that
+// is shown once when the machine is added; only its hash is kept.
+const schemaV3 = `
+CREATE TABLE machines (
+	id           INTEGER PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	name         TEXT    NOT NULL,
+	token_hash   TEXT    NOT NULL UNIQUE,
+	revoked      INTEGER NOT NULL DEFAULT 0,
+	created_by   INTEGER REFERENCES users(id),
+	created_at   INTEGER NOT NULL
+);
+CREATE TABLE test_runs (
+	id           INTEGER PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	machine_id   INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+	started_by   INTEGER REFERENCES users(id),
+	script       TEXT    NOT NULL,            -- the bash script the job runs
+	ref          TEXT    NOT NULL DEFAULT '', -- the branch, tag or commit asked for
+	commit_sha   TEXT    NOT NULL DEFAULT '', -- the commit checked out, or '' for none
+	gpus         INTEGER NOT NULL,
+	timeout_sec  INTEGER NOT NULL,
+	state        TEXT    NOT NULL,            -- queued, running, passed, failed, error
+	cancel       INTEGER NOT NULL DEFAULT 0,  -- someone asked to stop it
+	output       TEXT    NOT NULL DEFAULT '',
+	summary      TEXT    NOT NULL DEFAULT '', -- one line on how it ended
+	created_at   INTEGER NOT NULL,
+	started_at   INTEGER,
+	ended_at     INTEGER
+);
+CREATE INDEX test_runs_by_machine ON test_runs(machine_id, id);
+`

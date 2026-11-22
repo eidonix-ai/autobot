@@ -135,3 +135,45 @@ func TestModelUses(t *testing.T) {
 		t.Errorf("provider %+v", p)
 	}
 }
+
+// A search provider reaches a workspace by the same rule as a model (lent by an owner who is
+// assigned to it and enabled), and never counts as a model.
+func TestSearchProviders(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	alice := mustUser(t, st, "alice", false)
+	st.UseKey(bytes.Repeat([]byte{7}, 32))
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
+	st.SetMembers(ws.ID, []int64{alice.ID}, admin)
+	p, err := st.CreateProvider(ProviderEdit{Name: "Tavily", Kind: KindTavily, Endpoint: "https://api.tavily.com", Key: "k"}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetProviderModels(p.ID, []string{"stray"})
+	st.LendProvider(p, []int64{ws.ID}, alice)
+	count := func() int {
+		t.Helper()
+		got, err := st.SearchProviders(ws.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(got)
+	}
+	if count() != 1 {
+		t.Fatal("a lent search provider is missing")
+	}
+	if m, _ := st.AvailableModels(ws.ID); len(m) != 0 {
+		t.Fatalf("a search provider counted as models: %+v", m)
+	}
+	st.SetMembers(ws.ID, nil, admin)
+	if count() != 0 {
+		t.Fatal("a search provider stayed after its owner left the workspace")
+	}
+	st.SetMembers(ws.ID, []int64{alice.ID}, admin)
+	if err := st.UpdateUser(alice.ID, UserUpdate{DisplayName: "Alice", Disabled: true, Workspaces: []int64{ws.ID}}, admin); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("a disabled owner's search provider stayed usable")
+	}
+}

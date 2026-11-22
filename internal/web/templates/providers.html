@@ -9,9 +9,9 @@
 {{range .Providers}}
 <tr>
   <td><a href="/providers/{{.ID}}">{{.Name}}</a></td>
-  <td>{{if eq .Kind "anthropic"}}Anthropic{{else if eq .Kind "decisions"}}Decisions{{else if eq .Kind "systemone"}}System One{{else}}OpenAI-compatible{{end}}</td>
+  <td>{{if eq .Kind "anthropic"}}Anthropic{{else if eq .Kind "decisions"}}Decisions{{else if eq .Kind "systemone"}}System One{{else if eq .Kind "tavily"}}Tavily{{else if eq .Kind "brave"}}Brave Search{{else}}OpenAI-compatible{{end}}</td>
   <td>{{.Endpoint}}</td>
-  <td>{{if .ModelCount}}{{.ModelCount}}{{else}}<span class="muted">none: cannot be used</span>{{end}}</td>
+  <td>{{if or (eq .Kind "tavily") (eq .Kind "brave")}}web search{{else if .ModelCount}}{{.ModelCount}}{{else}}<span class="muted">none: cannot be used</span>{{end}}</td>
   <td>{{if .HasKey}}set{{else}}<span class="muted">not set</span>{{end}}</td>
 </tr>
 {{end}}

@@ -30,6 +30,7 @@
   {{else}}
   <p class="status"><span class="dot off"></span> 🙁 (No models assigned)</p>
   {{end}}
+  <p class="status"><span class="dot {{if .Search}}on{{else}}off{{end}}"></span> {{if .Search}}Web search: {{range $i, $p := .Search}}{{if $i}}, {{end}}{{$p.ProviderName}}{{end}}{{else}}No web search{{end}}</p>
 </section>
 
 <section class="panel tile">
@@ -98,6 +99,12 @@
   </tr>{{end}}</tbody>
   </table></div>
   {{else}}<p class="muted">🙁 (No models assigned)</p>{{end}}
+  {{if .Search}}
+  <div class="scroll"><table class="list dense members">
+  <thead><tr><th>Web search</th><th>Lent by</th></tr></thead>
+  <tbody>{{range .Search}}<tr><td>{{.ProviderName}}</td><td class="muted">{{.Owner}}</td></tr>{{end}}</tbody>
+  </table></div>
+  {{end}}
   <p><a href="/providers">Assign Inference</a></p>
 </div>
 

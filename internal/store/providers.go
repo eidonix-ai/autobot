@@ -22,7 +22,12 @@ const (
 	KindAnthropic = "anthropic" // the Anthropic API
 	KindDecisions = "decisions" // a server with a native /v1/decisions route
 	KindSystemOne = "systemone" // System One's /v1/systemone
+	KindTavily    = "tavily"    // Tavily web search: a key, no models
+	KindBrave     = "brave"     // Brave Search: a key, no models
 )
+
+// SearchKind reports whether kind is a web search API rather than inference.
+func SearchKind(kind string) bool { return kind == KindTavily || kind == KindBrave }
 
 // Provider is an inference provider, owned by the user who pays for it. Only the owner changes it
 // or lends it to workspaces. Its API key is never part of this value; ask for it with ProviderKey
@@ -109,9 +114,9 @@ func checkProviderEdit(e ProviderEdit) (ProviderEdit, error) {
 		return e, invalid("Give the provider a name of up to 100 characters, such as OpenRouter.")
 	}
 	switch e.Kind {
-	case KindOpenAI, KindAnthropic, KindDecisions, KindSystemOne:
+	case KindOpenAI, KindAnthropic, KindDecisions, KindSystemOne, KindTavily, KindBrave:
 	default:
-		return e, invalid("Choose the kind of API: OpenAI-compatible, Anthropic, /v1/decisions or System One.")
+		return e, invalid("Choose the kind of API: OpenAI-compatible, Anthropic, /v1/decisions, System One, Tavily or Brave Search.")
 	}
 	var err error
 	if e.Endpoint, err = NormalizeEndpoint(e.Endpoint); err != nil {
@@ -379,16 +384,42 @@ func (a AvailableModel) Use() string {
 	return "text"
 }
 
+// lentFrom and lentWhere are the rule for which providers a workspace may use (l is the loan, p the provider, u its
+// owner): lent to it, by an owner who is still enabled and still assigned to it (or an admin).
+const (
+	lentFrom = ` FROM provider_loans l
+		JOIN providers p ON p.id = l.provider_id
+		JOIN users u ON u.id = p.owner_id AND u.disabled = 0`
+	lentWhere = ` WHERE l.workspace_id = ? AND (u.is_admin = 1 OR EXISTS (SELECT 1 FROM workspace_members wm
+			WHERE wm.workspace_id = l.workspace_id AND wm.user_id = p.owner_id))`
+)
+
+// SearchProviders lists the web search providers a workspace may use, by name, by the same rule as
+// its models.
+func (s *Store) SearchProviders(workspaceID int64) ([]AvailableModel, error) {
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.owner_id, `+authorName+`, p.kind`+lentFrom+lentWhere+
+		` AND p.kind IN ('`+KindTavily+`', '`+KindBrave+`') ORDER BY p.name`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AvailableModel
+	for rows.Next() {
+		var a AvailableModel
+		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.OwnerID, &a.Owner, &a.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // AvailableModels lists the models a workspace may use, by provider then model: every permitted
 // model of every provider lent to it whose owner is still enabled and still assigned to the
 // workspace (or an admin). A provider with no permitted models, or lent nowhere, contributes nothing.
 func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
-	rows, err := s.db.Query(`SELECT p.id, p.name, p.owner_id, `+authorName+`, p.kind, m.model_id, p.decisions_route, p.systemone_route FROM provider_loans l
-		JOIN providers p ON p.id = l.provider_id
-		JOIN users u ON u.id = p.owner_id AND u.disabled = 0
-		JOIN provider_models m ON m.provider_id = p.id
-		WHERE l.workspace_id = ? AND (u.is_admin = 1 OR EXISTS (SELECT 1 FROM workspace_members wm
-			WHERE wm.workspace_id = l.workspace_id AND wm.user_id = p.owner_id))
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.owner_id, `+authorName+`, p.kind, m.model_id, p.decisions_route, p.systemone_route`+
+		lentFrom+` JOIN provider_models m ON m.provider_id = p.id`+lentWhere+` AND p.kind NOT IN ('`+KindTavily+`', '`+KindBrave+`')
 		ORDER BY p.name, m.model_id`, workspaceID)
 	if err != nil {
 		return nil, err

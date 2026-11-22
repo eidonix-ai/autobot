@@ -260,3 +260,40 @@ func TestProvidersBelongToTheirOwner(t *testing.T) {
 		t.Fatalf("a disabled owner's models are still available: %+v", got)
 	}
 }
+
+// A search provider is tried from its page, which never shows its key, and the workspace shows it
+// as web search, never as models.
+func TestSearchProvider(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+providerSecret {
+			http.Error(w, "bad key "+r.Header.Get("Authorization"), http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"results":[{"title":"Go generics","url":"https://go.dev/doc/tutorial/generics","content":"A tutorial"},
+			{"title":"Bad","url":"javascript:alert(1)","content":"x"}]}`))
+	}))
+	defer api.Close()
+	p, err := e.st.CreateProvider(store.ProviderEdit{Name: "Tavily", Kind: store.KindTavily, Endpoint: api.URL, Key: providerSecret}, derek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.st.LendProvider(p, []int64{ws.ID}, derek)
+	c := e.signIn("derek")
+	path := "/providers/" + itoa(p.ID)
+	code, _, body := c.post(path+"/search", url.Values{"csrf": {c.csrf()}, "q": {"go generics"}})
+	if code != http.StatusOK || !strings.Contains(body, `href="https://go.dev/doc/tutorial/generics"`) || strings.Contains(body, "javascript:") {
+		t.Fatalf("search: %d\n%s", code, body)
+	}
+	e.st.UpdateProvider(p.ID, store.ProviderEdit{Name: "Tavily", Kind: store.KindTavily, Endpoint: api.URL, Key: "wrong-" + providerSecret})
+	code, _, body = c.post(path+"/search", url.Values{"csrf": {c.csrf()}, "q": {"go generics"}})
+	if code != http.StatusBadGateway || !strings.Contains(body, "check the API key") || strings.Contains(body, providerSecret) {
+		t.Fatalf("refused key: %d", code)
+	}
+	_, body = c.get("/w/o/r")
+	if !strings.Contains(body, "Web search: Tavily") || !strings.Contains(body, "No models assigned") {
+		t.Fatalf("workspace tile:\n%s", body)
+	}
+}

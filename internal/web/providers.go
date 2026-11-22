@@ -11,6 +11,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/decisions"
 	"github.com/eidonix-ai/autobot/internal/providers"
+	"github.com/eidonix-ai/autobot/internal/search"
 	"github.com/eidonix-ai/autobot/internal/store"
 )
 
@@ -32,6 +33,8 @@ var presets = []preset{
 	{"gemini", "Google Gemini", store.KindOpenAI, "https://generativelanguage.googleapis.com/v1beta/openai"},
 	{"deepseek", "DeepSeek", store.KindOpenAI, "https://api.deepseek.com"},
 	{"systemone", "System One (decisions)", store.KindSystemOne, "https://system-one.dev/v1"},
+	{"tavily", "Tavily (web search)", store.KindTavily, "https://api.tavily.com"},
+	{"brave", "Brave Search (web search)", store.KindBrave, "https://api.search.brave.com/res/v1"},
 	{"custom", "Custom OpenAI-compatible (vLLM, llama.cpp, LiteLLM, any proxy)", store.KindOpenAI, ""},
 	{"custom-decisions", "Custom /v1/decisions server", store.KindDecisions, ""},
 }
@@ -235,7 +238,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 // checkRoutes asks the provider's endpoint which decision routes it serves, with its saved key,
 // and records the answer. An Anthropic provider has none, and is not asked.
 func (s *Server) checkRoutes(ctx context.Context, p *store.Provider) error {
-	if p.Kind == store.KindAnthropic {
+	if p.Kind != store.KindOpenAI { // the other kinds' APIs are known: nothing to ask
 		return s.st.SetProviderRoutes(p.ID, false, false)
 	}
 	key, err := s.st.ProviderKey(p.ID)
@@ -284,6 +287,10 @@ func (s *Server) recheckRoutes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.targetProvider(w, r)
 	if !ok {
+		return
+	}
+	if store.SearchKind(p.Kind) {
+		s.providerPage(w, r, http.StatusBadRequest, p, nil, nil, map[string]any{"Error": "A search provider has no models."})
 		return
 	}
 	key, err := s.st.ProviderKey(p.ID)
@@ -404,6 +411,37 @@ func (s *Server) tryDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data["Tried"], data["Notice"] = answers, "Answered by "+model+"."
+	s.providerPage(w, r, http.StatusOK, p, nil, nil, data)
+}
+
+// trySearch runs a search with a search provider and shows the results.
+func (s *Server) trySearch(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.targetProvider(w, r)
+	if !ok {
+		return
+	}
+	if !store.SearchKind(p.Kind) {
+		http.NotFound(w, r)
+		return
+	}
+	key, err := s.st.ProviderKey(p.ID)
+	if err != nil && !errors.Is(err, store.ErrKeyUnreadable) {
+		s.fail(w, err)
+		return
+	}
+	data := map[string]any{"Form": r.PostForm}
+	if key == "" {
+		data["Error"] = "Save the API key first."
+		s.providerPage(w, r, http.StatusBadRequest, p, nil, nil, data)
+		return
+	}
+	results, err := search.Search(r.Context(), p.Kind, p.Endpoint, key, r.PostForm.Get("q"), 5)
+	if err != nil {
+		data["Error"] = "The search failed: " + err.Error() + "."
+		s.providerPage(w, r, http.StatusBadGateway, p, nil, nil, data)
+		return
+	}
+	data["Results"], data["Searched"] = results, true
 	s.providerPage(w, r, http.StatusOK, p, nil, nil, data)
 }
 

@@ -234,6 +234,11 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	searchers, err := s.st.SearchProviders(ws.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	cases, err := s.st.FindCases(ws.ID, "", 3)
 	if err != nil {
 		s.fail(w, err)
@@ -247,7 +252,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "workspace.html", map[string]any{
 		"Title": ws.Name, "WS": ws, "Charter": charter, "Members": members, "Events": events, "Machines": machines,
 		"Available": available, "Cases": cases, "CaseCount": caseCount, "Res": summarize(machines),
-		"ChatModels": countKind(available, false), "DecisionModels": countKind(available, true)})
+		"ChatModels": countKind(available, false), "DecisionModels": countKind(available, true), "Search": searchers})
 }
 
 func (s *Server) charter(w http.ResponseWriter, r *http.Request) {

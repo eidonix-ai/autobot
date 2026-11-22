@@ -18,6 +18,8 @@
       <option value="anthropic"{{if eq $kind "anthropic"}} selected{{end}}>Anthropic</option>
       <option value="decisions"{{if eq $kind "decisions"}} selected{{end}}>Decisions (/v1/decisions)</option>
       <option value="systemone"{{if eq $kind "systemone"}} selected{{end}}>System One (/v1/systemone)</option>
+      <option value="tavily"{{if eq $kind "tavily"}} selected{{end}}>Tavily (web search)</option>
+      <option value="brave"{{if eq $kind "brave"}} selected{{end}}>Brave Search (web search)</option>
     </select>
   </label>
   <label>Endpoint <input name="endpoint" value="{{or (.Form.Get "endpoint") .P.Endpoint}}" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
@@ -26,6 +28,8 @@
   <button>Save</button>
 </form>
 {{end}}
+{{$search := or (eq .P.Kind "tavily") (eq .P.Kind "brave")}}
+{{if not $search}}
 <form method="post" action="/providers/{{.P.ID}}/routes" class="row routes">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <span><span class="dot {{if .P.Text}}on{{else}}off{{end}}"></span>Text</span>
@@ -33,9 +37,25 @@
   <span><span class="dot {{if or (eq .P.Kind "systemone") .P.SystemOneRoute}}on{{else}}off{{end}}"></span>/systemone</span>
   {{if .IsOwner}}<button class="secondary">{{if .P.RoutesChecked.IsZero}}Check{{else}}Check again{{end}}</button>{{end}}
 </form>
+{{end}}
 <p class="hint">Owned by {{.P.Owner}}; last changed {{ts .P.UpdatedAt}}. The endpoint is the base address, such as https://openrouter.ai/api/v1; Autobot adds /models itself. The key is encrypted and never shown again.</p>
 </section>
 
+{{if $search}}
+<section class="panel">
+<h2>Try a search</h2>
+{{if .IsOwner}}
+<form method="post" action="/providers/{{.P.ID}}/search" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input name="q" value="{{.Form.Get "q"}}" placeholder="Search the web" aria-label="Search" required>
+  <button class="secondary">Search</button>
+</form>
+{{if .Searched}}
+<ol class="results">{{range .Results}}<li><a href="{{.URL}}" rel="noopener noreferrer" target="_blank">{{or .Title .URL}}</a><br><span class="muted">{{.Snippet}}</span></li>{{else}}<li class="muted">No results.</li>{{end}}</ol>
+{{end}}
+{{end}}
+</section>
+{{else}}
 <section class="panel">
 <h2>Models</h2>
 {{if not .IsOwner}}
@@ -62,6 +82,7 @@
 <p class="hint">Saving replaces the permitted models with the ticked ones plus the IDs typed above. Use the exact ID a request must name, such as anthropic/claude-sonnet-4.5 on OpenRouter. Not every provider can list its models; typing the IDs always works.</p>
 {{end}}
 </section>
+{{end}}
 
 <section class="panel">
 <h2>Workspaces it is lent to</h2>
@@ -69,7 +90,7 @@
 <form method="post" action="/providers/{{.P.ID}}/lend" class="stack">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <fieldset>
-    <legend>Workspaces that may use this provider's permitted models</legend>
+    <legend>Workspaces that may use this provider</legend>
     {{range .Workspaces}}<label class="check"><input type="checkbox" name="workspace" value="{{.ID}}"{{if index $.Loans .ID}} checked{{end}}> {{.Name}}</label>
     {{else}}<p class="muted">You are not assigned to any workspace yet.</p>{{end}}
   </fieldset>

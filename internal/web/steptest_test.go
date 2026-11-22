@@ -29,7 +29,9 @@ func llmServer(t *testing.T) (*httptest.Server, func() []string) {
 		case "/v1/decisions":
 			io.WriteString(w, `{"answers":[{"choice":"yes","probabilities":[{"value":"yes","probability":0.8},{"value":"no","probability":0.2}]}]}`)
 		case "/v1/chat/completions":
-			var req struct{ Messages []struct{ Role, Content string } }
+			var req struct {
+				Messages []struct{ Role, Content string }
+			}
 			json.Unmarshal(body, &req)
 			reply := `{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"pr_diff","arguments":"{}"}}]}`
 			if req.Messages[len(req.Messages)-1].Role == "tool" {

@@ -51,6 +51,7 @@ type GitHub interface {
 	RepoName(ctx context.Context, token, name string) (string, error)
 	CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error)
 	CommitSHA(ctx context.Context, token, name, ref string) (string, error)
+	Private(ctx context.Context, token, name string) (bool, error)
 	Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error)
 }
 

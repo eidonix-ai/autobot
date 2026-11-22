@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -189,4 +189,10 @@ CREATE TABLE test_runs (
 	ended_at     INTEGER
 );
 CREATE INDEX test_runs_by_machine ON test_runs(machine_id, id);
+`
+
+// A run of a private repository gets its code through Autobot, which holds the token; any other
+// run's connector downloads straight from GitHub.
+const schemaV4 = `
+ALTER TABLE test_runs ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
 `

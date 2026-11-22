@@ -13,6 +13,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/eidonix-ai/autobot/internal/protocol"
 )
 
 const (
@@ -20,14 +22,21 @@ const (
 	maxSourceFiles = 500_000
 )
 
-// fetchSource downloads a run's code from Autobot, which fetches it from GitHub at the run's
-// commit, and unpacks it into dir, which must not exist yet.
-func (c *Connector) fetchSource(ctx context.Context, run int64, dir string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/connector/v1/runs/%d/source", strings.TrimSuffix(c.cfg.URL, "/"), run), nil)
+// fetchSource downloads a run's code at its commit and unpacks it into dir, which must not exist
+// yet. A public repository comes straight from GitHub over this machine's connection; a private
+// one comes from Autobot, which holds the token.
+func (c *Connector) fetchSource(ctx context.Context, job protocol.Job, dir string) error {
+	url := c.github + "/" + job.Repo + "/tar.gz/" + job.Commit
+	if job.Private {
+		url = fmt.Sprintf("%s/connector/v1/runs/%d/source", strings.TrimSuffix(c.cfg.URL, "/"), job.Run)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	if job.Private {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	}
 	req.Header.Set("User-Agent", "autobot-connector/"+Version)
 	resp, err := (&http.Client{Timeout: 15 * time.Minute}).Do(req)
 	if err != nil {

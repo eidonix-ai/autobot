@@ -48,6 +48,11 @@ func (fakeGitHub) Tarball(_ context.Context, token, name, commit string) (io.Rea
 	return io.NopCloser(strings.NewReader("tarball of " + name + "@" + commit + " token=" + token)), nil
 }
 
+func (fakeGitHub) Private(_ context.Context, token, name string) (bool, error) {
+	_, private := fakePrivate[strings.ToLower(name)]
+	return private, nil
+}
+
 func (fakeGitHub) CommitSHA(_ context.Context, _, _, ref string) (string, error) {
 	if ref == "main" {
 		return "0123456789abcdef0123456789abcdef01234567", nil

@@ -294,7 +294,8 @@ func queueRun(args []string) error {
 			return err
 		}
 	}
-	run, err := st.QueueRun(m, strings.TrimSpace(string(script)), *ref, commit, *gpus, time.Duration(*minutes)*time.Minute, admin)
+	// Without the service's key the command has no token, so it handles public repositories only.
+	run, err := st.QueueRun(m, strings.TrimSpace(string(script)), *ref, commit, false, *gpus, time.Duration(*minutes)*time.Minute, admin)
 	if err != nil {
 		return err
 	}

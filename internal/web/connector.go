@@ -129,7 +129,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, m *store.Mach
 }
 
 func (s *Server) job(run *store.TestRun) (*protocol.Job, error) {
-	j := &protocol.Job{Run: run.ID, Commit: run.Commit, Script: run.Script, GPUs: run.GPUs, TimeoutSec: int(run.Timeout / time.Second)}
+	j := &protocol.Job{Run: run.ID, Commit: run.Commit, Private: run.Private, Script: run.Script, GPUs: run.GPUs, TimeoutSec: int(run.Timeout / time.Second)}
 	if run.Commit != "" {
 		ws, err := s.st.WorkspaceByID(run.WorkspaceID)
 		if err != nil {
@@ -156,15 +156,16 @@ func (s *Server) machineRun(w http.ResponseWriter, r *http.Request, m *store.Mac
 	return run, true
 }
 
-// runSource streams a running run's code to its machine. Autobot fetches it from GitHub with the
-// workspace's token, so a private repository works without the token ever leaving Autobot.
+// runSource streams a private run's code to its machine. Autobot fetches it from GitHub with the
+// workspace's token, so the token never leaves Autobot. A public run's connector downloads straight
+// from GitHub, so its code is refused here: it would only cost Autobot's bandwidth.
 func (s *Server) runSource(w http.ResponseWriter, r *http.Request, m *store.Machine) {
 	run, ok := s.machineRun(w, r, m)
 	if !ok {
 		return
 	}
-	if run.State != "running" || run.Commit == "" {
-		http.Error(w, "this run has no code to download now", http.StatusConflict)
+	if run.State != "running" || run.Commit == "" || !run.Private {
+		http.Error(w, "this run has no code to download from Autobot: a public repository comes straight from GitHub", http.StatusConflict)
 		return
 	}
 	ws, err := s.st.WorkspaceByID(run.WorkspaceID)

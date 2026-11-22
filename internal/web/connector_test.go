@@ -49,7 +49,7 @@ func TestConnectorAPI(t *testing.T) {
 	}
 
 	// A queued run goes to its machine on the next check-in, once.
-	run, err := e.st.QueueRun(cn7, "echo hi", "main", "0123456789abcdef0123456789abcdef01234567", 1, time.Minute, admin)
+	run, err := e.st.QueueRun(cn7, "echo hi", "main", "0123456789abcdef0123456789abcdef01234567", true, 1, time.Minute, admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestConnectorAPI(t *testing.T) {
 		t.Fatalf("second check-in: %+v", r)
 	}
 
-	// Only the machine running it can download its code; the workspace token stays in Autobot.
+	// Only the machine running a private run can download its code; the token stays in Autobot.
 	src := e.srv.URL + "/connector/v1/runs/" + itoa(run.ID) + "/source"
 	get := func(tok string) (int, string) {
 		req, _ := http.NewRequest("GET", src, nil)
@@ -105,8 +105,19 @@ func TestConnectorAPI(t *testing.T) {
 		t.Fatalf("run %s %q", got.State, got.Output)
 	}
 
+	// A public run's code is never served by Autobot: the connector gets it from GitHub.
+	pub, _ := e.st.QueueRun(cn7, "true", "main", "0123456789abcdef0123456789abcdef01234567", false, 0, time.Minute, admin)
+	if _, r := e.connector(t, tok7, "/connector/v1/heartbeat", idle); r.Job == nil || r.Job.Private {
+		t.Fatalf("public job %+v", r.Job)
+	}
+	src = e.srv.URL + "/connector/v1/runs/" + itoa(pub.ID) + "/source"
+	if code, _ := get(tok7); code != http.StatusConflict {
+		t.Fatalf("Autobot served a public run's code: %d", code)
+	}
+	e.connector(t, tok7, "/connector/v1/runs/"+itoa(pub.ID)+"/result", protocol.Result{})
+
 	// A connector that comes back without the run Autobot gave it: the run is lost.
-	run2, _ := e.st.QueueRun(cn7, "sleep 60", "", "", 0, time.Minute, admin)
+	run2, _ := e.st.QueueRun(cn7, "sleep 60", "", "", false, 0, time.Minute, admin)
 	e.connector(t, tok7, "/connector/v1/heartbeat", idle) // takes run2
 	e.connector(t, tok7, "/connector/v1/heartbeat", idle) // restarted: no run
 	if got, _ := e.st.Run(run2.ID); got.State != "error" || !strings.Contains(got.Summary, "lost") {

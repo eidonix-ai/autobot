@@ -144,6 +144,7 @@ type TestRun struct {
 	Ref         string
 	Commit      string
 	GPUs        int
+	Private     bool // the code comes through Autobot, with the workspace's token
 	Timeout     time.Duration
 	State       string // queued, running, passed, failed, error
 	Cancel      bool
@@ -157,7 +158,7 @@ type TestRun struct {
 // Active reports whether the run has not ended.
 func (r TestRun) Active() bool { return r.State == "queued" || r.State == "running" }
 
-const runCols = `r.id, r.workspace_id, r.machine_id, m.name, ` + authorName + `, r.script, r.ref, r.commit_sha, r.gpus,
+const runCols = `r.id, r.workspace_id, r.machine_id, m.name, ` + authorName + `, r.script, r.ref, r.commit_sha, r.gpus, r.private,
 	r.timeout_sec, r.state, r.cancel, r.output, r.summary, r.created_at, r.started_at, r.ended_at`
 
 const runFrom = ` FROM test_runs r JOIN machines m ON m.id = r.machine_id LEFT JOIN users u ON u.id = r.started_by`
@@ -166,7 +167,7 @@ func scanRun(row scanner) (*TestRun, error) {
 	var r TestRun
 	var timeout, created int64
 	var started, ended sql.NullInt64
-	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.MachineID, &r.MachineName, &r.StartedBy, &r.Script, &r.Ref, &r.Commit, &r.GPUs,
+	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.MachineID, &r.MachineName, &r.StartedBy, &r.Script, &r.Ref, &r.Commit, &r.GPUs, &r.Private,
 		&timeout, &r.State, &r.Cancel, &r.Output, &r.Summary, &created, &started, &ended); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -185,7 +186,7 @@ func scanRun(row scanner) (*TestRun, error) {
 
 // QueueRun records a test run for a machine to pick up. A machine runs one job at a time, so a
 // second is refused while one is queued or running.
-func (s *Store) QueueRun(m *Machine, script, ref, commit string, gpus int, timeout time.Duration, actor *User) (*TestRun, error) {
+func (s *Store) QueueRun(m *Machine, script, ref, commit string, private bool, gpus int, timeout time.Duration, actor *User) (*TestRun, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -198,8 +199,8 @@ func (s *Store) QueueRun(m *Machine, script, ref, commit string, gpus int, timeo
 	if busy {
 		return nil, invalid("%s is already running a test. Wait for it to finish, or stop it.", m.Name)
 	}
-	res, err := tx.Exec(`INSERT INTO test_runs (workspace_id, machine_id, started_by, script, ref, commit_sha, gpus, timeout_sec, state, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`, m.WorkspaceID, m.ID, actor.ID, strings.ReplaceAll(script, "\r\n", "\n"), ref, commit, gpus,
+	res, err := tx.Exec(`INSERT INTO test_runs (workspace_id, machine_id, started_by, script, ref, commit_sha, private, gpus, timeout_sec, state, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`, m.WorkspaceID, m.ID, actor.ID, strings.ReplaceAll(script, "\r\n", "\n"), ref, commit, private, gpus,
 		int64(timeout/time.Second), now())
 	if err != nil {
 		return nil, err

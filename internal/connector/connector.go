@@ -87,6 +87,7 @@ type Connector struct {
 	docker  *docker
 	http    *http.Client
 	imageID string
+	github  string // GitHub's download host, for public repositories
 
 	mu      sync.Mutex
 	run     *activeRun
@@ -102,7 +103,8 @@ type activeRun struct {
 
 // New returns a connector.
 func New(cfg Config) *Connector {
-	return &Connector{cfg: cfg, docker: newDocker(cfg.Socket), http: &http.Client{Timeout: 30 * time.Second}}
+	return &Connector{cfg: cfg, docker: newDocker(cfg.Socket), http: &http.Client{Timeout: 30 * time.Second},
+		github: "https://codeload.github.com"}
 }
 
 // Run checks in with Autobot until ctx ends.
@@ -324,8 +326,12 @@ func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if job.Commit != "" {
-		fmt.Fprintf(out, "Downloading %s at %s\n", job.Repo, job.Commit)
-		if err := c.fetchSource(ctx, job.Run, filepath.Join(dir, "source")); err != nil {
+		from := "GitHub"
+		if job.Private {
+			from = "Autobot (private repository)"
+		}
+		fmt.Fprintf(out, "Downloading %s at %s from %s\n", job.Repo, job.Commit, from)
+		if err := c.fetchSource(ctx, job, filepath.Join(dir, "source")); err != nil {
 			res.Error = err.Error()
 			return c.ended(ctx, r, res)
 		}

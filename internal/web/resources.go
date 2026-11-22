@@ -192,7 +192,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		again(fmt.Sprintf("%s has %d GPUs.", m.Name, len(v.Live.GPUs)))
 		return
 	}
-	ref, commit := strings.TrimSpace(f.Get("ref")), ""
+	ref, commit, private := strings.TrimSpace(f.Get("ref")), "", false
 	if ref != "" {
 		token, err := s.token(ws)
 		if err != nil {
@@ -203,8 +203,15 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			again(fmt.Sprintf("Could not find %s on GitHub: %v.", ref, err))
 			return
 		}
+		// Without a token the repository is public: the commit was found anonymously.
+		if token != "" {
+			if private, err = s.gh.Private(r.Context(), token, ws.Name); err != nil {
+				again(fmt.Sprintf("Could not check whether %s is private: %v.", ws.Name, err))
+				return
+			}
+		}
 	}
-	run, err := s.st.QueueRun(m, script, ref, commit, gpus, time.Duration(minutes)*time.Minute, me(r))
+	run, err := s.st.QueueRun(m, script, ref, commit, private, gpus, time.Duration(minutes)*time.Minute, me(r))
 	if msg, ok := inputError(err); ok {
 		again(msg)
 		return

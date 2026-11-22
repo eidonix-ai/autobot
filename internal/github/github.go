@@ -168,6 +168,15 @@ func tokenKind(token string) string {
 
 var refRE = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)
 
+// Private reports whether owner/repo is private, as the token sees it.
+func (c *Client) Private(ctx context.Context, token, name string) (bool, error) {
+	var r repo
+	if _, err := c.get(ctx, token, "/repos/"+name, &r); err != nil {
+		return false, err
+	}
+	return r.Private, nil
+}
+
 // CommitSHA resolves a branch, tag or commit of owner/repo to its full commit hash.
 func (c *Client) CommitSHA(ctx context.Context, token, name, ref string) (string, error) {
 	if !refRE.MatchString(ref) || strings.Contains(ref, "..") {

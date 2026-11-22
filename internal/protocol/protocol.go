@@ -2,12 +2,13 @@
 // connector makes every request, over HTTPS, with its machine token as a bearer token:
 //
 //	POST /connector/v1/heartbeat         Status   -> Reply   every Heartbeat
-//	GET  /connector/v1/runs/{id}/source           -> the run's code, a GitHub tarball (gzipped tar)
+//	GET  /connector/v1/runs/{id}/source           -> a private run's code, a GitHub tarball (gzipped tar)
 //	POST /connector/v1/runs/{id}/output  raw text -> Reply   while a run goes, at most OutputChunk bytes
 //	POST /connector/v1/runs/{id}/result  Result   -> Reply   once, when the run ends
 //
-// Autobot fetches the code from GitHub itself, with the workspace's GitHub identity when it has
-// one, so no GitHub token ever reaches a donated machine.
+// The connector downloads a public repository straight from GitHub, over the donor's own
+// connection. Only a private repository's code comes through Autobot, which fetches it with the
+// workspace's GitHub identity, so no GitHub token ever reaches a donated machine.
 //
 // Autobot keeps the state of every run, so either side can restart: a connector that comes back
 // without the run Autobot expects makes Autobot mark the run lost.
@@ -68,9 +69,10 @@ type Model struct {
 // Job is a test run for the connector to start.
 type Job struct {
 	Run        int64  `json:"run"`
-	Repo       string `json:"repo"`   // GitHub owner/repo, when Commit is set
-	Commit     string `json:"commit"` // copied to /work/source before the script; "" for none
-	Script     string `json:"script"` // bash, run with -e and -x
+	Repo       string `json:"repo"`    // GitHub owner/repo, when Commit is set
+	Commit     string `json:"commit"`  // copied to /work/source before the script; "" for none
+	Private    bool   `json:"private"` // fetch the code from Autobot, not from GitHub
+	Script     string `json:"script"`  // bash, run with -e and -x
 	GPUs       int    `json:"gpus"`
 	TimeoutSec int    `json:"timeout_sec"`
 }

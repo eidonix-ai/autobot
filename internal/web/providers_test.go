@@ -244,6 +244,16 @@ func TestProvidersBelongToTheirOwner(t *testing.T) {
 		t.Fatalf("available in o/b, where nothing is lent: %+v", got)
 	}
 
+	// Unassigned from the workspace, her loan to it stops working; assigned again, it works again.
+	e.st.UpdateUser(alice.ID, store.UserUpdate{}, derek)
+	if got, _ := e.st.AvailableModels(wsA.ID); len(got) != 0 {
+		t.Fatalf("an unassigned owner's models are still available: %+v", got)
+	}
+	e.st.UpdateUser(alice.ID, store.UserUpdate{Workspaces: []int64{wsA.ID}}, derek)
+	if got, _ := e.st.AvailableModels(wsA.ID); len(got) != 1 {
+		t.Fatalf("after reassignment: %+v", got)
+	}
+
 	// A disabled owner's providers stop working everywhere.
 	e.st.UpdateUser(alice.ID, store.UserUpdate{Disabled: true, Workspaces: []int64{wsA.ID}}, derek)
 	if got, _ := e.st.AvailableModels(wsA.ID); len(got) != 0 {

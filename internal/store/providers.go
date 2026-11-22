@@ -326,14 +326,16 @@ type AvailableModel struct {
 }
 
 // AvailableModels lists the models a workspace may use, by provider then model: every permitted
-// model of every provider lent to it whose owner is still enabled. A provider with no permitted
-// models, or lent nowhere, contributes nothing.
+// model of every provider lent to it whose owner is still enabled and still assigned to the
+// workspace (or an admin). A provider with no permitted models, or lent nowhere, contributes nothing.
 func (s *Store) AvailableModels(workspaceID int64) ([]AvailableModel, error) {
 	rows, err := s.db.Query(`SELECT p.id, p.name, `+authorName+`, p.kind, m.model_id FROM provider_loans l
 		JOIN providers p ON p.id = l.provider_id
 		JOIN users u ON u.id = p.owner_id AND u.disabled = 0
 		JOIN provider_models m ON m.provider_id = p.id
-		WHERE l.workspace_id = ? ORDER BY p.name, m.model_id`, workspaceID)
+		WHERE l.workspace_id = ? AND (u.is_admin = 1 OR EXISTS (SELECT 1 FROM workspace_members wm
+			WHERE wm.workspace_id = l.workspace_id AND wm.user_id = p.owner_id))
+		ORDER BY p.name, m.model_id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}

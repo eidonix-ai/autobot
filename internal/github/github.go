@@ -279,3 +279,167 @@ func (c *Client) File(ctx context.Context, token, name, path string) (string, er
 	b, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(f.Content, "\n", ""))
 	return string(b), err
 }
+
+// PullRequest is what an agent is told about a pull request.
+type PullRequest struct {
+	Number  int
+	URL     string // its page on GitHub
+	Title   string
+	Body    string
+	Author  string
+	Draft   bool
+	HeadSHA string
+	Base    string // the branch it merges into
+}
+
+// PullRequest reads pull request number of owner/repo.
+func (c *Client) PullRequest(ctx context.Context, token, name string, number int) (*PullRequest, error) {
+	var pr struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+		Title   string `json:"title"`
+		Body    string `json:"body"`
+		Draft   bool   `json:"draft"`
+		User    struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	if _, err := c.get(ctx, token, fmt.Sprintf("/repos/%s/pulls/%d", name, number), &pr); err != nil {
+		if errors.Is(err, ErrNoRepo) {
+			return nil, fmt.Errorf("%s has no pull request #%d that Autobot can see", name, number)
+		}
+		return nil, err
+	}
+	return &PullRequest{Number: pr.Number, URL: pr.HTMLURL, Title: pr.Title, Body: pr.Body, Author: pr.User.Login,
+		Draft: pr.Draft, HeadSHA: pr.Head.SHA, Base: pr.Base.Ref}, nil
+}
+
+// ChangedFile is one file a pull request changes.
+type ChangedFile struct {
+	Path      string
+	Status    string // added, modified, removed, renamed…
+	Additions int
+	Deletions int
+	Patch     string // its part of the diff; "" when GitHub leaves it out (binary or very large)
+}
+
+// PullRequestFiles lists the files a pull request changes, up to 3,000 (GitHub's limit).
+func (c *Client) PullRequestFiles(ctx context.Context, token, name string, number int) ([]ChangedFile, error) {
+	var out []ChangedFile
+	for page := 1; page <= 30; page++ {
+		var files []struct {
+			Filename  string `json:"filename"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+			Patch     string `json:"patch"`
+		}
+		if _, err := c.get(ctx, token, fmt.Sprintf("/repos/%s/pulls/%d/files?per_page=100&page=%d", name, number, page), &files); err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			out = append(out, ChangedFile{f.Filename, f.Status, f.Additions, f.Deletions, f.Patch})
+		}
+		if len(files) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Diff writes a pull request's changes as one unified diff, from its files' patches.
+func Diff(files []ChangedFile) string {
+	var b strings.Builder
+	for _, f := range files {
+		fmt.Fprintf(&b, "diff --git a/%s b/%s (%s, +%d -%d)\n", f.Path, f.Path, f.Status, f.Additions, f.Deletions)
+		if f.Patch == "" {
+			b.WriteString("(no text diff: binary or too large)\n")
+			continue
+		}
+		b.WriteString(f.Patch)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// Comment is one comment on an issue or pull request.
+type Comment struct {
+	Author string
+	Body   string
+	At     time.Time
+}
+
+// Comments lists the conversation comments on an issue or pull request, oldest first, up to 300.
+func (c *Client) Comments(ctx context.Context, token, name string, number int) ([]Comment, error) {
+	var out []Comment
+	for page := 1; page <= 3; page++ {
+		var cs []struct {
+			Body string `json:"body"`
+			User struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			CreatedAt time.Time `json:"created_at"`
+		}
+		if _, err := c.get(ctx, token, fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=100&page=%d", name, number, page), &cs); err != nil {
+			return nil, err
+		}
+		for _, x := range cs {
+			out = append(out, Comment{x.User.Login, x.Body, x.CreatedAt})
+		}
+		if len(cs) < 100 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// FileAt reads a file of owner/repo at a commit, up to 1 MB.
+func (c *Client) FileAt(ctx context.Context, token, name, ref, path string) (string, error) {
+	var f struct {
+		Type     string `json:"type"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+		Size     int    `json:"size"`
+	}
+	p := "/repos/" + name + "/contents/" + strings.TrimPrefix(path, "/") + "?ref=" + ref
+	if _, err := c.get(ctx, token, p, &f); err != nil {
+		if errors.Is(err, ErrNoRepo) {
+			return "", fmt.Errorf("no file %s at %.12s", path, ref)
+		}
+		return "", err
+	}
+	if f.Type != "file" || f.Encoding != "base64" {
+		return "", fmt.Errorf("%s is not a file", path)
+	}
+	if f.Size > 1<<20 {
+		return "", fmt.Errorf("%s is larger than 1 MB", path)
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(f.Content, "\n", ""))
+	return string(b), err
+}
+
+// Tree lists the files of owner/repo at a commit, up to GitHub's limit of about 100,000.
+func (c *Client) Tree(ctx context.Context, token, name, ref string) ([]string, error) {
+	var t struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+	if _, err := c.get(ctx, token, "/repos/"+name+"/git/trees/"+ref+"?recursive=1", &t); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range t.Tree {
+		if e.Type == "blob" {
+			out = append(out, e.Path)
+		}
+	}
+	return out, nil
+}

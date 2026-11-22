@@ -1,0 +1,20 @@
+{{define "head"}}{{if eq .Run.Status "running"}}<meta http-equiv="refresh" content="3">{{end}}{{end}}
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/workflows/{{.Run.Kind}}">Workflows</a> /</p>
+<h1>{{.Run.NodeName}}{{if .Run.Test}} <span class="muted">test</span>{{end}}</h1>
+<p class="status"><span class="dot {{.Dot}}"></span> {{.Outcome}} · {{.Run.Model}} · {{.T.Turns}} turn{{if ne .T.Turns 1}}s{{end}} · {{.T.In}} tokens in, {{.T.Out}} out · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if not .Run.FinishedAt.IsZero}}, took {{.Took}}{{end}}</p>
+{{with .T.Error}}<p class="error">{{.}}</p>{{end}}
+{{if .Report}}<section class="panel"><h2>Report</h2><div class="md">{{.Report}}</div></section>{{end}}
+{{if .T.Plan}}<section class="panel"><h2>Plan</h2><ul class="plan">{{range .T.Plan}}<li class="{{.Status}}">{{.Step}}{{with .Note}} <span class="muted">({{.}})</span>{{end}}</li>{{end}}</ul></section>{{end}}
+<section class="panel"><h2>Transcript</h2>
+<ol class="transcript">
+{{range .Entries}}
+<li class="{{.Role}}">
+  {{if .Collapsed}}<details><summary>{{.Label}}</summary><pre>{{.Text}}</pre></details>
+  {{else}}<div class="who">{{.Label}}</div>{{with .Text}}<pre>{{.}}</pre>{{end}}{{end}}
+  {{range .Calls}}<div class="call"><code>{{.Name}}</code> <span class="muted">{{.Args}}</span></div>{{end}}
+</li>
+{{end}}
+</ol>
+</section>
+{{end}}

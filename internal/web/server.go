@@ -20,6 +20,7 @@ import (
 	"time"
 	_ "time/tzdata" // the Eastern-time display works on hosts without a zoneinfo database
 
+	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/yuin/goldmark"
@@ -55,6 +56,9 @@ type GitHub interface {
 	Private(ctx context.Context, token, name string) (bool, error)
 	File(ctx context.Context, token, name, path string) (string, error)
 	Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error)
+	PullRequest(ctx context.Context, token, name string, number int) (*github.PullRequest, error)
+	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
+	agent.Reader
 }
 
 // New builds the web interface.
@@ -154,6 +158,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/layout", s.auth(s.saveLayout))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.nodeSettings))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.saveNodeSettings))
+	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.testForm))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.runTest))
+	s.mux.Handle("GET /w/{owner}/{repo}/agent-runs/{id}", s.auth(s.agentRun))
 	s.mux.Handle("GET /w/{owner}/{repo}/models", s.auth(s.modelsPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members", s.auth(s.membersPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members/{username}", s.auth(s.memberPage))

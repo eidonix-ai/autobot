@@ -58,6 +58,31 @@ func (fakeGitHub) File(_ context.Context, token, name, path string) (string, err
 	return "", github.ErrNoRepo
 }
 
+func (fakeGitHub) PullRequest(_ context.Context, _, name string, n int) (*github.PullRequest, error) {
+	if n != 7 {
+		return nil, github.ErrNoRepo
+	}
+	return &github.PullRequest{Number: 7, URL: "https://github.com/" + name + "/pull/7", Title: "Retry uploads", Body: "Retries forever.",
+		Author: "alice", HeadSHA: "0123456789abcdef0123456789abcdef01234567", Base: "main"}, nil
+}
+
+func (fakeGitHub) PullRequestFiles(context.Context, string, string, int) ([]github.ChangedFile, error) {
+	return []github.ChangedFile{{Path: "upload.go", Status: "modified", Additions: 3, Deletions: 1, Patch: "@@ -1 +1,3 @@\n-retry(3)\n+for {\n+  retry()\n+}"}}, nil
+}
+
+func (fakeGitHub) Comments(context.Context, string, string, int) ([]github.Comment, error) { return nil, nil }
+
+func (fakeGitHub) FileAt(_ context.Context, _, _, _, path string) (string, error) {
+	if path == "upload.go" {
+		return "package upload\n\nfunc send() {\n\tfor {\n\t\tretry()\n\t}\n}\n", nil
+	}
+	return "", github.ErrNoRepo
+}
+
+func (fakeGitHub) Tree(context.Context, string, string, string) ([]string, error) {
+	return []string{"go.mod", "upload.go"}, nil
+}
+
 func (fakeGitHub) Private(_ context.Context, token, name string) (bool, error) {
 	_, private := fakePrivate[strings.ToLower(name)]
 	return private, nil

@@ -240,6 +240,32 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		t.Fatalf("case entry settings %+v", c)
 	}
 
+	// Shift-click tests a block: its tags are asked for, and a case entry shows what it would write.
+	var preview string
+	err = chromedp.Run(ctx,
+		chromedp.Evaluate(`(function(){var r=document.querySelector('#node-4 .wf-title').getBoundingClientRect();window.__p=[r.x+r.width/2,r.y+r.height/2]})()`, nil),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			var pt []float64
+			if err := chromedp.Evaluate(`window.__p`, &pt).Do(ctx); err != nil {
+				return err
+			}
+			for _, typ := range []input.MouseType{input.MousePressed, input.MouseReleased} {
+				if err := input.DispatchMouseEvent(typ, pt[0], pt[1]).WithButton(input.Left).WithClickCount(1).WithModifiers(input.ModifierShift).Do(ctx); err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+		chromedp.WaitVisible(`#wf-modal textarea[name=tag_value_summary]`),
+		chromedp.SetValue(`#wf-modal textarea[name=tag_value_summary]`, "Ships safely."),
+		chromedp.Click(`#wf-modal form.test-form button:not([type])`),
+		chromedp.WaitVisible(`#wf-modal pre.entry`), chromedp.Text(`#wf-modal pre.entry`, &preview),
+		chromedp.Click(`#wf-modal .close`, chromedp.ByQuery),
+	)
+	if err != nil || preview != "Summary: Ships safely." {
+		t.Fatalf("shift-click test: %q, %v", preview, err)
+	}
+
 	// A drag on the background pans the canvas, and the dot grid moves with it.
 	var grid, transform string
 	err = chromedp.Run(ctx,

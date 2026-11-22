@@ -1,0 +1,136 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+// script is a model that answers with the replies it was given, in order, and records what it saw.
+type script struct {
+	replies []Message
+	seen    [][]Message
+}
+
+func (s *script) Complete(ctx context.Context, msgs []Message, tools []ToolSpec) (Message, Usage, error) {
+	s.seen = append(s.seen, append([]Message{}, msgs...))
+	if len(s.seen) > len(s.replies) {
+		return Message{}, Usage{}, errors.New("the script ran out")
+	}
+	return s.replies[len(s.seen)-1], Usage{In: 10, Out: 2}, nil
+}
+
+func call(id, name, args string) Message {
+	tc := ToolCall{ID: id, Type: "function"}
+	tc.Function.Name, tc.Function.Arguments = name, args
+	return Message{Role: "assistant", ToolCalls: []ToolCall{tc}}
+}
+
+func calls(cs ...Message) Message {
+	m := Message{Role: "assistant"}
+	for _, c := range cs {
+		m.ToolCalls = append(m.ToolCalls, c.ToolCalls...)
+	}
+	return m
+}
+
+func last(msgs []Message) string { return msgs[len(msgs)-1].Content }
+
+// A reply without a tool call does not end the run: the agent is told to keep going.
+func TestNudge(t *testing.T) {
+	m := &script{replies: []Message{
+		{Role: "assistant", Content: "Looks fine to me."},
+		call("f", "finish", `{"status":"met","report":"Reviewed: no problems."}`),
+	}}
+	tr := Run(context.Background(), Config{Model: m, System: "s", Task: "t", MaxTurns: 10}, nil)
+	if tr.Outcome != Met || tr.Report != "Reviewed: no problems." || last(m.seen[1]) != nudge || tr.In != 20 {
+		t.Fatalf("%+v", tr)
+	}
+	// Answering again and again without finishing ends the run as unfinished.
+	m = &script{replies: []Message{{Content: "a"}, {Content: "b"}, {Content: "c"}, {Content: "d"}}}
+	if tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil); tr.Outcome != Unfinished {
+		t.Fatalf("%+v", tr)
+	}
+}
+
+// "met" is refused while the agent's plan has open steps, and accepted once they are done.
+func TestPlanHoldsFinish(t *testing.T) {
+	m := &script{replies: []Message{
+		call("p", "update_plan", `{"steps":[{"step":"read the diff","status":"done"},{"step":"run the tests","status":"pending"}]}`),
+		call("f1", "finish", `{"status":"met","report":"done"}`),
+		call("p2", "update_plan", `{"steps":[{"step":"read the diff","status":"done"},{"step":"run the tests","status":"dropped","note":"no machine"}]}`),
+		call("f2", "finish", `{"status":"met","report":"done"}`),
+	}}
+	tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil)
+	if tr.Outcome != Met || !strings.Contains(last(m.seen[2]), "run the tests") {
+		t.Fatalf("%+v\n%s", tr, last(m.seen[2]))
+	}
+	// Blocked is always accepted: the agent says it cannot go on.
+	m = &script{replies: []Message{
+		call("p", "update_plan", `{"steps":[{"step":"x","status":"pending"}]}`),
+		call("f", "finish", `{"status":"blocked","report":"cn7 has no free GPU"}`),
+	}}
+	if tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil); tr.Outcome != Blocked {
+		t.Fatalf("%+v", tr)
+	}
+}
+
+// A check that finds the goal unmet sends the agent back to work.
+func TestVerify(t *testing.T) {
+	m := &script{replies: []Message{
+		call("f1", "finish", `{"status":"met","report":"probably fine"}`),
+		call("f2", "finish", `{"status":"met","report":"Read all 4 files; found a nil dereference at a.go:12."}`),
+	}}
+	checks := 0
+	verify := func(ctx context.Context, goal, report string) (bool, string, error) {
+		checks++
+		return strings.Contains(report, "a.go:12"), " (no file or line given)", nil
+	}
+	tr := Run(context.Background(), Config{Model: m, Goal: "list each problem with its file and line", Verify: verify, MaxTurns: 10}, nil)
+	if tr.Outcome != Met || checks != 2 || !strings.Contains(last(m.seen[1]), "file and line") {
+		t.Fatalf("%+v", tr)
+	}
+}
+
+// The tool calls of one turn run at the same time: each of these waits for the other.
+func TestParallelTools(t *testing.T) {
+	a, b := make(chan bool), make(chan bool)
+	meet := func(mine, theirs chan bool) Tool {
+		return Tool{Spec: ToolSpec{Name: "t" + string(rune('a'+len(mine)))}, Run: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			close(mine)
+			select {
+			case <-theirs:
+				return "met", nil
+			case <-time.After(2 * time.Second):
+				return "", errors.New("ran alone")
+			}
+		}}
+	}
+	ta, tb := meet(a, b), meet(b, a)
+	ta.Spec.Name, tb.Spec.Name = "ta", "tb"
+	m := &script{replies: []Message{
+		calls(call("1", "ta", `{}`), call("2", "tb", `{}`)),
+		call("f", "finish", `{"status":"met","report":"ok"}`),
+	}}
+	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{ta, tb}, MaxTurns: 5}, nil)
+	got := m.seen[1]
+	if tr.Outcome != Met || got[len(got)-2].Content != "met" || got[len(got)-1].Content != "met" {
+		t.Fatalf("results %q %q", got[len(got)-2].Content, got[len(got)-1].Content)
+	}
+}
+
+// The turn limit ends a run that never finishes, and a long result keeps its start and end.
+func TestBudgetAndClip(t *testing.T) {
+	long := Tool{Spec: ToolSpec{Name: "long"}, Run: func(context.Context, json.RawMessage) (string, error) {
+		return "START" + strings.Repeat("x", 100_000) + "END", nil
+	}}
+	m := &script{replies: []Message{call("1", "long", `{}`), call("2", "long", `{}`), call("3", "long", `{}`)}}
+	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 2}, nil)
+	res := last(m.seen[1])
+	if tr.Outcome != Budget || len(res) > maxResult+100 || !strings.HasPrefix(res, "START") || !strings.HasSuffix(res, "END") {
+		t.Fatalf("%s, result of %d characters", tr.Outcome, len(res))
+	}
+}

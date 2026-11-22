@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -311,4 +311,32 @@ const schemaV10 = `
 ALTER TABLE providers ADD COLUMN decisions_route INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE providers ADD COLUMN systemone_route INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE providers ADD COLUMN routes_checked  INTEGER NOT NULL DEFAULT 0;
+`
+
+// Agent runs: one run of an agent block, a test from the canvas or (later) a workflow's. The run
+// keeps a small summary (plan, outcome, report, tokens); its conversation is one row per message,
+// gzipped and written once, so a long run is neither rewritten every turn nor stored uncompressed.
+const schemaV11 = `
+CREATE TABLE agent_runs (
+	id           INTEGER PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	kind         TEXT    NOT NULL,
+	node_id      TEXT    NOT NULL,
+	node_name    TEXT    NOT NULL,
+	item         INTEGER NOT NULL DEFAULT 0,
+	test         INTEGER NOT NULL DEFAULT 0,
+	model        TEXT    NOT NULL,
+	status       TEXT    NOT NULL,
+	summary      TEXT    NOT NULL DEFAULT '{}',
+	started_by   INTEGER REFERENCES users(id),
+	started_at   INTEGER NOT NULL,
+	finished_at  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX agent_runs_node ON agent_runs (workspace_id, kind, node_id, item);
+CREATE TABLE agent_messages (
+	run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+	seq    INTEGER NOT NULL,
+	body   BLOB    NOT NULL,
+	PRIMARY KEY (run_id, seq)
+);
 `

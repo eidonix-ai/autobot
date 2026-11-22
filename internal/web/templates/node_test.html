@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="modal-head"><h2>Test · {{.Name}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Problem}}<p class="error">{{.}}</p>
+<div class="row"><button type="button" class="secondary" data-close>Close</button></div>
+{{else}}
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+{{with .Answer}}
+<div class="answer"><p><strong>{{.Choice}}</strong></p>
+<table class="list dense"><tbody>{{range .Choices}}<tr><td>{{.Name}}</td><td class="num">{{printf "%.1f" (pct .P)}} %</td></tr>{{end}}</tbody></table></div>
+{{end}}
+{{if .Entry}}<p class="muted">{{if .Finalize}}Would be appended to the case file, finalized:{{else}}Would be kept in the case file as a draft:{{end}}</p>
+<pre class="entry">{{.Entry}}</pre>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide step-form test-form"{{if .Agent}} target="_blank" data-native{{end}}>
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{range .Fields}}
+  <label><span class="lbl"><code>{{"{"}}{{.Name}}{{"}"}}</code> <span class="muted">{{.About}}</span></span>
+    {{if .Long}}<textarea name="tag_{{.Name}}" rows="4" class="code" spellcheck="false">{{.Value}}</textarea>{{else}}<input name="tag_{{.Name}}" value="{{.Value}}" autocomplete="off" spellcheck="false">{{end}}</label>
+  {{else}}<p class="muted">Its templates use no tags.</p>{{end}}
+  <div class="row"><button>{{if .Agent}}Run{{else}}Test{{end}}</button><button type="button" class="secondary" data-close>Close</button></div>
+</form>
+{{end}}
+{{end}}

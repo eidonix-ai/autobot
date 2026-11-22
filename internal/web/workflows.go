@@ -187,6 +187,20 @@ func (s *Server) modelOptions(ws *store.Workspace, decisions bool, cur workflow.
 	return out, nil
 }
 
+// checkMachines confirms each machine is one of the workspace's.
+func (s *Server) checkMachines(ws *store.Workspace, ids []int64) error {
+	machines, err := s.st.Machines(ws.ID)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if !slices.ContainsFunc(machines, func(m store.Machine) bool { return m.ID == id }) {
+			return errors.New("choose machines from this workspace's resources")
+		}
+	}
+	return nil
+}
+
 // checkModel confirms the workspace may use the model for the step.
 func (s *Server) checkModel(ws *store.Workspace, m workflow.ModelRef, decisions bool) error {
 	all, err := s.st.AvailableModels(ws.ID)
@@ -300,7 +314,17 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 	switch st := settings.(type) {
 	case workflow.AgentSettings:
 		page, model = "node_agent.html", st.Model
-		data["Tools"] = workflow.AgentTools
+		machines, err := s.st.Machines(ws.ID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		verify, err := s.modelOptions(ws, true, st.Verify)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		data["Personas"], data["Machines"], data["Verifiers"] = workflow.Personas, machines, verify
 	case workflow.DecisionSettings:
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
@@ -347,17 +371,24 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	case workflow.Agent:
 		a := workflow.AgentFromForm(f.Get, func(k string) []string { return f[k] })
 		a.Model = parseModel(f.Get("model"))
+		a.Verify = parseModel(f.Get("verify"))
 		if err = a.Check(kind); err == nil {
-			if err = workflow.CheckTemplates(kind, outputs, a.SystemPrompt, a.Instruction, a.FollowUp); err == nil {
+			if err = workflow.CheckTemplates(kind, outputs, a.Templates()...); err == nil {
 				err = s.checkModel(ws, a.Model, false)
 			}
+		}
+		if err == nil && a.Verify.Set() {
+			err = s.checkModel(ws, a.Verify, true)
+		}
+		if err == nil {
+			err = s.checkMachines(ws, a.Machines)
 		}
 		settings = a
 	case workflow.Decision:
 		d := workflow.DecisionFromForm(f.Get)
 		d.Model = parseModel(f.Get("model"))
 		if err = d.Check(kind); err == nil {
-			if err = workflow.CheckTemplates(kind, outputs, d.Context, d.Question); err == nil {
+			if err = workflow.CheckTemplates(kind, outputs, d.Templates()...); err == nil {
 				err = s.checkModel(ws, d.Model, true)
 			}
 		}

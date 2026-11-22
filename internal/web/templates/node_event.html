@@ -16,6 +16,7 @@
     <legend>When it runs</legend>
     <label class="check"><input type="radio" name="mode" value="always"{{if eq .S.Mode "always"}} checked{{end}}> Always run</label>
     <label class="check"><input type="radio" name="mode" value="summoned"{{if eq .S.Mode "summoned"}} checked{{end}}> Only if summoned</label>
+    {{if eq .Node.Type "pr_activity"}}<label class="check"><input type="checkbox" name="case_exists"{{if .S.CaseExists}} checked{{end}}> Only if a case file exists</label>{{end}}
   </fieldset>
   <div class="row">
     <label><span class="lbl">Summon phrase <span class="info" tabindex="0" data-tip="Case doesn't matter. ? stands for one character or none, * for any run of characters.">ⓘ</span></span> <input name="summon_phrase" value="{{.S.SummonPhrase}}" maxlength="100" required></label>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -69,25 +70,26 @@ type ModelRef struct {
 // Set reports whether a model has been chosen.
 func (m ModelRef) Set() bool { return m.Provider != 0 && m.Model != "" }
 
-// Tools an agent may be given.
-var AgentTools = []struct{ Key, Label string }{
-	{"web_search", "Web search"},
-	{"fetch_url", "Fetch web pages"},
-	{"read_repo", "Read the repository"},
-}
-
 // AgentSettings are an agent node's settings.
 type AgentSettings struct {
 	Model        ModelRef `json:"model"`
-	SystemPrompt string   `json:"system_prompt"` // a template
+	Persona      string   `json:"persona"`       // a Personas key, or "custom"
+	SystemPrompt string   `json:"system_prompt"` // a template: custom, the whole system prompt; otherwise added to the persona's
 	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
-	Tools        []string `json:"tools"`
-	MaxTurns     int      `json:"max_turns"`   // model calls before it must answer
-	MaxMinutes   int      `json:"max_minutes"` // wall time before it is stopped
-	Rerun        string   `json:"rerun"`       // run again on the same item: "resume" its conversation, or start "fresh"
-	FollowUp     string   `json:"follow_up"`   // resume: a template sent as the next message; "" sends the instruction again
+	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
+	Internet     bool     `json:"internet"`      // web search and fetching pages
+	SubAgents    int      `json:"sub_agents"`    // how many sub-agents it may run at once; 0 for none
+	Machines     []int64  `json:"machines"`      // the workspace machines it may use
+	Verify       ModelRef `json:"verify"`        // a decision model that checks a finish claiming the goal is met; unset for none
+	MaxTurns     int      `json:"max_turns"`     // model calls before it must have finished
+	MaxMinutes   int      `json:"max_minutes"`   // wall time before it is stopped
+	Rerun        string   `json:"rerun"`         // run again on the same item: "resume" its conversation, or start "fresh"
+	FollowUp     string   `json:"follow_up"`     // resume: a template sent as the next message; "" sends the instruction again
 	OutputTo     string   `json:"output_to,omitempty"`
 }
+
+// UsesMachine reports whether the agent may use a machine, for the settings form.
+func (s AgentSettings) UsesMachine(id int64) bool { return slices.Contains(s.Machines, id) }
 
 // Choice is one answer a decision can give, and one output of its node.
 type Choice struct {
@@ -107,15 +109,14 @@ type DecisionSettings struct {
 
 // DefaultAgent is a new agent node's settings, for a workflow of kind.
 func DefaultAgent(kind string) AgentSettings {
-	s := AgentSettings{
-		SystemPrompt: "You are Autobot, a careful reviewer for {repo}. The project's charter:\n\n{project_charter}",
-		Tools:        []string{"web_search", "fetch_url", "read_repo"},
-		MaxTurns:     30, MaxMinutes: 15, Rerun: "resume",
-	}
+	s := AgentSettings{Persona: "code_quality", Internet: true, SubAgents: 5, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
 	if kind == Issue {
 		s.Instruction = "Look into this issue: {issue_link}\n\n{issue_title}\n\n{issue_body}"
+		s.Goal = "The issue is understood: the report says what is wrong or asked for, where in the code it lies, and what should be done."
 	} else {
-		s.Instruction = "Review this pull request: {pr_link}\n\n{pr_title}\n\n{pr_body}\n\n{pr_diff}"
+		s.Instruction = "Review this pull request: {pr_link}\n\n{pr_title}\n\n{pr_body}"
+		s.Goal = "Every change in the pull request has been read in context, and the report lists each problem found with its file, " +
+			"line and a suggested fix, or says plainly that there are none."
 	}
 	return s
 }
@@ -182,36 +183,35 @@ func (s AgentSettings) Check(kind string) error {
 	switch {
 	case !s.Model.Set():
 		return errors.New("choose a model")
+	case PersonaOf(s.Persona) == nil && s.Persona != "custom":
+		return errors.New("choose a persona")
+	case s.Persona == "custom" && strings.TrimSpace(s.SystemPrompt) == "":
+		return errors.New("a custom persona needs its system prompt")
 	case strings.TrimSpace(s.Instruction) == "":
 		return errors.New("write the instruction")
-	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate:
+	case strings.TrimSpace(s.Goal) == "":
+		return errors.New("say when the work is done")
+	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate:
 		return fmt.Errorf("prompts are limited to %d characters", maxTemplate)
-	case s.MaxTurns < 1 || s.MaxTurns > 200:
-		return errors.New("the turn limit is 1 to 200")
-	case s.MaxMinutes < 1 || s.MaxMinutes > 120:
-		return errors.New("the time limit is 1 to 120 minutes")
+	case s.SubAgents < 0 || s.SubAgents > 16:
+		return errors.New("sub-agents are 0 to 16")
+	case s.MaxTurns < 1 || s.MaxTurns > 500:
+		return errors.New("the turn limit is 1 to 500")
+	case s.MaxMinutes < 1 || s.MaxMinutes > 240:
+		return errors.New("the time limit is 1 to 240 minutes")
 	case s.Rerun != "resume" && s.Rerun != "fresh":
 		return errors.New("choose what a re-run does")
-	}
-	for _, t := range s.Tools {
-		if !knownTool(t) {
-			return fmt.Errorf("no tool %q", t)
-		}
 	}
 	return checkOutputTo(s.OutputTo, kind)
 }
 
-func knownTool(key string) bool {
-	for _, t := range AgentTools {
-		if t.Key == key {
-			return true
-		}
-	}
-	return false
+// Templates are the agent's templates, for checking and filling their tags.
+func (s AgentSettings) Templates() []string {
+	return []string{s.SystemPrompt, s.Instruction, s.Goal, s.FollowUp}
 }
 
-// HasTool reports whether the agent has a tool, for the settings form.
-func (s AgentSettings) HasTool(key string) bool { return has(s.Tools, key) }
+// Templates are the decision's templates.
+func (s DecisionSettings) Templates() []string { return []string{s.Context, s.Question} }
 
 // Check confirms a decision's settings are complete and sensible.
 func (s DecisionSettings) Check(kind string) error {
@@ -259,16 +259,22 @@ func (s DecisionSettings) ChoiceLines() string {
 // AgentFromForm reads an agent's settings from its form; the model is the web layer's to fill in.
 func AgentFromForm(get func(string) string, all func(string) []string) AgentSettings {
 	s := AgentSettings{
+		Persona:      get("persona"),
 		SystemPrompt: strings.TrimSpace(get("system_prompt")),
 		Instruction:  strings.TrimSpace(get("instruction")),
-		Tools:        all("tool"),
+		Goal:         strings.TrimSpace(get("goal")),
+		Internet:     get("internet") == "on",
 		Rerun:        get("rerun"),
 		FollowUp:     strings.TrimSpace(get("follow_up")),
 		OutputTo:     strings.TrimSpace(get("output_to")),
+		Machines:     []int64{},
 	}
-	if s.Tools == nil {
-		s.Tools = []string{}
+	for _, m := range all("machine") {
+		if id, err := strconv.ParseInt(m, 10, 64); err == nil {
+			s.Machines = append(s.Machines, id)
+		}
 	}
+	s.SubAgents, _ = strconv.Atoi(get("sub_agents"))
 	s.MaxTurns, _ = strconv.Atoi(get("max_turns"))
 	s.MaxMinutes, _ = strconv.Atoi(get("max_minutes"))
 	return s

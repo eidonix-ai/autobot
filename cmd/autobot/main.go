@@ -101,6 +101,9 @@ func serve(args []string) error {
 	if err := st.UseKey(key); err != nil {
 		return err
 	}
+	if err := st.StopOrphanRuns(); err != nil { // their goroutines died with the last process
+		return err
+	}
 	if users, err := st.Users(); err != nil {
 		return err
 	} else if len(users) == 0 {

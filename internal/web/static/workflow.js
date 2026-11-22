@@ -332,7 +332,8 @@
   }, true);
   root.addEventListener('mouseup', function (e) {
     if (down && Math.abs(e.clientX - down.x) < 4 && Math.abs(e.clientY - down.y) < 4) {
-      openSettings(dfToID[down.node.id.replace('node-', '')]);
+      var id = dfToID[down.node.id.replace('node-', '')];
+      if (e.shiftKey) { openTest(id); } else { openSettings(id); }
     }
     down = null;
   });
@@ -346,10 +347,27 @@
     });
   }
 
+  // Shift-click tests a block: a form asks for the tags it uses, then it runs once with them.
+  function openTest(id) {
+    fetch(base + '/nodes/' + id + '/test', { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (html) {
+      modal.innerHTML = html;   // our own server's page, escaped by its templates
+      modal.dataset.node = id;
+      modal.showPopover();
+    });
+  }
+
   modal.addEventListener('click', function (e) { if (e.target.closest('[data-close]')) { modal.hidePopover(); } });
   modal.addEventListener('submit', function (e) {
-    e.preventDefault();
     var form = e.target, id = modal.dataset.node;
+    if (form.hasAttribute('data-native')) { return; }   // an agent's run opens its own page, in a new tab
+    e.preventDefault();
+    if (form.classList.contains('test-form')) {
+      show('Testing…');
+      post(form.action, new URLSearchParams(new FormData(form)), true).then(function (resp) { return resp.text(); })
+        .then(function (html) { modal.innerHTML = html; show(''); })
+        .catch(function () { show('Not tested: Autobot could not be reached.', true); });
+      return;
+    }
     form.version.value = state.version;
     show('Saving…');
     // Sent as an ordinary form (not multipart), which is what the server reads.

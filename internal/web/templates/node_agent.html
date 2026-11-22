@@ -11,26 +11,47 @@
         {{if not .Models}}<option value="">No text models are assigned</option>{{end}}
         {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
+    <label>Persona
+      <select name="persona">
+        {{range .Personas}}<option value="{{.Key}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
+        <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
+      </select></label>
   </div>
-  <label>System prompt <textarea name="system_prompt" rows="4" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
-  <label>Instruction <textarea name="instruction" rows="6" class="code" spellcheck="false" required>{{.S.Instruction}}</textarea></label>
+  <label><span class="lbl">Additional instructions <span class="info" tabindex="0" data-tip="Added to the persona's system prompt. With the Custom persona this is the whole system prompt.">ⓘ</span></span>
+    <textarea name="system_prompt" rows="3" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
+  <label>Instruction <textarea name="instruction" rows="5" class="code" spellcheck="false" required>{{.S.Instruction}}</textarea></label>
+  <label><span class="lbl">Done when <span class="info" tabindex="0" data-tip="The goal. The agent can only finish once it is met, or by saying why it cannot be.">ⓘ</span></span>
+    <textarea name="goal" rows="2" class="code" spellcheck="false" required>{{.S.Goal}}</textarea></label>
   {{template "tags" .}}
-  <fieldset>
-    <legend>Tools</legend>
-    {{range .Tools}}<label class="check"><input type="checkbox" name="tool" value="{{.Key}}"{{if $.S.HasTool .Key}} checked{{end}}> {{.Label}}</label>{{end}}
-  </fieldset>
   <div class="row">
-    <label>Turn limit <input type="number" name="max_turns" min="1" max="200" value="{{.S.MaxTurns}}"></label>
-    <label>Time limit (minutes) <input type="number" name="max_minutes" min="1" max="120" value="{{.S.MaxMinutes}}"></label>
-    <label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="Saves the final answer as a tag other steps can use, such as {value_summary}. Kept per pull request or issue; a later run replaces it.">ⓘ</span></span>
+    <label class="check"><input type="checkbox" name="internet"{{if .S.Internet}} checked{{end}}> Allow internet <span class="info" tabindex="0" data-tip="Web search and fetching pages. A machine's sandbox has no internet unless its donor allows it.">ⓘ</span></label>
+    <label>Max sub-agents <input type="number" name="sub_agents" min="0" max="16" value="{{.S.SubAgents}}"></label>
+  </div>
+  {{if .Machines}}
+  <fieldset>
+    <legend>Machines it may use</legend>
+    {{range .Machines}}<label class="check"><input type="checkbox" name="machine" value="{{.ID}}"{{if $.S.UsesMachine .ID}} checked{{end}}> {{.Name}}</label>{{end}}
+  </fieldset>
+  {{end}}
+  <div class="row">
+    <label>Verify with
+      <select name="verify">
+        <option value="">No check</option>
+        {{range .Verifiers}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select></label>
+    <label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="Saves the final report as a tag other steps can use, such as {value_summary}. Kept per pull request or issue; a later run replaces it.">ⓘ</span></span>
       <input name="output_to" value="{{.S.OutputTo}}" placeholder="value_summary" maxlength="40" autocomplete="off" spellcheck="false"></label>
+  </div>
+  <div class="row">
+    <label>Turn limit <input type="number" name="max_turns" min="1" max="500" value="{{.S.MaxTurns}}"></label>
+    <label>Time limit (minutes) <input type="number" name="max_minutes" min="1" max="240" value="{{.S.MaxMinutes}}"></label>
   </div>
   <fieldset>
     <legend>When it runs again on the same item</legend>
     <label class="check"><input type="radio" name="rerun" value="resume"{{if eq .S.Rerun "resume"}} checked{{end}}> Resume its conversation</label>
     <label class="check"><input type="radio" name="rerun" value="fresh"{{if eq .S.Rerun "fresh"}} checked{{end}}> Start fresh</label>
   </fieldset>
-  <label>Follow-up, when it resumes <textarea name="follow_up" rows="3" class="code" spellcheck="false" placeholder="Empty: the instruction is sent again">{{.S.FollowUp}}</textarea></label>
+  <label>Follow-up, when it resumes <textarea name="follow_up" rows="2" class="code" spellcheck="false" placeholder="Empty: the instruction is sent again">{{.S.FollowUp}}</textarea></label>
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

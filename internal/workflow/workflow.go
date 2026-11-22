@@ -267,6 +267,7 @@ type EventSettings struct {
 	// burst of activity to settle first.
 	Activity     []string `json:"activity,omitempty"`
 	QuietMinutes int      `json:"quiet_minutes,omitempty"`
+	CaseExists   bool     `json:"case_exists,omitempty"` // only for a pull request that already has a case file
 
 	// Pull requests only: which pull requests it handles.
 	Branches     string `json:"branches,omitempty"` // target branches, comma separated; "" is the default branch
@@ -391,6 +392,9 @@ func (s EventSettings) Summary() string {
 	if s.Mode == "summoned" {
 		parts[0] = "Only if summoned"
 	}
+	if s.CaseExists {
+		parts = append(parts, "with a case file")
+	}
 	parts = append(parts, "stops on “"+s.StopTag+"”")
 	return strings.Join(parts, " · ")
 }
@@ -413,6 +417,7 @@ func EventFromForm(typ string, get func(string) string, all func(string) []strin
 	if typ == "pr_activity" {
 		s.Activity = all("activity")
 		s.QuietMinutes, _ = strconv.Atoi(get("quiet_minutes"))
+		s.CaseExists = get("case_exists") == "on"
 	}
 	s.Branches = strings.TrimSpace(get("branches"))
 	s.Authors = get("authors")

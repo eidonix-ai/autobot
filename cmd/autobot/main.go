@@ -31,6 +31,8 @@ const usage = `Usage:
   autobot useradd [-db FILE] [-admin] [-name "Display Name"] USERNAME
   autobot passwd  [-db FILE] USERNAME              set a user's password (signs them out)
   autobot machine [-db FILE] add OWNER/REPO NAME   add a donated machine; prints its token once
+  autobot run     [-db FILE] [-ref REF] [-gpus N] [-minutes M] OWNER/REPO MACHINE < SCRIPT
+                                                   queue a test run, as the first admin; prints its id
   autobot charter [-db FILE] get OWNER/REPO        print a workspace's current charter
   autobot charter [-db FILE] [-as USERNAME] set OWNER/REPO < FILE
                                                    save FILE as the next charter revision
@@ -57,6 +59,8 @@ func main() {
 		err = charter(os.Args[2:])
 	case "machine":
 		err = machine(os.Args[2:])
+	case "run":
+		err = queueRun(os.Args[2:])
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -240,6 +244,61 @@ func machine(args []string) error {
 		return err
 	}
 	fmt.Println(token)
+	return nil
+}
+
+// queueRun queues a test run on a machine, as the Run button does.
+func queueRun(args []string) error {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	db := dbFlag(fs)
+	ref := fs.String("ref", "", "branch, tag or commit of the repository to check out")
+	gpus := fs.Int("gpus", 1, "GPUs the run needs")
+	minutes := fs.Int("minutes", 30, "time limit")
+	fs.Parse(args)
+	if fs.NArg() != 2 {
+		return errors.New("usage: autobot run [-db FILE] [-ref REF] [-gpus N] [-minutes M] OWNER/REPO MACHINE < SCRIPT")
+	}
+	st, err := store.Open(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ws, err := st.Workspace(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("workspace %s: %w", fs.Arg(0), err)
+	}
+	machines, err := st.Machines(ws.ID)
+	if err != nil {
+		return err
+	}
+	var m *store.Machine
+	for i := range machines {
+		if machines[i].Name == fs.Arg(1) {
+			m = &machines[i]
+		}
+	}
+	if m == nil {
+		return fmt.Errorf("no machine %s in %s", fs.Arg(1), ws.Name)
+	}
+	admin, err := firstAdmin(st)
+	if err != nil {
+		return err
+	}
+	script, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+	if err != nil {
+		return err
+	}
+	commit := ""
+	if *ref != "" {
+		if commit, err = (&github.Client{}).CommitSHA(context.Background(), "", ws.Name, *ref); err != nil {
+			return err
+		}
+	}
+	run, err := st.QueueRun(m, strings.TrimSpace(string(script)), *ref, commit, *gpus, time.Duration(*minutes)*time.Minute, admin)
+	if err != nil {
+		return err
+	}
+	fmt.Println(run.ID)
 	return nil
 }
 

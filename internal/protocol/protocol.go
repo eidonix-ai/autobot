@@ -2,8 +2,12 @@
 // connector makes every request, over HTTPS, with its machine token as a bearer token:
 //
 //	POST /connector/v1/heartbeat         Status   -> Reply   every Heartbeat
+//	GET  /connector/v1/runs/{id}/source           -> the run's code, a GitHub tarball (gzipped tar)
 //	POST /connector/v1/runs/{id}/output  raw text -> Reply   while a run goes, at most OutputChunk bytes
 //	POST /connector/v1/runs/{id}/result  Result   -> Reply   once, when the run ends
+//
+// Autobot fetches the code from GitHub itself, with the workspace's GitHub identity when it has
+// one, so no GitHub token ever reaches a donated machine.
 //
 // Autobot keeps the state of every run, so either side can restart: a connector that comes back
 // without the run Autobot expects makes Autobot mark the run lost.

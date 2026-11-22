@@ -187,3 +187,39 @@ func (c *Client) CommitSHA(ctx context.Context, token, name, ref string) (string
 	}
 	return commit.SHA, nil
 }
+
+// Tarball streams owner/repo at a commit as a gzipped tar. With a token it uses the API, which can
+// reach a private repository the token can see; without one it uses GitHub's public download
+// host, which has no API rate limit. The caller closes the stream.
+func (c *Client) Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error) {
+	url := "https://codeload.github.com/" + name + "/tar.gz/" + commit
+	if token != "" {
+		base := c.BaseURL
+		if base == "" {
+			base = "https://api.github.com"
+		}
+		url = base + "/repos/" + name + "/tarball/" + commit
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "autobot")
+	if token != "" {
+		// Go drops this header when GitHub redirects to its download host, whose link carries its
+		// own short-lived grant.
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Minute}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("could not reach GitHub: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound && token == "" {
+			return nil, fmt.Errorf("GitHub has no public %s at %s; a private repository needs the workspace's GitHub identity", name, commit[:min(12, len(commit))])
+		}
+		return nil, fmt.Errorf("GitHub answered %s for %s at %s", resp.Status, name, commit[:min(12, len(commit))])
+	}
+	return resp.Body, nil
+}

@@ -156,6 +156,39 @@ func (s *Server) machineRun(w http.ResponseWriter, r *http.Request, m *store.Mac
 	return run, true
 }
 
+// runSource streams a running run's code to its machine. Autobot fetches it from GitHub with the
+// workspace's token, so a private repository works without the token ever leaving Autobot.
+func (s *Server) runSource(w http.ResponseWriter, r *http.Request, m *store.Machine) {
+	run, ok := s.machineRun(w, r, m)
+	if !ok {
+		return
+	}
+	if run.State != "running" || run.Commit == "" {
+		http.Error(w, "this run has no code to download now", http.StatusConflict)
+		return
+	}
+	ws, err := s.st.WorkspaceByID(run.WorkspaceID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	token, err := s.token(ws)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	body, err := s.gh.Tarball(r.Context(), token, ws.Name, run.Commit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer body.Close()
+	// A large repository can take longer than the server's usual write limit.
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15 * time.Minute))
+	w.Header().Set("Content-Type", "application/gzip")
+	io.Copy(w, body)
+}
+
 func (s *Server) runOutput(w http.ResponseWriter, r *http.Request, m *store.Machine) {
 	run, ok := s.machineRun(w, r, m)
 	if !ok {

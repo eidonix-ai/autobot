@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,5 +88,38 @@ func TestCheckIdentity(t *testing.T) {
 	// A token that works but cannot see the repository.
 	if _, err := c.CheckIdentity(ctx, "flare-autobot", "github_pat_good", "o/elsewhere"); err == nil || !strings.Contains(err.Error(), "cannot see o/elsewhere") {
 		t.Errorf("repo out of reach: %v", err)
+	}
+}
+
+// A private repository's code downloads with the token through the API, which redirects to a
+// download link; without the token it is not found.
+func TestTarball(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/secret/tarball/abc":
+			if r.Header.Get("Authorization") != "Bearer github_pat_good" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			http.Redirect(w, r, "/download/o-secret-abc.tar.gz?grant=short-lived", http.StatusFound)
+		case "/download/o-secret-abc.tar.gz":
+			w.Write([]byte("tar bytes"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL}
+	body, err := c.Tarball(context.Background(), "github_pat_good", "o/secret", "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(body)
+	body.Close()
+	if string(b) != "tar bytes" {
+		t.Fatalf("got %q", b)
+	}
+	if _, err := c.Tarball(context.Background(), "github_pat_wrong", "o/secret", "abc"); err == nil {
+		t.Fatal("a wrong token downloaded a private repository")
 	}
 }

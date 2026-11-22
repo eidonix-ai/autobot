@@ -66,6 +66,26 @@ func TestConnectorAPI(t *testing.T) {
 		t.Fatalf("second check-in: %+v", r)
 	}
 
+	// Only the machine running it can download its code; the workspace token stays in Autobot.
+	src := e.srv.URL + "/connector/v1/runs/" + itoa(run.ID) + "/source"
+	get := func(tok string) (int, string) {
+		req, _ := http.NewRequest("GET", src, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, _ := get(tokB); code != http.StatusNotFound {
+		t.Fatalf("another machine downloaded cn7's code: %d", code)
+	}
+	if code, body := get(tok7); code != http.StatusOK || body != "tarball of o/r@0123456789abcdef0123456789abcdef01234567 token=" {
+		t.Fatalf("source: %d %q", code, body)
+	}
+
 	// Only the machine running it can add output or finish it.
 	out := "/connector/v1/runs/" + itoa(run.ID) + "/output"
 	if code, _ := e.connector(t, tokB, out, "forged"); code != http.StatusNotFound {

@@ -86,7 +86,6 @@ type Connector struct {
 	cfg     Config
 	docker  *docker
 	http    *http.Client
-	github  string // where source tarballs come from
 	imageID string
 
 	mu      sync.Mutex
@@ -103,8 +102,7 @@ type activeRun struct {
 
 // New returns a connector.
 func New(cfg Config) *Connector {
-	return &Connector{cfg: cfg, docker: newDocker(cfg.Socket), http: &http.Client{Timeout: 30 * time.Second},
-		github: "https://codeload.github.com"}
+	return &Connector{cfg: cfg, docker: newDocker(cfg.Socket), http: &http.Client{Timeout: 30 * time.Second}}
 }
 
 // Run checks in with Autobot until ctx ends.
@@ -326,8 +324,8 @@ func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if job.Commit != "" {
-		fmt.Fprintf(out, "Downloading %s at %s from GitHub\n", job.Repo, job.Commit)
-		if err := fetchSource(ctx, &http.Client{Timeout: 10 * time.Minute}, c.github, job.Repo, job.Commit, filepath.Join(dir, "source")); err != nil {
+		fmt.Fprintf(out, "Downloading %s at %s\n", job.Repo, job.Commit)
+		if err := c.fetchSource(ctx, job.Run, filepath.Join(dir, "source")); err != nil {
 			res.Error = err.Error()
 			return c.ended(ctx, r, res)
 		}

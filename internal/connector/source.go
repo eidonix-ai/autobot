@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 )
 
 const (
@@ -19,22 +20,23 @@ const (
 	maxSourceFiles = 500_000
 )
 
-// fetchSource downloads owner/repo at an exact commit from GitHub and unpacks it into dir, which
-// must not exist yet. GitHub serves the tarball over verified TLS for that commit, so the commit
-// is what authenticates the code.
-func fetchSource(ctx context.Context, client *http.Client, base, repo, commit, dir string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", base+"/"+repo+"/tar.gz/"+commit, nil)
+// fetchSource downloads a run's code from Autobot, which fetches it from GitHub at the run's
+// commit, and unpacks it into dir, which must not exist yet.
+func (c *Connector) fetchSource(ctx context.Context, run int64, dir string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/connector/v1/runs/%d/source", strings.TrimSuffix(c.cfg.URL, "/"), run), nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "autobot-connector")
-	resp, err := client.Do(req)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	req.Header.Set("User-Agent", "autobot-connector/"+Version)
+	resp, err := (&http.Client{Timeout: 15 * time.Minute}).Do(req)
 	if err != nil {
-		return fmt.Errorf("download %s at %s: %w", repo, commit[:12], err)
+		return fmt.Errorf("download the code: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s at %s: GitHub answered %s (a private repository is not supported yet)", repo, commit[:12], resp.Status)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("download the code: %s", strings.TrimSpace(string(msg)))
 	}
 	return unpack(resp.Body, dir)
 }

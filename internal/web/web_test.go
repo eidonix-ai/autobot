@@ -44,6 +44,10 @@ func (fakeGitHub) RepoName(_ context.Context, token, name string) (string, error
 	return "", github.ErrNoRepo
 }
 
+func (fakeGitHub) Tarball(_ context.Context, token, name, commit string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("tarball of " + name + "@" + commit + " token=" + token)), nil
+}
+
 func (fakeGitHub) CommitSHA(_ context.Context, _, _, ref string) (string, error) {
 	if ref == "main" {
 		return "0123456789abcdef0123456789abcdef01234567", nil

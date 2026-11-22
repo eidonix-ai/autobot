@@ -9,6 +9,7 @@ import (
 	"embed"
 	"errors"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -50,6 +51,7 @@ type GitHub interface {
 	RepoName(ctx context.Context, token, name string) (string, error)
 	CheckIdentity(ctx context.Context, login, token, name string) (*github.Identity, error)
 	CommitSHA(ctx context.Context, token, name, ref string) (string, error)
+	Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error)
 }
 
 // New builds the web interface.
@@ -135,6 +137,7 @@ func (s *Server) routes() {
 
 	// The connectors on donated machines, signed in by machine token.
 	s.mux.Handle("POST /connector/v1/heartbeat", s.connectorAPI(s.heartbeat))
+	s.mux.Handle("GET /connector/v1/runs/{id}/source", s.connectorAPI(s.runSource))
 	s.mux.Handle("POST /connector/v1/runs/{id}/output", s.connectorAPI(s.runOutput))
 	s.mux.Handle("POST /connector/v1/runs/{id}/result", s.connectorAPI(s.runResult))
 

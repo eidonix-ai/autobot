@@ -132,6 +132,7 @@ type item struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
+	CamelName   string `json:"displayName"` // System One
 }
 
 // parse reads the shapes providers use: {"data": [...]}, a bare [...], and {"models": [...]}.
@@ -162,6 +163,9 @@ func parse(body []byte) (*page, error) {
 			}
 		}
 		id, name := it.ID, it.DisplayName
+		if name == "" {
+			name = it.CamelName
+		}
 		if id == "" {
 			id = it.Name
 		} else if name == "" && it.Name != id {

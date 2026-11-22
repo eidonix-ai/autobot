@@ -75,6 +75,7 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		"bytes": humanBytes,
 		"short": func(s string, n int) string { s = strings.TrimPrefix(s, "sha256:"); return s[:min(n, len(s))] },
 		"ago":   func(t time.Time) string { return time.Since(t).Round(time.Second).String() + " ago" },
+		"pct":   func(p float64) float64 { return p * 100 },
 	}
 	s := &Server{
 		st:    st,
@@ -152,6 +153,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /admin/providers/{id}", s.admin(s.provider))
 	s.mux.Handle("POST /admin/providers/{id}", s.admin(s.updateProvider))
 	s.mux.Handle("POST /admin/providers/{id}/discover", s.admin(s.discoverModels))
+	s.mux.Handle("POST /admin/providers/{id}/try", s.admin(s.tryDecision))
 	s.mux.Handle("POST /admin/providers/{id}/models", s.admin(s.setProviderModels))
 	s.mux.Handle("POST /admin/providers/{id}/delete", s.admin(s.deleteProvider))
 }

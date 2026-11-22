@@ -12,6 +12,8 @@
     <select name="kind">
       <option value="openai"{{if eq $kind "openai"}} selected{{end}}>OpenAI-compatible</option>
       <option value="anthropic"{{if eq $kind "anthropic"}} selected{{end}}>Anthropic</option>
+      <option value="decisions"{{if eq $kind "decisions"}} selected{{end}}>Decisions (/v1/decisions)</option>
+      <option value="systemone"{{if eq $kind "systemone"}} selected{{end}}>System One (/v1/systemone)</option>
     </select>
   </label>
   <label>Endpoint <input name="endpoint" value="{{or (.Form.Get "endpoint") .P.Endpoint}}" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
@@ -44,6 +46,26 @@
 </form>
 <p class="hint">Saving replaces the permitted models with the ticked ones plus the IDs typed above. Use the exact ID a request must name, such as anthropic/claude-sonnet-4.5 on OpenRouter. Not every provider can list its models; typing the IDs always works.</p>
 </section>
+
+{{if or (eq .P.Kind "decisions") (eq .P.Kind "systemone")}}
+<section class="panel">
+<h2>Try a decision</h2>
+<form method="post" action="/admin/providers/{{.P.ID}}/try" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <select name="model" aria-label="Model">{{range .P.Models}}<option value="{{.}}"{{if eq . ($.Form.Get "model")}} selected{{end}}>{{.}}</option>{{end}}</select>
+  <button class="secondary"{{if not .P.Models}} disabled{{end}}>Ask</button>
+</form>
+<p class="hint">Asks the model a fixed sample: a short review of a code change, with a choice question{{if eq .P.Kind "systemone"}}, a score question{{end}} and a yes/no question. {{if not .P.Models}}Permit a model first.{{end}}</p>
+{{with .Tried}}
+<div class="scroll"><table class="list">
+<thead><tr><th>Question</th><th>Answer</th><th>Probabilities</th></tr></thead>
+<tbody>{{range .}}<tr><td>{{.Name}}</td>
+  <td>{{if .Choice}}{{.Choice}}{{else if .Probabilities}}score {{printf "%.2f" .Score}}{{else}}yes {{printf "%.0f" (pct .PTrue)}} %{{end}}</td>
+  <td>{{range $k, $v := .Probabilities}}{{$k}} {{printf "%.0f" (pct $v)}} % &nbsp;{{end}}</td></tr>{{end}}</tbody>
+</table></div>
+{{end}}
+</section>
+{{end}}
 
 <section class="panel danger">
 <h2>Delete this provider</h2>

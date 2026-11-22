@@ -20,6 +20,8 @@ var ErrKeyUnreadable = errors.New("the saved API key cannot be decrypted with th
 const (
 	KindOpenAI    = "openai"    // any OpenAI-compatible API
 	KindAnthropic = "anthropic" // the Anthropic API
+	KindDecisions = "decisions" // a server with a native /v1/decisions route
+	KindSystemOne = "systemone" // System One's /v1/systemone
 )
 
 // Provider is an inference provider. Its API key is never part of this value; ask for it with
@@ -69,8 +71,10 @@ func checkProviderEdit(e ProviderEdit) (ProviderEdit, error) {
 	if e.Name == "" || utf8.RuneCountInString(e.Name) > 100 || strings.ContainsFunc(e.Name, unicode.IsControl) {
 		return e, invalid("Give the provider a name of up to 100 characters, such as OpenRouter.")
 	}
-	if e.Kind != KindOpenAI && e.Kind != KindAnthropic {
-		return e, invalid("Choose the kind of API: OpenAI-compatible or Anthropic.")
+	switch e.Kind {
+	case KindOpenAI, KindAnthropic, KindDecisions, KindSystemOne:
+	default:
+		return e, invalid("Choose the kind of API: OpenAI-compatible, Anthropic, /v1/decisions or System One.")
 	}
 	var err error
 	if e.Endpoint, err = NormalizeEndpoint(e.Endpoint); err != nil {
@@ -301,4 +305,32 @@ func (s *Store) DeleteProvider(id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// AvailableModel is a model Autobot may use: permitted on a provider.
+type AvailableModel struct {
+	ProviderID   int64
+	ProviderName string
+	Kind         string
+	Model        string
+}
+
+// AvailableModels lists every permitted model across all providers, by provider then model. A
+// provider with no permitted models contributes nothing: it cannot be used.
+func (s *Store) AvailableModels() ([]AvailableModel, error) {
+	rows, err := s.db.Query(`SELECT p.id, p.name, p.kind, m.model_id FROM provider_models m
+		JOIN providers p ON p.id = m.provider_id ORDER BY p.name, m.model_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AvailableModel
+	for rows.Next() {
+		var a AvailableModel
+		if err := rows.Scan(&a.ProviderID, &a.ProviderName, &a.Kind, &a.Model); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

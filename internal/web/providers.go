@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/eidonix-ai/autobot/internal/decisions"
 	"github.com/eidonix-ai/autobot/internal/providers"
 	"github.com/eidonix-ai/autobot/internal/store"
 )
@@ -27,7 +28,10 @@ var presets = []preset{
 	{"mistral", "Mistral", store.KindOpenAI, "https://api.mistral.ai/v1"},
 	{"xai", "xAI", store.KindOpenAI, "https://api.x.ai/v1"},
 	{"gemini", "Google Gemini", store.KindOpenAI, "https://generativelanguage.googleapis.com/v1beta/openai"},
+	{"deepseek", "DeepSeek", store.KindOpenAI, "https://api.deepseek.com"},
+	{"systemone", "System One (decisions)", store.KindSystemOne, "https://system-one.dev/v1"},
 	{"custom", "Custom OpenAI-compatible (vLLM, llama.cpp, LiteLLM, any proxy)", store.KindOpenAI, ""},
+	{"custom-decisions", "Custom /v1/decisions server", store.KindDecisions, ""},
 }
 
 func findPreset(key string) (preset, bool) {
@@ -55,7 +59,12 @@ func (s *Server) providersPage(w http.ResponseWriter, r *http.Request, status in
 	if r.URL.Query().Has("deleted") {
 		data["Notice"] = "Provider deleted."
 	}
-	data["Title"], data["Providers"], data["Presets"] = "Providers", list, presets
+	available, err := s.st.AvailableModels()
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	data["Title"], data["Providers"], data["Presets"], data["Available"] = "Providers", list, presets, available
 	s.render(w, r, status, "providers.html", data)
 }
 
@@ -63,11 +72,14 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
 	e := store.ProviderEdit{Name: f.Get("name"), Kind: store.KindOpenAI, Endpoint: f.Get("endpoint"), Key: f.Get("api_key")}
 	pre, ok := findPreset(f.Get("preset"))
-	if ok && pre.Endpoint != "" {
-		e.Kind, e.Endpoint = pre.Kind, pre.Endpoint
+	if ok {
+		e.Kind = pre.Kind
+		if pre.Endpoint != "" {
+			e.Endpoint = pre.Endpoint
+		}
 	}
 	if strings.TrimSpace(e.Name) == "" && ok && pre.Endpoint != "" {
-		e.Name = pre.Label
+		e.Name, _, _ = strings.Cut(pre.Label, " (") // "System One (decisions)" is named "System One"
 	}
 	p, err := s.st.CreateProvider(e, me(r))
 	if msg, ok := inputError(err); ok {
@@ -241,4 +253,53 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin/providers?deleted=1", http.StatusSeeOther)
+}
+
+// sampleQuestions is what "Try a decision" asks: enough to show the protocol works end to end.
+var sampleInput = `A pull request changes a retry loop: it now retries a failed upload forever, with no delay
+between attempts, instead of three times with a one-second back-off.`
+
+func sampleQuestions(kind string) []decisions.Question {
+	qs := []decisions.Question{
+		{Name: "verdict", Type: "choice", Instructions: "Should a reviewer approve this change?", Options: []decisions.Option{
+			{Name: "approve", Description: "The change is safe to merge."},
+			{Name: "request-changes", Description: "The change needs work before it can merge."}}},
+		{Name: "risky", Type: "yesno", Instructions: "Could this change overload the upload service?"},
+	}
+	if kind == store.KindSystemOne {
+		qs = append(qs, decisions.Question{Name: "severity", Type: "score", Instructions: "How severe is the problem?",
+			Levels: []string{"No problem", "Minor", "Serious", "Critical"}})
+	}
+	return qs
+}
+
+// tryDecision asks a permitted model the sample questions and shows its answers.
+func (s *Server) tryDecision(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.targetProvider(w, r)
+	if !ok {
+		return
+	}
+	model := r.PostForm.Get("model")
+	permitted := false
+	for _, m := range p.Models {
+		permitted = permitted || m == model
+	}
+	if !permitted || (p.Kind != store.KindDecisions && p.Kind != store.KindSystemOne) {
+		s.providerPage(w, r, http.StatusBadRequest, p, nil, nil, map[string]any{"Error": "Choose one of this provider's permitted models."})
+		return
+	}
+	key, err := s.st.ProviderKey(p.ID)
+	if err != nil && !errors.Is(err, store.ErrKeyUnreadable) {
+		s.fail(w, err)
+		return
+	}
+	answers, err := decisions.Ask(r.Context(), p.Kind, p.Endpoint, key, model, sampleInput, sampleQuestions(p.Kind))
+	data := map[string]any{"Form": r.PostForm}
+	if err != nil {
+		data["Error"] = "The decision failed: " + err.Error() + "."
+		s.providerPage(w, r, http.StatusBadGateway, p, nil, nil, data)
+		return
+	}
+	data["Tried"], data["Notice"] = answers, "Answered by "+model+"."
+	s.providerPage(w, r, http.StatusOK, p, nil, nil, data)
 }

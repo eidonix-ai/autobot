@@ -35,7 +35,7 @@ func TestJobContainerIsIsolated(t *testing.T) {
 		}
 	}
 	tmpfs := host["Tmpfs"].(map[string]string)
-	if len(tmpfs) != 2 || tmpfs["/work"] != "rw,nosuid,nodev,size=16g,mode=0700,uid=1000,gid=1000" {
+	if len(tmpfs) != 2 || tmpfs["/work"] != "rw,exec,nosuid,nodev,size=16g,mode=0700,uid=1000,gid=1000" {
 		t.Errorf("tmpfs %v", tmpfs)
 	}
 	for _, b := range host["Binds"].([]string) {

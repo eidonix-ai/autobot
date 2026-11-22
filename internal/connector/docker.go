@@ -92,9 +92,10 @@ func (s spec) createBody() map[string]any {
 		"PidsLimit":      4096,
 		"Init":           true,
 		"ShmSize":        int64(1) << 30,
+		// exec: a job runs what it builds (build scripts, test binaries). Docker's default is noexec.
 		"Tmpfs": map[string]string{
-			"/work": fmt.Sprintf("rw,nosuid,nodev,size=%dg,mode=0700,uid=1000,gid=1000", s.ScratchGB),
-			"/tmp":  "rw,nosuid,nodev,size=1g,mode=1777",
+			"/work": fmt.Sprintf("rw,exec,nosuid,nodev,size=%dg,mode=0700,uid=1000,gid=1000", s.ScratchGB),
+			"/tmp":  "rw,exec,nosuid,nodev,size=1g,mode=1777",
 		},
 		"Binds": binds,
 	}

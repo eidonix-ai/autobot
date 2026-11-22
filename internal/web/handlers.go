@@ -246,7 +246,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, r, http.StatusOK, "workspace.html", map[string]any{
 		"Title": ws.Name, "WS": ws, "Charter": charter, "Members": members, "Events": events, "Machines": machines,
-		"Available": available, "Cases": cases, "CaseCount": caseCount})
+		"Available": available, "Cases": cases, "CaseCount": caseCount, "Res": summarize(machines)})
 }
 
 func (s *Server) charter(w http.ResponseWriter, r *http.Request) {

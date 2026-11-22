@@ -282,3 +282,29 @@ func (s *Server) stopRun(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, fmt.Sprintf("%s/runs/%d", ws.Path(), run.ID), http.StatusSeeOther)
 }
+
+// resourceSummary is the Resources tile's one line: how many machines, and the colour of its dot.
+type resourceSummary struct {
+	Total, Ready, Busy, Offline int
+	Dot                         string // on (some ready), busy (online, none ready), off (none online)
+}
+
+func summarize(ms []machineView) resourceSummary {
+	r := resourceSummary{Total: len(ms), Dot: "off"}
+	for _, m := range ms {
+		switch {
+		case m.Ready():
+			r.Ready++
+		case m.Online:
+			r.Busy++
+		default:
+			r.Offline++
+		}
+	}
+	if r.Ready > 0 {
+		r.Dot = "on"
+	} else if r.Busy > 0 {
+		r.Dot = "busy"
+	}
+	return r
+}

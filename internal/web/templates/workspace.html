@@ -7,53 +7,44 @@
 <p class="muted"><a href="{{.WS.GitHubURL}}">github.com/{{.WS.Name}}</a></p>
 
 <div class="grid">
-<section class="panel">
-  <h2>Project charter</h2>
+<section class="panel tile">
+  <h2><a class="tile-link" href="{{.WS.Path}}/charter">Project charter</a></h2>
   <p>Revision {{.Charter.Rev}}{{with .Charter.Author}}, saved by {{.}}{{end}} on {{ts .Charter.CreatedAt}}.</p>
-  <p><a class="button" href="{{.WS.Path}}/charter">Open the charter</a></p>
 </section>
 
-<section class="panel">
-  <h2>Resources</h2>
-  {{if .Machines}}
-  <ul class="plain machines">
-  {{range .Machines}}
-    <li><a href="{{.Path}}"><strong>{{.Name}}</strong></a>
-      <span class="dot {{if .Ready}}on{{else if .Online}}busy{{else}}off{{end}}"></span> {{.State}}
-      {{if .Online}}<br><span class="muted">{{len .Live.GPUs}} GPU{{if ne (len .Live.GPUs) 1}}s{{end}}{{with .Live.GPUs}}: {{(index . 0).Name}}{{end}} · {{len .Live.Models}} model{{if ne (len .Live.Models) 1}}s{{end}}</span>{{end}}</li>
-  {{end}}
-  </ul>
+<section class="panel tile">
+  <h2><button class="tile-link" popovertarget="resources-modal">Resources</button></h2>
+  {{if .Res.Total}}
+  <p class="status"><span class="dot {{.Res.Dot}}"></span> {{.Res.Total}} machine{{if ne .Res.Total 1}}s{{end}}</p>
+  <p class="muted">{{.Res.Ready}} ready{{with .Res.Busy}}, {{.}} busy{{end}}{{with .Res.Offline}}, {{.}} offline{{end}}</p>
   {{else}}
-  <p class="muted">No donated machines yet.</p>
+  <p class="status"><span class="dot off"></span> No machines yet</p>
   {{end}}
   <p><a href="{{.WS.Path}}/machines/new">Add a machine</a></p>
 </section>
 
 <section class="panel tile">
-  <h2><a class="tile-link" href="{{.WS.Path}}/models">Models</a></h2>
+  <h2><button class="tile-link" popovertarget="models-modal">Models</button></h2>
   {{if .Available}}
-  <ul class="plain models">{{range $i, $m := .Available}}{{if lt $i 5}}{{$about := printf "%s · lent by %s" $m.ProviderName $m.Owner}}{{if or (eq $m.Kind "decisions") (eq $m.Kind "systemone")}}{{$about = printf "%s · decisions" $about}}{{end}}
-    <li><span class="model">{{$m.Model}}</span> <span class="info" data-tip="{{$about}}" aria-label="{{$about}}" tabindex="0">ⓘ</span></li>{{end}}{{end}}</ul>
-  {{if gt (len .Available) 5}}<p class="muted">… and {{sub (len .Available) 5}} more</p>{{end}}
+  <p class="status"><span class="dot on"></span> 🙂 {{len .Available}} model{{if ne (len .Available) 1}}s{{end}} configured</p>
   {{else}}
-  <p class="muted">🙁 (No models assigned)</p>
+  <p class="status"><span class="dot off"></span> 🙁 (No models assigned)</p>
   {{end}}
   <p><a href="/providers">Lend Inference</a></p>
 </section>
 
-<section class="panel">
-  <h2>Case files</h2>
+<section class="panel tile">
+  <h2><a class="tile-link" href="{{.WS.Path}}/cases">Case files</a></h2>
   {{if .Cases}}
-  <p>{{.CaseCount}} case{{if ne .CaseCount 1}}s{{end}}. Most recently changed:</p>
-  <ul class="plain">{{range .Cases}}<li><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a> <span class="muted">{{.Title}}</span></li>{{end}}</ul>
-  <p><a class="button" href="{{.WS.Path}}/cases">Open case files</a></p>
+  <p class="status">{{.CaseCount}} case{{if ne .CaseCount 1}}s{{end}}</p>
+  <ul class="plain recent">{{range .Cases}}<li><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a> <span class="muted">{{.Title}}</span></li>{{end}}</ul>
   {{else}}
-  <p class="muted">No cases yet. Cases open when intake picks up a new issue or pull request.</p>
+  <p class="muted">No cases yet</p>
   {{end}}
 </section>
 
 <section class="panel tile">
-  <h2><a class="tile-link" href="{{.WS.Path}}/members">Members</a></h2>
+  <h2><button class="tile-link" popovertarget="members-modal">Members</button></h2>
   {{if .Members}}
   <p class="names">{{range $i, $m := .Members}}{{if lt $i 10}}{{if $i}}, {{end}}{{$m.Name}}{{end}}{{end}}{{if gt (len .Members) 10}}, <span class="muted">… and {{sub (len .Members) 10}} more</span>{{end}}</p>
   {{else}}
@@ -75,4 +66,47 @@
   <p class="muted">Nothing has happened yet.</p>
   {{end}}
 </section>
+
+<div id="resources-modal" class="modal" popover>
+  <div class="modal-head"><h2>Resources</h2><button class="close" popovertarget="resources-modal" popovertargetaction="hide" aria-label="Close">✕</button></div>
+  {{if .Machines}}
+  <div class="scroll"><table class="list dense members">
+  <thead><tr><th>Machine</th><th>State</th><th>GPUs</th><th>Models</th></tr></thead>
+  <tbody>{{range .Machines}}<tr>
+    <td><a href="{{.Path}}">{{.Name}}</a></td>
+    <td><span class="dot {{if .Ready}}on{{else if .Online}}busy{{else}}off{{end}}"></span> {{.State}}</td>
+    <td class="muted">{{if .Online}}{{len .Live.GPUs}}{{with .Live.GPUs}} × {{(index . 0).Name}}{{end}}{{else}}–{{end}}</td>
+    <td class="muted">{{if .Online}}{{len .Live.Models}}{{else}}–{{end}}</td>
+  </tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<p class="muted">No machines yet.</p>{{end}}
+  <p><a href="{{.WS.Path}}/machines/new">Add a machine</a></p>
+</div>
+
+<div id="models-modal" class="modal" popover>
+  <div class="modal-head"><h2>Models</h2><button class="close" popovertarget="models-modal" popovertargetaction="hide" aria-label="Close">✕</button></div>
+  {{if .Available}}
+  <div class="scroll"><table class="list dense members">
+  <thead><tr><th>Model</th><th>Provider</th><th>Lent by</th><th>Use</th></tr></thead>
+  <tbody>{{range .Available}}<tr>
+    <td>{{.Model}}</td><td class="muted">{{.ProviderName}}</td><td class="muted">{{.Owner}}</td>
+    <td class="muted">{{if or (eq .Kind "decisions") (eq .Kind "systemone")}}decisions{{else}}chat{{end}}</td>
+  </tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<p class="muted">🙁 (No models assigned)</p>{{end}}
+  <p><a href="/providers">Lend Inference</a></p>
+</div>
+
+<div id="members-modal" class="modal" popover>
+  <div class="modal-head"><h2>Members</h2><button class="close" popovertarget="members-modal" popovertargetaction="hide" aria-label="Close">✕</button></div>
+  {{if .Members}}
+  <div class="scroll"><table class="list dense members">
+  <thead><tr><th>Name</th><th>Username</th><th>Role</th></tr></thead>
+  <tbody>{{range .Members}}<tr>
+    <td><a href="{{$.WS.Path}}/members/{{.Username}}">{{.Name}}</a></td><td class="muted">{{.Username}}</td>
+    <td>{{if .IsAdmin}}Admin{{else}}User{{end}}{{if .Disabled}}, disabled{{end}}</td>
+  </tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<p class="muted">No one is assigned yet.</p>{{end}}
+</div>
 {{end}}

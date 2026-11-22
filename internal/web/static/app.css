@@ -102,6 +102,10 @@ button, a.button {
   background: var(--accent); color: var(--accent-text); border: 0; border-radius: 6px; padding: 0.45rem 1rem;
 }
 button.link { background: none; color: var(--text); padding: 0; }
+a.button.secondary { background: none; color: var(--text); border: 1px solid var(--line); }
+a.button.secondary:hover { border-color: var(--accent); }
+.panel.danger { border-color: var(--error); }
+button.danger { background: var(--error); color: var(--panel); }
 button.link:hover { color: var(--accent); }
 
 .editor textarea {

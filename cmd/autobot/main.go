@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/web"
 	"golang.org/x/term"
@@ -75,7 +76,7 @@ func serve(args []string) error {
 	} else if len(users) == 0 {
 		log.Printf("no users yet: the first visitor to the web interface creates the admin account")
 	}
-	ui, err := web.New(st)
+	ui, err := web.New(st, &github.Client{})
 	if err != nil {
 		return err
 	}

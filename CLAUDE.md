@@ -38,7 +38,8 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
 
 ## Pieces
 
-1. Users and workspaces, the project charter, first-time admin setup in the browser (done).
+1. Users and workspaces, the project charter, first-time admin setup in the browser, workspace
+   settings with names checked on GitHub (done).
 2. Next: to be decided with Derek.
 
 ## Testing

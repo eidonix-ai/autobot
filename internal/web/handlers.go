@@ -174,11 +174,18 @@ func (s *Server) homePage(w http.ResponseWriter, r *http.Request, status int, da
 		data = map[string]any{}
 	}
 	data["Title"], data["Workspaces"] = "Workspaces", wss
+	if r.URL.Query().Has("deleted") {
+		data["Notice"] = "Workspace deleted."
+	}
 	s.render(w, r, status, "home.html", data)
 }
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
-	ws, err := s.st.CreateWorkspace(r.PostForm.Get("name"), me(r))
+	name, err := s.checkRepo(r, r.PostForm.Get("name"))
+	var ws *store.Workspace
+	if err == nil {
+		ws, err = s.st.CreateWorkspace(name, me(r))
+	}
 	if msg, ok := inputError(err); ok {
 		s.homePage(w, r, http.StatusBadRequest, map[string]any{"Error": msg, "Form": r.PostForm})
 		return

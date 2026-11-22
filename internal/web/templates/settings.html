@@ -1,0 +1,39 @@
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>Workspace settings</h1>
+
+<section class="panel">
+<h2>Repository</h2>
+<form method="post" action="{{.WS.Path}}/settings/name" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input name="name" value="{{or (.Form.Get "name") .WS.Name}}" aria-label="GitHub repository" required autocomplete="off" spellcheck="false">
+  <button>Save</button>
+</form>
+<p class="hint">The workspace is named after its GitHub repository, as owner/repo. The name is checked on GitHub and saved as GitHub spells it. Renaming changes the workspace's address; the charter and history stay.</p>
+</section>
+
+<section class="panel">
+<h2>Members</h2>
+<form method="post" action="{{.WS.Path}}/settings/members" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <fieldset>
+    <legend>Users assigned to this workspace</legend>
+    {{range .Users}}
+    <label class="check"><input type="checkbox" name="member" value="{{.ID}}"{{if index $.Assigned .ID}} checked{{end}}> {{.Name}} <span class="muted">{{.Username}}{{if .IsAdmin}}, admin{{end}}{{if .Disabled}}, disabled{{end}}</span></label>
+    {{end}}
+  </fieldset>
+  <button>Save members</button>
+</form>
+<p class="hint">Admins can open every workspace whether or not they are assigned.</p>
+</section>
+
+<section class="panel danger">
+<h2>Delete this workspace</h2>
+<p>Deleting removes the workspace with its charter, every charter revision, its history and its assignments. It cannot be undone.</p>
+<form method="post" action="{{.WS.Path}}/settings/delete" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input name="confirm" placeholder="Type {{.WS.Name}} to confirm" aria-label="Workspace name, to confirm" autocomplete="off" spellcheck="false">
+  <button class="danger">Delete workspace</button>
+</form>
+</section>
+{{end}}

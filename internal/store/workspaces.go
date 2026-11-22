@@ -313,3 +313,123 @@ Projects we measure ourselves against, and what we take from each.
 What is planned next, in order.
 `
 }
+
+// RenameWorkspace points a workspace at a different GitHub repository name (or fixes its
+// spelling) and records the change in its history.
+func (s *Store) RenameWorkspace(id int64, name string, actor *User) (*Workspace, error) {
+	name, err := NormalizeWorkspaceName(name)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	cur, err := scanWorkspace(tx.QueryRow(`SELECT id, name, created_at FROM workspaces WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if cur.Name == name {
+		return cur, nil
+	}
+	var taken bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM workspaces WHERE name = ? AND id <> ?)`, name, id).Scan(&taken); err != nil {
+		return nil, err
+	}
+	if taken {
+		return nil, invalid("Another workspace is already named %s.", name)
+	}
+	if _, err := tx.Exec(`UPDATE workspaces SET name = ? WHERE id = ?`, name, id); err != nil {
+		return nil, err
+	}
+	if err := addEvent(tx, id, actor, "renamed the workspace from "+cur.Name+" to "+name); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	cur.Name = name
+	return cur, nil
+}
+
+// DeleteWorkspace removes a workspace with its charter, history and assignments.
+func (s *Store) DeleteWorkspace(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM workspaces WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetMembers replaces the set of users assigned to a workspace and records each change in its
+// history.
+func (s *Store) SetMembers(workspaceID int64, userIDs []int64, actor *User) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	have := map[int64]bool{}
+	rows, err := tx.Query(`SELECT user_id FROM workspace_members WHERE workspace_id = ?`, workspaceID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		have[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	want := map[int64]bool{}
+	for _, id := range userIDs {
+		want[id] = true
+	}
+	name := func(id int64) (string, error) {
+		u, err := scanUser(tx.QueryRow(`SELECT `+userCols+` FROM users u WHERE u.id = ?`, id))
+		if err != nil {
+			return "", err
+		}
+		return u.Name(), nil
+	}
+	for id := range want {
+		if have[id] {
+			continue
+		}
+		n, err := name(id)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO workspace_members (workspace_id, user_id) VALUES (?, ?)`, workspaceID, id); err != nil {
+			return err
+		}
+		if err := addEvent(tx, workspaceID, actor, "assigned "+n); err != nil {
+			return err
+		}
+	}
+	for id := range have {
+		if want[id] {
+			continue
+		}
+		n, err := name(id)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?`, workspaceID, id); err != nil {
+			return err
+		}
+		if err := addEvent(tx, workspaceID, actor, "unassigned "+n); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

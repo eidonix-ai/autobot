@@ -1,6 +1,9 @@
 {{define "content"}}
 <p class="crumbs"><a href="/">Workspaces</a> /</p>
-<h1>{{.WS.Name}}</h1>
+<div class="titlebar">
+  <h1>{{.WS.Name}}</h1>
+  {{if .Me.IsAdmin}}<a class="button secondary" href="{{.WS.Path}}/settings">Settings</a>{{end}}
+</div>
 <p class="muted"><a href="{{.WS.GitHubURL}}">github.com/{{.WS.Name}}</a></p>
 
 <div class="grid">
@@ -27,7 +30,7 @@
   {{else}}
   <p class="muted">No one is assigned yet.</p>
   {{end}}
-  <p class="hint">Admins can open every workspace.{{if .Me.IsAdmin}} Assign people from <a href="/admin/users">Users</a>.{{end}}</p>
+  <p class="hint">Admins can open every workspace.{{if .Me.IsAdmin}} Change who is assigned in <a href="{{.WS.Path}}/settings">Settings</a>.{{end}}</p>
 </section>
 </div>
 

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -12,8 +14,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
 )
+
+// fakeGitHub knows a few repositories, keyed by lower-case name, and their GitHub spelling.
+type fakeGitHub struct{}
+
+var fakeRepos = map[string]string{
+	"nvidia/hyperflare-inference": "NVIDIA/hyperflare-inference",
+	"eidonix-ai/autobot":          "eidonix-ai/autobot",
+	"o/r":                         "o/r",
+	"o/r2":                        "o/r2",
+}
+
+func (fakeGitHub) RepoName(_ context.Context, name string) (string, error) {
+	if name == "down/repo" {
+		return "", errors.New("could not reach GitHub: connection refused")
+	}
+	if c, ok := fakeRepos[strings.ToLower(name)]; ok {
+		return c, nil
+	}
+	return "", github.ErrNoRepo
+}
 
 type env struct {
 	t   *testing.T
@@ -26,7 +49,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ui, err := New(st)
+	ui, err := New(st, fakeGitHub{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,4 +327,97 @@ func redirect(t *testing.T, b *browser, path string) (int, string) {
 	}
 	resp.Body.Close()
 	return resp.StatusCode, resp.Header.Get("Location")
+}
+
+func TestWorkspaceMustExistOnGitHub(t *testing.T) {
+	e := newEnv(t)
+	e.user("derek", true)
+	d := e.signIn("derek")
+	tok := d.csrf()
+	for name, want := range map[string]string{
+		"nobody/nothing": "GitHub has no public repository named nobody/nothing",
+		"down/repo":      "Could not confirm down/repo on GitHub",
+	} {
+		code, _, body := d.post("/workspaces", url.Values{"csrf": {tok}, "name": {name}})
+		if code != http.StatusBadRequest || !strings.Contains(body, want) {
+			t.Errorf("%s: %d, want 400 with %q", name, code, want)
+		}
+		if _, err := e.st.Workspace(name); err == nil {
+			t.Errorf("%s was saved", name)
+		}
+	}
+	// Saved as GitHub spells it.
+	if code, loc, _ := d.post("/workspaces", url.Values{"csrf": {tok}, "name": {"nvidia/hyperflare-inference"}}); code != http.StatusSeeOther || loc != "/w/NVIDIA/hyperflare-inference" {
+		t.Fatalf("create: %d %q", code, loc)
+	}
+}
+
+func TestWorkspaceSettings(t *testing.T) {
+	e := newEnv(t)
+	admin := e.user("derek", true)
+	alice := e.user("alice", false)
+	ws, _ := e.st.CreateWorkspace("o/r", admin) // as if made before the GitHub check existed
+	e.st.CreateWorkspace("eidonix-ai/autobot", admin)
+	e.st.UpdateUser(alice.ID, store.UserUpdate{Workspaces: []int64{ws.ID}}, admin)
+	d := e.signIn("derek")
+	a := e.signIn("alice")
+	tok := d.csrf()
+
+	// Regular members cannot see or use settings.
+	if code, _ := a.get("/w/o/r/settings"); code != http.StatusNotFound {
+		t.Errorf("member sees settings: %d", code)
+	}
+	if code, _, _ := a.post("/w/o/r/settings/delete", url.Values{"csrf": {a.csrf()}, "confirm": {"o/r"}}); code != http.StatusNotFound {
+		t.Errorf("member deletes: %d", code)
+	}
+	if code, body := d.get("/w/o/r/settings"); code != http.StatusOK || !strings.Contains(body, "Delete this workspace") {
+		t.Fatalf("admin settings page: %d", code)
+	}
+
+	// Rename: must exist on GitHub and not clash with another workspace.
+	for name, want := range map[string]string{"nobody/nothing": "no public repository", "eidonix-ai/autobot": "already named"} {
+		if code, _, body := d.post("/w/o/r/settings/name", url.Values{"csrf": {tok}, "name": {name}}); code != http.StatusBadRequest || !strings.Contains(body, want) {
+			t.Errorf("rename to %s: %d, want 400 %q", name, code, want)
+		}
+	}
+	if code, loc, _ := d.post("/w/o/r/settings/name", url.Values{"csrf": {tok}, "name": {"O/R2"}}); code != http.StatusSeeOther || loc != "/w/o/r2/settings?saved=1" {
+		t.Fatalf("rename: %d %q", code, loc)
+	}
+	if code, _ := d.get("/w/o/r"); code != http.StatusNotFound {
+		t.Errorf("old address still works: %d", code)
+	}
+	if code, body := a.get("/w/o/r2"); code != http.StatusOK || !strings.Contains(body, "renamed the workspace from o/r to o/r2") {
+		t.Fatalf("renamed workspace for its member: %d", code)
+	}
+
+	// Members from the workspace side.
+	if code, _, _ := d.post("/w/o/r2/settings/members", url.Values{"csrf": {tok}}); code != http.StatusSeeOther {
+		t.Fatalf("clear members: %d", code)
+	}
+	if code, _ := a.get("/w/o/r2"); code != http.StatusNotFound {
+		t.Fatalf("unassigned member still opens it: %d", code)
+	}
+	if code, _, _ := d.post("/w/o/r2/settings/members", url.Values{"csrf": {tok}, "member": {itoa(alice.ID)}}); code != http.StatusSeeOther {
+		t.Fatalf("set members: %d", code)
+	}
+	if code, _ := a.get("/w/o/r2"); code != http.StatusOK {
+		t.Fatalf("reassigned member cannot open it: %d", code)
+	}
+
+	// Delete needs the name typed.
+	if code, _, _ := d.post("/w/o/r2/settings/delete", url.Values{"csrf": {tok}, "confirm": {"o/r"}}); code != http.StatusBadRequest {
+		t.Fatalf("delete with wrong name: %d", code)
+	}
+	if _, err := e.st.Workspace("o/r2"); err != nil {
+		t.Fatal("deleted without confirmation")
+	}
+	if code, loc, _ := d.post("/w/o/r2/settings/delete", url.Values{"csrf": {tok}, "confirm": {"o/r2"}}); code != http.StatusSeeOther || loc != "/?deleted=1" {
+		t.Fatalf("delete: %d %q", code, loc)
+	}
+	if _, err := e.st.Workspace("o/r2"); err == nil {
+		t.Fatal("workspace still exists")
+	}
+	if m, _ := e.st.Memberships(alice.ID); len(m) != 0 {
+		t.Fatalf("assignments survived the delete: %v", m)
+	}
 }

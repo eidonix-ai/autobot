@@ -12,7 +12,12 @@ This is the proof of concept. Piece 1 is done: users, workspaces and the project
   workspaces and reset passwords; admins can open every workspace. Regular users see only the
   workspaces they are assigned to (any other workspace does not exist for them).
 - **Workspaces** are named exactly as their GitHub repository, `owner/repo`, and live at the matching
-  URL: `/w/NVIDIA/hyperflare-inference`.
+  URL: `/w/NVIDIA/hyperflare-inference`. The name is checked on GitHub when a workspace is created or
+  renamed and saved as GitHub spells it; a repository GitHub does not know is refused, and so is any
+  name when GitHub cannot be reached. Only public repositories can be checked until Autobot has a
+  GitHub token.
+- **Workspace settings** (admins): rename the repository, choose the members from a checklist, or
+  delete the workspace by typing its name.
 - **The project charter** is one Markdown document per workspace, on its own page, edited in a single
   text box. New charters start with Vision, Philosophy, Goals & Non-Goals, Applicable Standards,
   Competitors and Roadmap. Every save is kept as a revision; if two people edit at once, the second

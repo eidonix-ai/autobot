@@ -76,6 +76,15 @@ var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)
 var readOnlyTools = []string{"pr_files", "pr_diff", "pr_comments", "list_files", "read_file", "search_code", "search_history",
 	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob"}
 
+// subAgentTools are the tools a sub-agent has out of its main agent's: the read-only ones, and the web
+// ones only when the block allows the internet. Never a shell, a write tool or spawn_agent.
+func subAgentTools(tools []agent.Tool, internet bool) []agent.Tool {
+	return slices.DeleteFunc(slices.Clone(tools), func(t agent.Tool) bool {
+		name := t.Spec.Name
+		return !slices.Contains(readOnlyTools, name) && !(internet && (name == "web_search" || name == "fetch_url"))
+	})
+}
+
 // reportMinutes is the time the session that writes a report has of its own.
 const reportMinutes = 10
 
@@ -194,10 +203,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	var subs *agent.SubAgents
 	if a.SubAgents > 0 {
 		// Sub-agents have the read-only tools, and the web only if the block allows it: no shell, no sub-agents.
-		subTools := slices.DeleteFunc(slices.Clone(cfg.Tools), func(t agent.Tool) bool {
-			name := t.Spec.Name
-			return !slices.Contains(readOnlyTools, name) && !(a.Internet && (name == "web_search" || name == "fetch_url"))
-		})
+		subTools := subAgentTools(cfg.Tools, a.Internet)
 		subs = &agent.SubAgents{St: s.st, ModelName: ref.Model, Provider: ref.Provider, System: fmt.Sprintf(subPreamble, ws.Name), Tools: subTools,
 			Model: func(session string) agent.Model {
 				return &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model, Session: session}

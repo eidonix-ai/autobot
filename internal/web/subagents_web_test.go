@@ -230,3 +230,59 @@ func TestSubAgentAndTimeWarningSettingsInTheForm(t *testing.T) {
 		t.Fatalf("a warning of 80%%: %d", code)
 	}
 }
+
+// A sub-agent has the read-only tools, the web ones only with the internet allowed, and never a shell, a
+// tool that writes, or spawn_agent.
+func TestSubAgentToolsAreReadOnly(t *testing.T) {
+	var all []agent.Tool
+	for _, name := range append([]string{"bash", "bash_output", "bash_kill", "write_file", "edit_file", "web_search", "fetch_url", "spawn_agent", "post_comment"}, readOnlyTools...) {
+		all = append(all, agent.Tool{Spec: agent.ToolSpec{Name: name}})
+	}
+	names := func(tools []agent.Tool) []string {
+		var out []string
+		for _, tl := range tools {
+			out = append(out, tl.Spec.Name)
+		}
+		return out
+	}
+	for _, internet := range []bool{false, true} {
+		got := names(subAgentTools(all, internet))
+		for _, bad := range []string{"bash", "bash_output", "bash_kill", "write_file", "edit_file", "spawn_agent", "post_comment"} {
+			if slices.Contains(got, bad) {
+				t.Errorf("internet %v: a sub-agent has %s", internet, bad)
+			}
+		}
+		if slices.Contains(got, "fetch_url") != internet || slices.Contains(got, "web_search") != internet {
+			t.Errorf("internet %v: %v", internet, got)
+		}
+		for _, name := range readOnlyTools {
+			if !slices.Contains(got, name) {
+				t.Errorf("internet %v: no %s", internet, name)
+			}
+		}
+	}
+}
+
+// The writing session of a run has the time warning too, of its own 10 minutes, unless it is 0.
+func TestWriterTimeWarningIsWired(t *testing.T) {
+	for _, percent := range []int{50, 0} {
+		c := newContEnv(t, nil)
+		c.llm.reply = closingModel(false)
+		var calls atomic.Int32
+		runClock = func() time.Time { return time.Now().Add(time.Duration(calls.Add(1)-1) * 6 * time.Minute) } // six minutes pass between looks
+		t.Cleanup(func() { runClock = time.Now })
+		c.saveGraph(append(append([]workflow.Node{}, events...), c.agentNode("A", "Researcher", func(s *workflow.AgentSettings) {
+			s.Rerun, s.Closing, s.ReportTurns, s.MaxTurns, s.MaxMinutes, s.TimeWarnPercent = "resume", workflow.ClosingReport, 4, 8, 240, &percent
+		})), [2]string{"ev1", "A"})
+		c.run("ev1")
+		found := false
+		for _, body := range c.llm.requests() {
+			if strings.Contains(messagesOf(t, body)[1].Content, "Your research is done") && strings.Contains(body, "left: finish with your report soon.") {
+				found = true
+			}
+		}
+		if found != (percent > 0) {
+			t.Fatalf("%d%%: the writing session warned %v", percent, found)
+		}
+	}
+}

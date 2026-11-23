@@ -42,8 +42,14 @@ type Writer struct {
 
 // WriterTask is the writing session's first message: the block's instruction and Done when, what
 // to do, and the scratchpad index.
-func WriterTask(intro string, pad Pad) string {
-	return intro + "\n\n" + writerPrompt + "\n\nYour notes so far:\n" + Index(pad, "")
+func WriterTask(intro string, pad Pad, subs SubView) string {
+	task := intro + "\n\n" + writerPrompt + "\n\nYour notes so far:\n" + Index(pad, "")
+	if subs != nil {
+		if infos := subs.Summaries(); len(infos) > 0 {
+			task += "\n\nYour sub-agents' reports (read their notes with scratchpad_index, scratchpad_read and scratchpad_search, agent \"s1\" and so on):\n" + subLines(infos)
+		}
+	}
+	return task
 }
 
 // SaveTurn gives a research session one more turn, in which it can only write to its scratchpad.
@@ -112,8 +118,8 @@ func RunClosing(ctx context.Context, research Config, conv *Conversation, w Writ
 // writeReport runs the writing session and returns its report, or "".
 func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer) string {
 	cfg := w.Config
-	cfg.Pad, cfg.Read = research.Pad, tr.Read // it may cite what the research read
-	cfg.Task = WriterTask(w.Intro, research.Pad)
+	cfg.Pad, cfg.Subs, cfg.Read = research.Pad, research.Subs, tr.Read // it may cite what the research read, and read its sub-agents' notes
+	cfg.Task = WriterTask(w.Intro, research.Pad, research.Subs)
 	cfg.Verify = nil
 	cfg.Save = func(wt *Transcript) {
 		tr.Writing = wt

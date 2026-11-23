@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -39,14 +40,17 @@ var padWriteSpec = ToolSpec{Name: "scratchpad_write", Description: "Save a note 
 		"body":{"type":"string","description":"The note itself, with its citations."}},"required":["title","importance","description","body"]}`)}
 
 var padIndexSpec = ToolSpec{Name: "scratchpad_index", Description: "List your scratchpad: one line per note, with its number, importance, title and description.",
-	Parameters: json.RawMessage(`{"type":"object","properties":{"importance":{"type":"string","enum":["low","medium","high"],"description":"Only notes of this importance."}}}`)}
+	Parameters: json.RawMessage(`{"type":"object","properties":{"importance":{"type":"string","enum":["low","medium","high"],"description":"Only notes of this importance."},
+		"agent":{"type":"string","description":"A sub-agent's name, such as s1, to list its notes instead of yours."}}}`)}
 
 var padReadSpec = ToolSpec{Name: "scratchpad_read", Description: "Read notes of your scratchpad in full, by number.",
-	Parameters: json.RawMessage(`{"type":"object","properties":{"entries":{"type":"array","items":{"type":"integer"},"description":"The numbers of the notes."}},"required":["entries"]}`)}
+	Parameters: json.RawMessage(`{"type":"object","properties":{"entries":{"type":"array","items":{"type":"integer"},"description":"The numbers of the notes."},
+		"agent":{"type":"string","description":"A sub-agent's name, such as s1, to read its notes instead of yours."}},"required":["entries"]}`)}
 
 var padSearchSpec = ToolSpec{Name: "scratchpad_search", Description: "Search the titles, descriptions and bodies of your notes with a regular expression (Go syntax; start it with (?i) to ignore case). " +
 	"Answers with the matching notes' index lines and the lines of their bodies that match.",
-	Parameters: json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"A regular expression."}},"required":["pattern"]}`)}
+	Parameters: json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"A regular expression."},
+		"agent":{"type":"string","description":"A sub-agent's name, such as s1, to search its notes instead of yours."}},"required":["pattern"]}`)}
 
 // researchSpecs are the agent's own tools in a research session; writerSpecs in the session that
 // writes the report from the scratchpad, which reads it but adds nothing and never compacts.
@@ -99,6 +103,11 @@ func Index(pad Pad, importance string) string {
 	if err != nil {
 		return "(the scratchpad could not be read: " + err.Error() + ")"
 	}
+	return IndexOf(all, importance)
+}
+
+// IndexOf is Index of notes already read.
+func IndexOf(all []store.PadEntry, importance string) string {
 	var lines []string
 	for _, e := range all {
 		if importance == "" || e.Importance == importance {
@@ -109,6 +118,46 @@ func Index(pad Pad, importance string) string {
 		return "(the scratchpad has no notes)"
 	}
 	return strings.Join(lines, "\n")
+}
+
+// SubInfo is what the agent knows of a sub-agent of its run: its name, title, how it ended ("running"
+// while it works) and its report, if any.
+type SubInfo struct {
+	Name, Title, Outcome, Report string
+}
+
+// SubView is a run's sub-agents, as an agent that did not run them sees them: their notes can be read,
+// by name, and never any other run's.
+type SubView interface {
+	Notes(name string) ([]store.PadEntry, error)
+	Summaries() []SubInfo
+}
+
+// subLines lists sub-agents one to a line: s1 "title": met, then the first line of the report.
+func subLines(infos []SubInfo) string {
+	var b strings.Builder
+	for _, i := range infos {
+		fmt.Fprintf(&b, "%s %q: %s", i.Name, i.Title, i.Outcome)
+		if first := firstLine(i.Report, 200); first != "" {
+			b.WriteString(" — " + first)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// entries are the notes a scratchpad tool reads: the agent's own, or a sub-agent's when it is named.
+func (s *session) entries(agent string) ([]store.PadEntry, error) {
+	if agent = strings.TrimSpace(agent); agent != "" {
+		if s.cfg.Subs == nil {
+			return nil, fmt.Errorf("there is no sub-agent %s", agent)
+		}
+		return s.cfg.Subs.Notes(agent)
+	}
+	if s.cfg.Pad == nil {
+		return nil, errors.New("there is no scratchpad")
+	}
+	return s.cfg.Pad.List()
 }
 
 // kilo writes a token count in thousands: 412k, 1,000k.
@@ -189,7 +238,7 @@ func (s *session) padWrite(args string) string {
 }
 
 func (s *session) padIndex(args string) string {
-	var a struct{ Importance string }
+	var a struct{ Importance, Agent string }
 	json.Unmarshal([]byte(args), &a)
 	imp := ""
 	if strings.TrimSpace(a.Importance) != "" {
@@ -198,18 +247,25 @@ func (s *session) padIndex(args string) string {
 			return "error: importance is low, medium or high"
 		}
 	}
-	return Index(s.cfg.Pad, imp)
+	if strings.TrimSpace(a.Agent) == "" {
+		return Index(s.cfg.Pad, imp)
+	}
+	all, err := s.entries(a.Agent)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return IndexOf(all, imp)
 }
 
 func (s *session) padRead(args string) string {
-	var a struct{ Entries []int }
+	var a struct {
+		Entries []int
+		Agent   string
+	}
 	if json.Unmarshal([]byte(args), &a) != nil || len(a.Entries) == 0 {
 		return `error: scratchpad_read takes {"entries": [numbers]}`
 	}
-	if s.cfg.Pad == nil {
-		return "error: there is no scratchpad"
-	}
-	all, err := s.cfg.Pad.List()
+	all, err := s.entries(a.Agent)
 	if err != nil {
 		return "error: the scratchpad could not be read: " + err.Error()
 	}
@@ -233,7 +289,7 @@ func (s *session) padRead(args string) string {
 const maxSearchLines = 8 // matching body lines shown for one note
 
 func (s *session) padSearch(args string) string {
-	var a struct{ Pattern string }
+	var a struct{ Pattern, Agent string }
 	if json.Unmarshal([]byte(args), &a) != nil || a.Pattern == "" {
 		return `error: scratchpad_search takes {"pattern": a regular expression}`
 	}
@@ -241,10 +297,7 @@ func (s *session) padSearch(args string) string {
 	if err != nil {
 		return "error: not a regular expression: " + err.Error()
 	}
-	if s.cfg.Pad == nil {
-		return "error: there is no scratchpad"
-	}
-	all, err := s.cfg.Pad.List()
+	all, err := s.entries(a.Agent)
 	if err != nil {
 		return "error: the scratchpad could not be read: " + err.Error()
 	}
@@ -288,6 +341,11 @@ func (s *session) compact(carry string) {
 	b.WriteString(strings.TrimSpace(carry))
 	b.WriteString("\n\nYour scratchpad (read notes with scratchpad_read, search them with scratchpad_search):\n")
 	b.WriteString(Index(s.cfg.Pad, ""))
+	if s.cfg.Subs != nil {
+		if infos := s.cfg.Subs.Summaries(); len(infos) > 0 {
+			b.WriteString("\n\nYour sub-agents (their notes stay readable with scratchpad_read and scratchpad_search, agent \"s1\" and so on):\n" + subLines(infos))
+		}
+	}
 	b.WriteString("\n\nYour plan:\n")
 	if len(s.tr.Plan) == 0 {
 		b.WriteString("(none yet)")

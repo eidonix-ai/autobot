@@ -176,6 +176,9 @@ func (s *Store) StopOrphanRuns() error {
 	if _, err := s.db.Exec(`UPDATE agent_runs SET status = 'failed', finished_at = ? WHERE status = 'running'`, now()); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`UPDATE sub_agents SET status = 'failed', finished_at = ? WHERE status = 'running'`, now()); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`UPDATE test_runs SET state = 'error', summary = 'Autobot restarted: the session ended.', ended_at = ?
 		WHERE session = 1 AND state IN ('queued', 'running')`, now())
 	return err

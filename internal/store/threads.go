@@ -111,6 +111,9 @@ func (s *Store) dropThread(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.dropSubs(tx, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM scratchpad WHERE thread_id = ?`, id); err != nil {
 		return err
 	}

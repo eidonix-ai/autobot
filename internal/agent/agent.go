@@ -81,6 +81,8 @@ type Config struct {
 
 	// Pad is the scratchpad the scratchpad tools use.
 	Pad Pad
+	// Subs, when set, is the run's sub-agents: their notes can be read, by name.
+	Subs SubView
 	// Window is the model's context window in tokens; when 0, 128,000.
 	Window int
 	// Read is what the tools of an earlier session of the same piece of work have read, so that a

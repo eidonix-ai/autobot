@@ -397,7 +397,8 @@ func TestRetentionWaitsForTheLocalCopy(t *testing.T) {
 	ago := func(days int) time.Time { return at.Add(-time.Duration(days) * 24 * time.Hour) }
 	st.SaveItem(ws.ID, Item{Number: 2, Kind: "pr", Title: "closed", State: "closed", Created: ago(90), Updated: ago(40), Closed: ago(40)}, nil)
 	conv := func(item, lastTurnDaysAgo int) int64 {
-		_, id, _ := startConv(t, st, ws, "ag", item, false)
+		run, id, _ := startConv(t, st, ws, "ag", item, false)
+		st.SaveAgentRun(run, "met", "{}", 0)
 		st.AppendConv(id, ConvEvent{T: "header", Model: "m"})
 		st.db.Exec(`UPDATE conversations SET last_turn_at = ? WHERE id = ?`, ago(lastTurnDaysAgo).Unix(), id)
 		return id

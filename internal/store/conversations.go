@@ -480,15 +480,15 @@ func (s *Store) dropConversation(id int64) error {
 }
 
 // expired lists the conversations (or threads) whose keeping has run out: their item closed, or
-// they last moved, before cutoff.
+// they last moved, before cutoff. One with a run in progress never has.
 func (s *Store) expired(table string, cutoff int64, complete func(ws int64) bool) ([]int64, error) {
-	last := "c.last_turn_at"
+	last, running := "c.last_turn_at", "(r.conversation = c.id OR r.writer_conversation = c.id)"
 	if table == "threads" {
-		last = "c.last_at"
+		last, running = "c.last_at", "r.thread = c.id"
 	}
 	rows, err := s.db.Query(`SELECT c.id, c.workspace_id, c.item, ` + last + `, COALESCE(i.state, ''), COALESCE(MAX(i.closed_at, i.merged_at), 0)
 		FROM ` + table + ` c LEFT JOIN items i ON i.workspace_id = c.workspace_id AND i.number = c.item AND c.item != 0
-		WHERE c.deleted = 0`)
+		WHERE c.deleted = 0 AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.status = 'running' AND ` + running + `)`)
 	if err != nil {
 		return nil, err
 	}

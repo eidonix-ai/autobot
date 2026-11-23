@@ -54,6 +54,9 @@ CREATE UNIQUE INDEX agent_runs_one_running_thread ON agent_runs (thread) WHERE s
 // ErrThreadBusy means the thread already has a run in progress.
 var ErrThreadBusy = errors.New("the item's thread has a run in progress")
 
+// ErrThreadGone means the thread was deleted by retention (or never was): nothing is written to it.
+var ErrThreadGone = errors.New("the thread's scratchpad was deleted")
+
 // Thread is a thread's row.
 type Thread struct {
 	ID          int64
@@ -159,6 +162,10 @@ func (p *Pad) Add(e PadEntry) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
+	var deleted bool
+	if err := tx.QueryRow(`SELECT deleted FROM threads WHERE id = ?`, p.thread).Scan(&deleted); err != nil || deleted {
+		return 0, ErrThreadGone
+	}
 	var n int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(n), 0) + 1 FROM scratchpad WHERE thread_id = ?`, p.thread).Scan(&n); err != nil {
 		return 0, err

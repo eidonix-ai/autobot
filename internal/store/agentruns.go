@@ -62,6 +62,11 @@ func (s *Store) StartAgentRun(r AgentRun, by *User) (run, conv, thread int64, er
 	}
 	defer tx.Rollback()
 	thread = r.Thread
+	if thread != 0 { // a run on a thread keeps it from expiring as it starts
+		if _, err := tx.Exec(`UPDATE threads SET last_at = ? WHERE id = ?`, now(), thread); err != nil {
+			return 0, 0, 0, err
+		}
+	}
 	if thread == 0 {
 		res, err := tx.Exec(`INSERT INTO threads (workspace_id, kind, node_id, item, standalone, created_at, last_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			r.WorkspaceID, r.Kind, r.NodeID, r.Item, r.Test || r.Item == 0, now(), now())

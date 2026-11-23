@@ -58,7 +58,9 @@ func (c *chatLog) requests() []string {
 
 // continues reports whether a request is the previous one with messages added at the end: the same
 // bytes (tools, system prompt, earlier messages), then more.
-func continues(prev, next string) bool { return strings.HasPrefix(next, strings.TrimSuffix(prev, "]}")) }
+func continues(prev, next string) bool {
+	return strings.HasPrefix(next, strings.TrimSuffix(prev, "]}"))
+}
 
 // lastMessage is the text of the last message of a request.
 func lastMessage(t *testing.T, body string) string {

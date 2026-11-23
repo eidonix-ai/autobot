@@ -90,9 +90,9 @@ type AgentSettings struct {
 	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
 	// the item this block continues: it sends its own Instruction and Done when as the next message of
 	// that conversation, which keeps the model, system prompt and tools it was started with. Its own
-	// Model is then only a copy of the other block's, shown read-only. NoConversation says what it does when the item has none yet: "skip" (the
-	// default) takes its output with a note and lets the workflow go on, "fresh" starts a conversation
-	// of its own with its Instruction.
+	// Model is then only a copy of the other block's, shown read-only. NoConversation says what it
+	// does when the item has none yet: "skip" (the default) takes its output with a note and lets the
+	// workflow go on, "fresh" starts a conversation of its own with its Instruction.
 	ContinueOf     string `json:"continue_of,omitempty"`
 	NoConversation string `json:"no_conversation,omitempty"`
 }

@@ -131,4 +131,3 @@ func TestReferenceBlocks(t *testing.T) {
 		t.Fatalf("%+v", steps["rr"])
 	}
 }
-

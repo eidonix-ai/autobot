@@ -331,34 +331,40 @@ func DecisionFromForm(get func(string) string) DecisionSettings {
 // and {pr:title}, {pr:diff}… are filled from it by Autobot; {repo} and {repo:charter} likewise from
 // the workspace. A tag without a colon that is not a parent is another step's output. So only a
 // parent is ever asked for, and a field is visibly not something to fill in.
-type Tag struct{ Name, About string }
+type Tag struct {
+	Name, About string
+	Auto        bool // filled in by Autobot, never typed or set
+}
+
+// Field reports whether the tag is a field of a parent ({pr:title} of {pr}).
+func (t Tag) Field() bool { return strings.Contains(t.Name, ":") }
 
 var commonTags = []Tag{
-	{"repo", "the repository, owner/name"},
-	{"repo:charter", "the project charter"},
-	{"previous_output", "the output of the step this one follows"},
+	{"repo", "the repository, owner/name", true},
+	{"repo:charter", "the project charter", true},
+	{"previous_output", "the output of the step this one follows", false},
 }
 
 var prTags = []Tag{
-	{"pr", "the pull request's link: the rest of pr: is filled from it"},
-	{"pr:number", "its number"},
-	{"pr:title", "its title"},
-	{"pr:body", "its description"},
-	{"pr:author", "its author"},
-	{"pr:diff", "its diff"},
-	{"pr:files", "the files it changes"},
-	{"pr:case_file", "its case file so far"},
-	{"pr:new_commits", "in a continued conversation: the commits pushed since its last turn, with their diff"},
-	{"pr:new_comments", "in a continued conversation: the comments and reviews posted since its last turn"},
+	{"pr", "the pull request's link", false},
+	{"pr:number", "its number", true},
+	{"pr:title", "its title", true},
+	{"pr:body", "its description", true},
+	{"pr:author", "its author", true},
+	{"pr:diff", "its diff", true},
+	{"pr:files", "the files it changes", true},
+	{"pr:case_file", "its case file so far", true},
+	{"pr:new_commits", "in a continued conversation: the commits pushed since its last turn, with their diff", true},
+	{"pr:new_comments", "in a continued conversation: the comments and reviews posted since its last turn", true},
 }
 
 var issueTags = []Tag{
-	{"issue", "the issue's link: the rest of issue: is filled from it"},
-	{"issue:number", "its number"},
-	{"issue:title", "its title"},
-	{"issue:body", "its description"},
-	{"issue:author", "its author"},
-	{"issue:case_file", "its case file so far"},
+	{"issue", "the issue's link", false},
+	{"issue:number", "its number", true},
+	{"issue:title", "its title", true},
+	{"issue:body", "its description", true},
+	{"issue:author", "its author", true},
+	{"issue:case_file", "its case file so far", true},
 }
 
 // oldTags are the names built-in tags had before (pr_title for pr:title), which templates written

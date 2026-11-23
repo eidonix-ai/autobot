@@ -82,6 +82,12 @@ func TestBlockTests(t *testing.T) {
 		t.Fatalf("agent form %d:\n%s", code, body)
 	}
 
+	// The tag list shows a field under its parent, marked as filled in by Autobot; the parent is not.
+	if _, body := b.get(base + "ag"); !strings.Contains(body, `<dt class="field"><code>{pr:title}</code></dt><dd><span class="auto"`) ||
+		!strings.Contains(body, `<dt><code>{pr}</code></dt><dd>the pull request&#39;s link</dd>`) {
+		t.Fatalf("tag list:\n%s", body)
+	}
+
 	// An agent test that cannot start says why on a whole page, in the tab it opened, styled, and runs
 	// again from there in the same tab.
 	code, _, page := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr": {"https://github.com/elsewhere/r/pull/7"}})

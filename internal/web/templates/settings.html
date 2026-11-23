@@ -23,6 +23,18 @@
 </section>
 
 <section class="panel">
+<h2>Local copy of pull requests and issues</h2>
+{{if not .GH}}<p class="muted">Needs a GitHub identity (below) to be read.</p>
+{{else}}{{with .Index}}
+<p>{{.Items}} items ({{.PRs}} pull requests, {{.Issues}} issues, {{.Open}} open; {{.Slim}} older ones kept as short records) and {{.Comments}} comments.
+{{if .Ready}}Last synced {{ts .SyncedAt}}.{{if not .AgreedAt.IsZero}} Last check against GitHub that agreed: {{ts .AgreedAt}}.{{else}} Not yet checked against GitHub.{{end}}{{with .Note}} Last check: {{.}}.{{end}}
+{{if not .PrunedAt.IsZero}}Last pruned {{ts .PrunedAt}}: {{.PruneNote}}.{{end}}
+{{else}}Copying from GitHub: {{.Progress}}.{{end}}</p>
+{{with .Error}}<p class="error">Stopped: {{.}}. Trying again soon.</p>{{end}}
+{{end}}{{end}}
+</section>
+
+<section class="panel">
 <h2>GitHub identity</h2>
 {{if .GH}}
   {{with .Live}}

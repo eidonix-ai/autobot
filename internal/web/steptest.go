@@ -283,6 +283,8 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		item, commit, prTools = num, info.HeadSHA, true
 		cfg.Tools = append(cfg.Tools, agent.PRTools(&agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files})...)
 	}
+	// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
+	cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
 	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
 	// request's head, or the default branch's) instead of through GitHub.
 	sess, note, err := s.openSandbox(ctx, ws, a, token, commit, by)

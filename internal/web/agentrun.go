@@ -320,10 +320,11 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		ctx, cancel := context.WithTimeout(context.Background(), limit)
 		defer cancel()
 		// Every session still working is told once when a share of the time is left.
-		cfg.Deadline = time.Now().Add(limit)
+		cfg.Now = runClock
+		cfg.Deadline = runClock().Add(limit)
 		cfg.WarnAt = agent.WarnTime(cfg.Deadline, limit, a.EffectiveTimeWarn())
 		if subs != nil {
-			subs.Deadline, subs.WarnAt = cfg.Deadline, cfg.WarnAt
+			subs.Deadline, subs.WarnAt, subs.Now = cfg.Deadline, cfg.WarnAt, runClock
 		}
 		var tr *agent.Transcript
 		if closing {
@@ -335,6 +336,9 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}()
 	return id, nil
 }
+
+// runClock is the clock the time warning goes by; tests move it.
+var runClock = time.Now
 
 // saveHook is called after each save of a run's transcript, by the run's own goroutine. Tests set
 // it to make a run crash at a chosen moment.

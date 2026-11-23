@@ -289,10 +289,10 @@ func TestForcedCompact(t *testing.T) {
 		if tr.Outcome != Met || len(m.seen) != 3 {
 			t.Fatalf("%s after %d requests: %s", tr.Outcome, len(m.seen), tr.Error)
 		}
-		if got := toolNames(m.tools[1]); !reflect.DeepEqual(got, []string{"compact", "scratchpad_write", "update_plan"}) {
-			t.Fatalf("offered %v", got)
+		if !reflect.DeepEqual(m.tools[1], m.tools[0]) {
+			t.Fatalf("the tools changed on the forced turn: %v", toolNames(m.tools[1]))
 		}
-		if got := last(m.seen[1]); !strings.HasPrefix(got, "Your context is at 9") || !strings.HasSuffix(got, "% of its window. Save to your scratchpad what you still need, then call compact.") {
+		if got := last(m.seen[1]); !strings.HasPrefix(got, "Your context is at 9") || !strings.HasSuffix(got, "% of its window. Save to your scratchpad what you still need, then call compact. Only scratchpad_write, update_plan and compact are available on this turn.") {
 			t.Fatalf("told %q", got)
 		}
 		if len(m.seen[2]) != 3 || !strings.Contains(last(m.seen[2]), "on it") || len(m.tools[2]) < 8 {
@@ -469,9 +469,10 @@ func TestClosingReport(t *testing.T) {
 	if len(cr.pad.entries) != 2 || cr.pad.entries[0].Title != "Research summary" || cr.pad.entries[0].Importance != "high" || cr.pad.entries[0].Body != "Found it in a.go:1." {
 		t.Fatalf("%+v", cr.pad.entries)
 	}
-	// Request 2 is the save turn: told so, and only scratchpad_write offered.
-	if got := toolNames(m.tools[2]); !reflect.DeepEqual(got, []string{"scratchpad_write"}) || !strings.Contains(last(m.seen[2]), "Before your report is written: save to your scratchpad anything the report needs that is not there yet.") {
-		t.Fatalf("save turn: %v %q", got, last(m.seen[2]))
+	// Request 2 is the save turn: told so, and told that only scratchpad_write is available, with the
+	// tools array of the turn before.
+	if !reflect.DeepEqual(m.tools[2], m.tools[1]) || last(m.seen[2]) != "Before your report is written: save to your scratchpad anything the report needs that is not there yet. Only scratchpad_write is available on this turn." {
+		t.Fatalf("save turn: %v %q", toolNames(m.tools[2]), last(m.seen[2]))
 	}
 	// Request 3 is the writer's first: a new conversation with the instruction, Done when and the index.
 	first := m.seen[3]
@@ -508,8 +509,8 @@ func TestClosingWriterBudgetAndFallback(t *testing.T) {
 	if cr.tr.Writing.Turns != 3 || cr.tr.Writing.Outcome != Budget || cr.tr.Report != "report in words" || len(cr.m.seen) != 6 {
 		t.Fatalf("%+v report %q after %d requests", cr.tr.Writing, cr.tr.Report, len(cr.m.seen))
 	}
-	if got := toolNames(cr.m.tools[5]); !reflect.DeepEqual(got, []string{"finish"}) {
-		t.Fatalf("its last turn offered %v", got)
+	if !reflect.DeepEqual(cr.m.tools[5], cr.m.tools[4]) || !strings.HasSuffix(last(cr.m.seen[5]), "Only finish is available on this turn.") {
+		t.Fatalf("its last turn offered %v", toolNames(cr.m.tools[5]))
 	}
 	// The writer fails (the model cannot be reached): the report is the high and medium notes, in order.
 	cr = closing(t, slices.Clone(researchOver), 15, "a.go")

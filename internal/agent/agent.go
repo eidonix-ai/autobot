@@ -137,19 +137,36 @@ func (s *session) window() int {
 	return defaultWindow
 }
 
-// turnSpecs adds what the turn needs to say and returns the tools it offers: on the last turn only
-// finish; when the next request is estimated past 85% of the window, only what the agent needs to
-// save its work and compact.
-func (s *session) turnSpecs(turn int) (specs []ToolSpec, last, forced bool) {
+// turnSpecs adds what the turn needs to say and returns which tools may be called on it, or nil for
+// all. The tools array sent never changes from turn to turn, since a changed array makes the provider
+// start over on the whole request: a turn that allows less says so in its message, and a call
+// outside it is answered with an error and not run. The last turn allows only finish; when the next
+// request is estimated past 85% of the window, only what the agent needs to save its work and compact.
+func (s *session) turnSpecs(turn int) (allowed []string, last, forced bool) {
 	if s.cfg.MaxTurns > 1 && turn == s.cfg.MaxTurns-1 {
-		s.conv.add(Message{Role: "user", Content: lastTurn})
-		return []ToolSpec{finishSpec}, true, false
+		allowed = []string{"finish"}
+		s.conv.add(Message{Role: "user", Content: lastTurn + " Only " + availableOn(allowed) + "."})
+		return allowed, true, false
 	}
 	if est := s.conv.estimate(); hasTool(s.conv.Tools, "compact") && est*100 > s.window()*forceAt {
-		s.conv.add(Message{Role: "user", Content: fmt.Sprintf("Your context is at %d%% of its window. Save to your scratchpad what you still need, then call compact.", est*100/s.window())})
-		return pick(s.conv.Tools, forcedTools...), false, true
+		s.conv.add(Message{Role: "user", Content: fmt.Sprintf("Your context is at %d%% of its window. Save to your scratchpad what you still need, then call compact. Only %s.",
+			est*100/s.window(), availableOn(forcedTools))})
+		return forcedTools, false, true
 	}
-	return s.conv.Tools, false, false
+	return nil, false, false
+}
+
+// availableOn names the tools a narrowed turn allows: "finish is available on this turn".
+func availableOn(names []string) string {
+	list, verb := names[0], "is"
+	switch len(names) {
+	case 1:
+	case 2:
+		list, verb = names[0]+" and "+names[1], "are"
+	default:
+		list, verb = strings.Join(names[:len(names)-1], ", ")+" and "+names[len(names)-1], "are"
+	}
+	return list + " " + verb + " available on this turn"
 }
 
 // Run works until the agent finishes or runs out of turns or time (ctx), and returns the run's
@@ -181,14 +198,14 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		}
 		// The last turn can only finish, so a run that reaches its limit still ends with its report.
 		// (Its request leaves out the other tools, so it misses the provider's cache, once.)
-		specs, last, forced := s.turnSpecs(turn)
-		reply, use, err := complete(ctx, cfg.Model, conv.request(), specs)
+		allowed, last, forced := s.turnSpecs(turn)
+		reply, use, err := complete(ctx, cfg.Model, conv.request(), conv.Tools)
 		if err != nil && tooLong(err) {
 			// The provider refused the request as longer than its model's context: compact from the
 			// scratchpad, and ask once more.
 			s.compact(carriedByAutobot)
-			specs, last, forced = s.turnSpecs(turn)
-			reply, use, err = complete(ctx, cfg.Model, conv.request(), specs)
+			allowed, last, forced = s.turnSpecs(turn)
+			reply, use, err = complete(ctx, cfg.Model, conv.request(), conv.Tools)
 		}
 		if err != nil {
 			tr.Outcome, tr.Error = Failed, err.Error()
@@ -237,16 +254,12 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 				results[i] = fmt.Sprintf("error: at most %d tool calls run in one turn; make this one in your next turn", maxCalls)
 				continue
 			}
-			if forced && name != "finish" && !slices.Contains(forcedTools, name) {
-				results[i] = "error: only scratchpad_write, update_plan and compact are available this turn"
+			if allowed != nil && !slices.Contains(allowed, name) {
+				results[i] = "error: only " + availableOn(allowed)
 				continue
 			}
 			switch name {
 			case "finish":
-				if forced {
-					results[i] = "error: finish is not available this turn: save your notes, then call compact"
-					continue
-				}
 				c := call
 				finish = &c
 				results[i] = "" // filled below, once the other calls of this turn are done

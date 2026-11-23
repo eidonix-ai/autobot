@@ -14,7 +14,7 @@ import (
 
 const (
 	// saveTurnPrompt is the one more turn the research session gets once its work is over.
-	saveTurnPrompt = "Before your report is written: save to your scratchpad anything the report needs that is not there yet."
+	saveTurnPrompt = "Before your report is written: save to your scratchpad anything the report needs that is not there yet. Only scratchpad_write is available on this turn."
 
 	// writerPrompt follows the instruction and Done when in the writing session's first message.
 	writerPrompt = "Your research is done and its notes are in your scratchpad. Write the final report now, from your notes: " +
@@ -51,8 +51,7 @@ func WriterTask(intro string, pad Pad) string {
 func SaveTurn(ctx context.Context, cfg Config, conv *Conversation, tr *Transcript) {
 	s := &session{cfg: cfg, conv: conv, tr: tr, tools: map[string]Tool{}}
 	conv.add(Message{Role: "user", Content: saveTurnPrompt})
-	specs := pick(conv.Tools, "scratchpad_write")
-	reply, use, err := complete(ctx, cfg.Model, conv.request(), specs)
+	reply, use, err := complete(ctx, cfg.Model, conv.request(), conv.Tools) // the tools array stays as it was
 	if err != nil {
 		return
 	}
@@ -64,7 +63,7 @@ func SaveTurn(ctx context.Context, cfg Config, conv *Conversation, tr *Transcrip
 	conv.add(reply)
 	conv.recordTurn(cfg.RunID, use)
 	for _, call := range reply.ToolCalls {
-		out := "error: only scratchpad_write is available now"
+		out := "error: only " + availableOn([]string{"scratchpad_write"})
 		if call.Function.Name == "scratchpad_write" {
 			out = s.padWrite(call.Function.Arguments)
 		}

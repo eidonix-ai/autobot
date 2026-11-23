@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -202,8 +203,9 @@ func TestBudgetWarning(t *testing.T) {
 	if len(warnings) != 1 || warnings[0] != 8 || !strings.Contains(m.seen[7][len(m.seen[7])-1].Content, "5 turns left") {
 		t.Fatalf("warned before turns %v", warnings)
 	}
-	if len(m.tools[10]) < 3 || len(m.tools[11]) != 1 || m.tools[11][0].Name != "finish" || !strings.Contains(last(m.seen[11]), "last turn") {
-		t.Fatalf("turn 11 had %d tools, the last %v", len(m.tools[10]), m.tools[11])
+	if len(m.tools[10]) < 3 || !reflect.DeepEqual(m.tools[11], m.tools[10]) || !strings.Contains(last(m.seen[11]), "last turn") ||
+		!strings.HasSuffix(last(m.seen[11]), "Only finish is available on this turn.") {
+		t.Fatalf("turn 11 had %d tools, the last %d; told %q", len(m.tools[10]), len(m.tools[11]), last(m.seen[11]))
 	}
 	if tr.Outcome != Met || tr.Report != "what I found" {
 		t.Fatalf("%s: %q", tr.Outcome, tr.Report)

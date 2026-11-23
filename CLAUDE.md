@@ -75,7 +75,11 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    folder the connector writes itself. Queues live in memory in the web Server, so a restart ends
    sessions (StopOrphanRuns); a session idle for 10 minutes, or whose agent ended, is closed. Tools:
    bash (background with bash_output/bash_kill), read_file, write_file, edit_file, grep, glob.
-   Next: sub-agents, long tests that resume the agent, the engine.
+   The engine (internal/web/engine.go) runs a workflow on one PR or issue from an event block
+   (shift-click it: number, dry run): steps run when all their inputs have finished and at least
+   one link into them fired, so decisions route and forks rejoin; output tags are kept per case;
+   runs keep a snapshot of the workflow and each step's state (workflow_runs, workflow_steps).
+   Next: the Discord bot, Human Approval, questions in case posts, sub-agents, the poller.
 6. Discord (decided by Derek, 2026-11-23; not built yet): one bot for the instance (discordgo, one
    outbound Gateway connection, no public endpoint), on the PUBLIC project server. A public forum
    (the flare-autobot channel) with one post per case, created by the bot (people may reply, not

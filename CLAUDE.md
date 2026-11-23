@@ -94,6 +94,18 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    bot with case posts, then Human Approval, then questions. Web search comes from Tavily or Brave providers,
    lent like inference; decision routes are detected per provider with its key.
 
+## Pinned (Derek, 2026-11-23: come back to these)
+
+- Prompt-injection exfiltration. An agent that reads untrusted text (a PR, a fetched page, a
+  vendored file) can be told to send what it has read out through fetch_url, including through the
+  DNS lookup of an attacker's host name, which happens before the address guard. The danger is
+  private repositories. Proposed, not built: fetch_url limited to a list of documentation and
+  package sites (checked on the name before any lookup), "any website" refused for private repos,
+  link previews off for Discord posts, Human Approval before agent-written text is posted from a
+  private repo, and a canary-PR measurement of how readily GLM and DeepSeek obey such text.
+- Before the poller runs PRs automatically: cap and evict the connector's dependency cache (a PR's
+  lockfile can make a donor download up to 20 GB, kept forever), and per-user run limits.
+
 ## Testing
 
 `go test -p 1 ./...`. Every rule that protects data or access has a test, and a test is only

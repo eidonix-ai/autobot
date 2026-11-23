@@ -441,7 +441,7 @@ func stepSummary(n Node, kind string, models func(ModelRef) string) string {
 	switch n.Type {
 	case Agent:
 		s, err := AgentSettingsOf(n, kind)
-		if err != nil || !s.Model.Set() {
+		if err != nil || (!s.Model.Set() && !s.Continues()) {
 			return "Choose a model"
 		}
 		var parts []string

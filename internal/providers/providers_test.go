@@ -30,15 +30,15 @@ func TestDiscoverResponseShapes(t *testing.T) {
 	}{
 		"data object, sorted, de-duplicated, Gemini prefix dropped": {
 			`{"object":"list","data":[{"id":"models/gemini-b","name":"Gemini B"},{"id":"a"},{"id":"a","name":"The A"},{"id":"models/gemini-b"}]}`,
-			[]Model{{"a", "The A"}, {"gemini-b", "Gemini B"}},
+			[]Model{{"a", "The A", 0}, {"gemini-b", "Gemini B", 0}},
 		},
 		"bare array (Together)": {
 			`[{"id":"meta/llama","display_name":"Llama"},{"id":"mistral"}]`,
-			[]Model{{"meta/llama", "Llama"}, {"mistral", ""}},
+			[]Model{{"meta/llama", "Llama", 0}, {"mistral", "", 0}},
 		},
 		"models object with name": {
 			`{"models":[{"name":"models/gemini-pro","display_name":"Gemini Pro"},{"id":"x"}]}`,
-			[]Model{{"gemini-pro", "Gemini Pro"}, {"x", ""}},
+			[]Model{{"gemini-pro", "Gemini Pro", 0}, {"x", "", 0}},
 		},
 	}
 	for name, c := range cases {
@@ -91,7 +91,7 @@ func TestDiscoverAnthropicHeadersAndPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Model{{"claude-a", "Claude A"}, {"claude-b", "Claude B"}}
+	want := []Model{{"claude-a", "Claude A", 0}, {"claude-b", "Claude B", 0}}
 	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(asked, []string{"", "claude-b"}) {
 		t.Fatalf("got %+v after asking %q", got, asked)
 	}

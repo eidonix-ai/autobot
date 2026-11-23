@@ -236,6 +236,17 @@ func (s *Server) providerPage(w http.ResponseWriter, r *http.Request, status int
 		return
 	}
 	data["Title"], data["P"], data["Rows"], data["Discovered"] = p.Name+" · Providers", p, rows, discovered != nil
+	known, err := s.st.ModelWindows(p.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	for _, m := range discovered { // what the provider just said fills what is not set
+		if known[m.ID] == 0 && m.Window > 0 {
+			known[m.ID] = m.Window
+		}
+	}
+	data["Windows"] = windowLines(known)
 	data["IsOwner"], data["Workspaces"], data["Loans"] = p.OwnerID == me(r).ID, workspaces, loans
 	s.render(w, r, status, "provider.html", data)
 }
@@ -383,12 +394,26 @@ func (s *Server) setProviderModels(w http.ResponseWriter, r *http.Request) {
 			chosen = append(chosen, line)
 		}
 	}
-	err := s.st.SetProviderModels(p.ID, chosen)
+	windows, err := parseWindows(f.Get("windows"))
+	if err != nil {
+		s.providerPage(w, r, http.StatusBadRequest, p, nil, picked, map[string]any{"Error": err.Error(), "Form": f})
+		return
+	}
+	err = s.st.SetProviderModels(p.ID, chosen)
 	if msg, ok := inputError(err); ok {
 		s.providerPage(w, r, http.StatusBadRequest, p, nil, picked, map[string]any{"Error": msg, "Form": f})
 		return
 	}
 	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// The box holds every window: a permitted model it does not name has none.
+	all := map[string]int{}
+	for _, m := range chosen {
+		all[m] = windows[m]
+	}
+	if err := s.st.SetModelWindows(p.ID, all); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -523,4 +548,49 @@ func (s *Server) lendProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, providerPath(p.ID)+"?saved=1", http.StatusSeeOther)
+}
+
+// windowLines writes context windows as the provider page's box shows them: "model tokens" a line.
+func windowLines(windows map[string]int) string {
+	ids := make([]string, 0, len(windows))
+	for id, n := range windows {
+		if n > 0 {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var b strings.Builder
+	for _, id := range ids {
+		fmt.Fprintf(&b, "%s %d\n", id, windows[id])
+	}
+	return b.String()
+}
+
+// parseWindows reads the box: one "model tokens" a line, the number perhaps with commas, or ending
+// in k or m (128k).
+func parseWindows(text string) (map[string]int, error) {
+	out := map[string]int{}
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		bad := fmt.Errorf("%q is not a context window: write a model ID, a space and a number of tokens, such as deepseek-flash 1000000.", strings.TrimSpace(line))
+		if len(fields) != 2 {
+			return nil, bad
+		}
+		num, mult := strings.ReplaceAll(strings.ToLower(fields[1]), ",", ""), 1
+		switch {
+		case strings.HasSuffix(num, "k"):
+			num, mult = strings.TrimSuffix(num, "k"), 1000
+		case strings.HasSuffix(num, "m"):
+			num, mult = strings.TrimSuffix(num, "m"), 1_000_000
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil || n <= 0 || n*mult > 100_000_000 {
+			return nil, bad
+		}
+		out[fields[0]] = n * mult
+	}
+	return out, nil
 }

@@ -73,18 +73,20 @@ func (m ModelRef) Set() bool { return m.Provider != 0 && m.Model != "" }
 // AgentSettings are an agent node's settings.
 type AgentSettings struct {
 	Model        ModelRef `json:"model"`
-	Persona      string   `json:"persona"`       // a preset's key (its Instruction and Done when are used), or "custom"
-	SystemPrompt string   `json:"system_prompt"` // a template: Additional instructions, added after the Instruction
-	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
-	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
-	Internet     bool     `json:"internet"`      // web search and fetching pages
-	SubAgents    int      `json:"sub_agents"`    // how many sub-agents it may run at once; 0 for none
-	Machines     []int64  `json:"machines"`      // the workspace machines it may use
-	Verify       ModelRef `json:"verify"`        // a decision model that checks a finish claiming the goal is met; unset for none
-	MaxTurns     int      `json:"max_turns"`     // model calls before it must have finished
-	MaxMinutes   int      `json:"max_minutes"`   // wall time before it is stopped
-	Rerun        string   `json:"rerun"`         // run again on the same item: "resume" its conversation, or start "fresh"
-	FollowUp     string   `json:"follow_up"`     // resume: a template sent as the next message; "" sends the instruction again
+	Persona      string   `json:"persona"`                // a preset's key (its Instruction and Done when are used), or "custom"
+	SystemPrompt string   `json:"system_prompt"`          // a template: Additional instructions, added after the Instruction
+	Instruction  string   `json:"instruction"`            // a template: the task, sent as the first message
+	Goal         string   `json:"goal"`                   // a template: when the work is done; the agent may finish only then
+	Internet     bool     `json:"internet"`               // web search and fetching pages
+	SubAgents    int      `json:"sub_agents"`             // how many sub-agents it may run at once; 0 for none
+	Machines     []int64  `json:"machines"`               // the workspace machines it may use
+	Verify       ModelRef `json:"verify"`                 // a decision model that checks a finish claiming the goal is met; unset for none
+	MaxTurns     int      `json:"max_turns"`              // model calls before it must have finished
+	Closing      string   `json:"closing,omitempty"`      // Custom only: "" (finish delivers the output) or "report" (written from the scratchpad)
+	ReportTurns  int      `json:"report_turns,omitempty"` // with a written report: turns the writing session has; 0 is 15
+	MaxMinutes   int      `json:"max_minutes"`            // wall time before it is stopped
+	Rerun        string   `json:"rerun"`                  // run again on the same item: "resume" its conversation, or start "fresh"
+	FollowUp     string   `json:"follow_up"`              // resume: a template sent as the next message; "" sends the instruction again
 	OutputTo     string   `json:"output_to,omitempty"`
 
 	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
@@ -134,6 +136,31 @@ func (s AgentSettings) EffectiveInstruction(kind string) string {
 		return p.InstructionFor(kind)
 	}
 	return s.Instruction
+}
+
+// Closing steps: what happens after the agent's research.
+const (
+	ClosingNone   = ""       // finish delivers the output
+	ClosingReport = "report" // the report is written from the scratchpad, in a fresh session
+)
+
+// DefaultReportTurns is how many turns the session that writes a report has, when not set.
+const DefaultReportTurns = 15
+
+// EffectiveClosing is the closing step: its preset's, or its own when Custom.
+func (s AgentSettings) EffectiveClosing(kind string) string {
+	if p := PersonaOf(s.Persona); p != nil {
+		return p.Closing
+	}
+	return s.Closing
+}
+
+// EffectiveReportTurns is how many turns the writing session has.
+func (s AgentSettings) EffectiveReportTurns() int {
+	if s.ReportTurns <= 0 {
+		return DefaultReportTurns
+	}
+	return s.ReportTurns
 }
 
 // EffectiveGoal is the Done when the agent is held to: its preset's, or its own when Custom.
@@ -222,6 +249,10 @@ func (s AgentSettings) Check(kind string) error {
 		return errors.New("the turn limit is 1 to 500")
 	case s.MaxMinutes < 1 || s.MaxMinutes > 240:
 		return errors.New("the time limit is 1 to 240 minutes")
+	case s.Closing != ClosingNone && s.Closing != ClosingReport:
+		return errors.New("choose a closing step")
+	case s.ReportTurns < 0 || s.ReportTurns > 200:
+		return errors.New("the report's turn limit is 1 to 200")
 	case s.Rerun != "resume" && s.Rerun != "fresh":
 		return errors.New("choose what a re-run does")
 	}
@@ -288,6 +319,7 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 		Goal:         strings.TrimSpace(get("goal")),
 		Internet:     get("internet") == "on",
 		Rerun:        get("rerun"),
+		Closing:      get("closing"),
 		FollowUp:     strings.TrimSpace(get("follow_up")),
 		OutputTo:     strings.TrimSpace(get("output_to")),
 		Machines:     []int64{},
@@ -303,6 +335,7 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 	s.SubAgents, _ = strconv.Atoi(get("sub_agents"))
 	s.MaxTurns, _ = strconv.Atoi(get("max_turns"))
 	s.MaxMinutes, _ = strconv.Atoi(get("max_minutes"))
+	s.ReportTurns, _ = strconv.Atoi(get("report_turns"))
 	return s
 }
 
@@ -328,7 +361,7 @@ func DecisionFromForm(get func(string) string) DecisionSettings {
 // Tag is a placeholder a template may use.
 //
 // Built-in tags are parents and their fields (Derek, 2026-11-23): {pr} is the pull request's link,
-// and {pr:title}, {pr:diff}… are filled from it by Autobot; {repo} and {repo:charter} likewise from
+// and {pr:title}, {pr:diff}… are filled from it by Autobot; {repo} and {charter} likewise from
 // the workspace. A tag without a colon that is not a parent is another step's output. So only a
 // parent is ever asked for, and a field is visibly not something to fill in.
 type Tag struct {
@@ -341,7 +374,7 @@ func (t Tag) Field() bool { return strings.Contains(t.Name, ":") }
 
 var commonTags = []Tag{
 	{"repo", "the repository, owner/name", true},
-	{"repo:charter", "the project charter", true},
+	{"charter", "the project charter (kept in Autobot)", true},
 	{"previous_output", "the output of the step this one follows", false},
 }
 
@@ -373,7 +406,7 @@ var oldTags = map[string]string{
 	"pr_link": "pr", "pr_number": "pr:number", "pr_title": "pr:title", "pr_body": "pr:body", "pr_author": "pr:author",
 	"pr_diff": "pr:diff", "pr_files": "pr:files", "pr_new_commits": "pr:new_commits", "pr_new_comments": "pr:new_comments",
 	"issue_link": "issue", "issue_number": "issue:number", "issue_title": "issue:title", "issue_body": "issue:body",
-	"issue_author": "issue:author", "project_charter": "repo:charter",
+	"issue_author": "issue:author", "project_charter": "charter", "repo:charter": "charter",
 }
 
 // Tags lists the built-in tags of a workflow kind.

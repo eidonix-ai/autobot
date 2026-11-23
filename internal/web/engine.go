@@ -259,7 +259,7 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
-		rs.builtIn["repo:charter"] = c.Body
+		rs.builtIn["charter"] = c.Body
 	}
 	pass, lines := verdict(*ev, it, caseFile != nil)
 	head := "The event would have started it."

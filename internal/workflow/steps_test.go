@@ -31,15 +31,15 @@ func TestTemplates(t *testing.T) {
 // Built-in tags are a parent and its fields: {pr} is the link and {pr:title} is filled from it. The
 // old names still work, and a field that does not exist is refused with where to look.
 func TestParentAndFieldTags(t *testing.T) {
-	tpl := "{pr} {pr:title} {pr_title} {repo:charter} {project_charter} {case_file} {{pr:title}}"
-	if got := strings.Join(TemplateTags(tpl), ","); got != "pr,pr:title,pr_title,repo:charter,project_charter,case_file" {
+	tpl := "{pr} {pr:title} {pr_title} {charter} {repo:charter} {project_charter} {case_file} {{pr:title}}"
+	if got := strings.Join(TemplateTags(tpl), ","); got != "pr,pr:title,pr_title,charter,repo:charter,project_charter,case_file" {
 		t.Fatalf("tags %s", got)
 	}
 	if err := CheckTemplates(PR, nil, tpl); err != nil {
 		t.Fatal(err)
 	}
-	got := Render(tpl, map[string]string{"pr": "L", "pr:title": "T", "repo:charter": "C", "pr:case_file": "F"})
-	if got != "L T T C C F {pr:title}" {
+	got := Render(tpl, map[string]string{"pr": "L", "pr:title": "T", "charter": "C", "pr:case_file": "F"})
+	if got != "L T T C C C F {pr:title}" {
 		t.Fatalf("render %q", got)
 	}
 	if err := CheckTemplates(PR, nil, "{pr:titel}"); err == nil || !strings.Contains(err.Error(), "fields of {pr}") {
@@ -48,11 +48,11 @@ func TestParentAndFieldTags(t *testing.T) {
 	if err := CheckTemplates(Issue, nil, "{issue} {issue:body} {issue_title} {case_file}"); err != nil {
 		t.Fatal(err)
 	}
-	if CanonicalTag("case_file", Issue) != "issue:case_file" || CanonicalTag("pr_diff", PR) != "pr:diff" || TagField("pr:diff") != "pr" || TagField("pr") != "" {
+	if CanonicalTag("repo:charter", PR) != "charter" || CanonicalTag("project_charter", Issue) != "charter" || CanonicalTag("case_file", Issue) != "issue:case_file" || CanonicalTag("pr_diff", PR) != "pr:diff" || TagField("pr:diff") != "pr" || TagField("pr") != "" {
 		t.Fatal("names")
 	}
 	// No step may take a built-in name for its output, old or new.
-	for _, name := range []string{"pr", "repo", "pr_title", "project_charter"} {
+	for _, name := range []string{"pr", "repo", "charter", "repo:charter", "pr_title", "project_charter"} {
 		if checkOutputTo(name, PR) == nil {
 			t.Errorf("output named %s", name)
 		}

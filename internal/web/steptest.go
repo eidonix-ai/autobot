@@ -579,7 +579,7 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 	}
 	set("repo", ws.Name)
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
-		set("repo:charter", c.Body)
+		set("charter", c.Body)
 	}
 	kind, link := workflow.PR, values["pr"]
 	if link == "" {

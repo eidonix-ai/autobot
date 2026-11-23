@@ -28,10 +28,10 @@ Autobot runs on 192.168.5.123 (ssh alias `triage`, user `agent`, passwordless su
 `/var/lib/autobot/autobot.db`. Deploy or upgrade with `deploy/install.sh`.
 
 It is published as https://autobot.eidonix.com through nginx on the DMZ host (192.168.5.2, ssh alias
-`dmz`, no systemd: reload with `nginx -s reload`). The server block allows only 192.168.0.0/16 until
-the security audit passes (Derek, 2026-11-22). LAN clients on other subnets reach nginx as
-192.168.5.1; outside clients keep their public address, so the allow list holds. The pre-change config
-is `/etc/nginx/nginx.conf.pre-autobot-internal-20261122`.
+`dmz`, no systemd: reload with `nginx -s reload`). It is public since 2026-11-23 (Derek's OK, after the
+security audit: two independent reviews, Go 1.27.4, the fixes in that day's commits); nginx still
+limits sign-ins per address and connections and sizes. The config from before it went public is
+`/etc/nginx/nginx.conf.pre-autobot-public-20261123`.
 
 The old harness's `triage.service` and `donor-hub.service` were stopped and disabled on 2026-11-22
 (Derek's OK); their data is still in `/var/lib/triage`. Don't delete it without asking.

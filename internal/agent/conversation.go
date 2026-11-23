@@ -55,6 +55,17 @@ func NewConversation(model string, provider int64, system string, tools []Tool) 
 	return startConversation(model, provider, system, Specs(tools))
 }
 
+// NewResearchConversation is NewConversation for a block with a closing step: finish asks for a short
+// summary of where the research got to, since the full report is written next, from the notes.
+func NewResearchConversation(model string, provider int64, system string, tools []Tool, closing bool) *Conversation {
+	if !closing {
+		return NewConversation(model, provider, system, tools)
+	}
+	specs := Specs(tools)
+	specs[0] = finishSummarySpec
+	return startConversation(model, provider, system, specs)
+}
+
 // NewWriterConversation starts the conversation in which a report is written from the scratchpad:
 // it can read the scratchpad, but not write to it or compact.
 func NewWriterConversation(model string, provider int64, system string, tools []Tool) *Conversation {

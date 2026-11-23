@@ -103,6 +103,12 @@ var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it wh
 		"status":{"type":"string","enum":["met","blocked"],"description":"met: the goal is met. blocked: it cannot be met, and the report says why."},
 		"report":{"type":"string","description":"The final answer."}},"required":["status","report"]}`)}
 
+// finishSummarySpec is finish for a research session whose report is written next, from its notes.
+var finishSummarySpec = ToolSpec{Name: "finish", Description: "End the research. Call it when the goal is met, or when you are blocked and cannot meet it. " +
+	"The report here is only a short summary of where you got to, a few paragraphs: the final report is written next, from your scratchpad notes, " +
+	"so keep your findings in the scratchpad and do not repeat them in full here.",
+	Parameters: finishSpec.Parameters}
+
 var planSpec = ToolSpec{Name: "update_plan", Description: "Set your plan: the steps to meet the goal, each with its status and an optional note. Replaces the previous plan.",
 	Parameters: json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{
 		"step":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}},

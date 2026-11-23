@@ -79,7 +79,16 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    (shift-click it: number, dry run): steps run when all their inputs have finished and at least
    one link into them fired, so decisions route and forks rejoin; output tags are kept per case;
    runs keep a snapshot of the workflow and each step's state (workflow_runs, workflow_steps).
-   Next: the Discord bot, Human Approval, questions in case posts, sub-agents, the poller.
+   More blocks: GitHub Comment (trial run on by default: writes what it would post to the case
+   file; keep one comment edits its earlier one), Condition (rules on files, size, author's
+   standing, labels, text, tags; no model), Test Run (a script on a machine; passed or failed),
+   Post to Discord (the case's forum post, opened when needed; or its summary) and Human Approval
+   (Discord buttons and the run page; first answer wins; waits survive restarts). The Discord bot
+   is one per instance (admin page Discord: token sealed, public key for the signed interactions
+   endpoint /discord/interactions, plain HTTP API, no gateway yet); each workspace picks its forum.
+   The poller (internal/web/poller.go, internal/workflow/poll.go) starts runs for workflows
+   switched Live on the canvas (off by default; switching on baselines what is already open).
+   Next: questions in case posts (needs the gateway), sub-agents.
 6. Discord (decided by Derek, 2026-11-23; not built yet): one bot for the instance (discordgo, one
    outbound Gateway connection, no public endpoint). Everything lives in ONE PRIVATE forum,
    flare-autobot, on the project server; its access list (server admins, moderators, Contributor,

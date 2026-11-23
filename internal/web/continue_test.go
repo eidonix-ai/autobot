@@ -26,6 +26,8 @@ type chatLog struct {
 	*httptest.Server
 	mu     sync.Mutex
 	bodies []string
+	// reply, when set, makes the answer: it is given the messages and the names of the tools offered.
+	reply func(msgs []agent.Message, tools []string) agent.Message
 }
 
 func newChatLog(t *testing.T, hold chan struct{}) *chatLog {
@@ -45,7 +47,20 @@ func newChatLog(t *testing.T, hold chan struct{}) *chatLog {
 		}
 		tc := agent.ToolCall{ID: fmt.Sprint("f", n), Type: "function"}
 		tc.Function.Name, tc.Function.Arguments = "finish", fmt.Sprintf(`{"status":"met","report":"Report %d."}`, n)
-		reply, _ := json.Marshal(agent.Message{Role: "assistant", ToolCalls: []agent.ToolCall{tc}})
+		answer := agent.Message{Role: "assistant", ToolCalls: []agent.ToolCall{tc}}
+		if c.reply != nil {
+			var req struct {
+				Messages []agent.Message
+				Tools    []struct{ Function struct{ Name string } }
+			}
+			json.Unmarshal(b, &req)
+			var names []string
+			for _, tl := range req.Tools {
+				names = append(names, tl.Function.Name)
+			}
+			answer = c.reply(req.Messages, names)
+		}
+		reply, _ := json.Marshal(answer)
 		fmt.Fprintf(w, `{"choices":[{"message":%s}],"usage":{"prompt_tokens":1000,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":%d}}}`, reply, cached)
 	}))
 	t.Cleanup(c.Close)

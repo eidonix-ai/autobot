@@ -83,14 +83,15 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    file; keep one comment edits its earlier one), Condition (rules on files, size, author's
    standing, labels, text, tags; no model), Test Run (a script on a machine; passed or failed),
    Post to Discord (the case's forum post, opened when needed; or its summary) and Human Approval
-   (Discord buttons and the run page; first answer wins; waits survive restarts). The Discord bot
-   is one per instance (admin page Discord: token sealed, public key for the signed interactions
-   endpoint /discord/interactions, plain HTTP API, no gateway yet); each workspace picks its forum.
+   (Discord buttons and the run page; first answer wins; waits survive restarts). Discord is
+   reached over its plain HTTP API (no gateway yet).
    The poller (internal/web/poller.go, internal/workflow/poll.go) starts runs for workflows
    switched Live on the canvas (off by default; switching on baselines what is already open).
    Next: questions in case posts (needs the gateway), sub-agents.
-6. Discord (decided by Derek, 2026-11-23; not built yet): one bot for the instance (discordgo, one
-   outbound Gateway connection, no public endpoint). Everything lives in ONE PRIVATE forum,
+6. Discord (decided by Derek, 2026-11-23): each workspace has its own bot, installed on its
+   project's own server, set up in the workspace's Settings by any member (token sealed per
+   workspace; clicks come to /discord/interactions/{owner}/{repo}, checked with that workspace's
+   public key, and answer only that workspace's requests). Everything lives in ONE PRIVATE forum,
    flare-autobot, on the project server; its access list (server admins, moderators, Contributor,
    flare-contrib, the owner) is the set of people trusted to make the calls, so anyone who can see
    it may approve (no approver role, no separate approvals channel; bots' clicks ignored, stale

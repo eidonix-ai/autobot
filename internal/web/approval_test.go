@@ -38,7 +38,7 @@ func TestApprovalOnDiscord(t *testing.T) {
 	derek := e.user("derek", true)
 	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	e.st.SetDiscordBot("good-token", hex.EncodeToString(pub))
+	e.st.SetDiscordBot(ws, "good-token", hex.EncodeToString(pub), derek)
 	e.st.SetDiscordForum(ws, "f1", "flare-autobot", derek)
 	approvalWorkflow(t, e, ws, derek)
 	id, err := e.ui.startWorkflow(t.Context(), ws, workflow.PR, "ev", 7, false, derek)
@@ -53,10 +53,14 @@ func TestApprovalOnDiscord(t *testing.T) {
 	if len(discordSent) < 2 || !strings.Contains(discordSent[0], "PR #7: Retry uploads") || !strings.Contains(discordSent[1], "Run Retry uploads on cn7?") || !strings.Contains(discordSent[1], `"custom_id":"ap:`) {
 		t.Fatalf("sent %q", discordSent)
 	}
+	pub2, priv2, _ := ed25519.GenerateKey(nil)
+	ws2, _ := e.st.CreateWorkspace("o/r2", derek, "", "")
+	e.st.SetDiscordBot(ws2, "good-token", hex.EncodeToString(pub2), derek)
+	endpoint := "/discord/interactions/o/r"
 	click := func(answer string, bot bool, signWith ed25519.PrivateKey) (int, string) {
 		body, _ := json.Marshal(map[string]any{"type": 3, "data": map[string]any{"custom_id": "ap:" + itoa(ap.ID) + ":" + answer},
 			"member": map[string]any{"user": map[string]any{"id": "u1", "username": "festr", "global_name": "Festr", "bot": bot}}})
-		req, _ := http.NewRequest("POST", e.srv.URL+"/discord/interactions", bytes.NewReader(body))
+		req, _ := http.NewRequest("POST", e.srv.URL+endpoint, bytes.NewReader(body))
 		req.Header.Set("X-Signature-Timestamp", "1")
 		req.Header.Set("X-Signature-Ed25519", hex.EncodeToString(ed25519.Sign(signWith, append([]byte("1"), body...))))
 		resp, err := http.DefaultClient.Do(req)
@@ -71,6 +75,12 @@ func TestApprovalOnDiscord(t *testing.T) {
 	if code, _ := click("approved", false, other); code != http.StatusUnauthorized {
 		t.Fatalf("a forged click was taken: %d", code)
 	}
+	// Another workspace's bot cannot answer this workspace's request.
+	endpoint = "/discord/interactions/o/r2"
+	if _, body := click("approved", false, priv2); !strings.Contains(body, "not Autobot's any more") {
+		t.Fatalf("another workspace's bot answered: %s", body)
+	}
+	endpoint = "/discord/interactions/o/r"
 	if _, body := click("approved", true, priv); !strings.Contains(body, "A bot cannot answer") {
 		t.Fatalf("a bot answered: %s", body)
 	}

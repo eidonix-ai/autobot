@@ -199,10 +199,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/cases/{uuid}", s.apiCase)
 
 	s.mux.Handle("GET /admin/users", s.admin(s.users))
-	s.mux.Handle("GET /admin/discord", s.admin(s.discordPage))
-	s.mux.Handle("POST /admin/discord", s.admin(s.saveDiscord))
-	s.mux.Handle("POST /discord/interactions", http.HandlerFunc(s.interaction))
+	s.mux.Handle("POST /discord/interactions/{owner}/{repo}", http.HandlerFunc(s.interaction))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord", s.auth(s.setForum))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord/bot", s.auth(s.saveBot))
 	s.mux.Handle("POST /admin/users", s.admin(s.createUser))
 	s.mux.Handle("GET /admin/users/{id}", s.admin(s.userPage))
 	s.mux.Handle("POST /admin/users/{id}", s.admin(s.updateUser))

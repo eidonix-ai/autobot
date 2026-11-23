@@ -51,21 +51,38 @@
 </section>
 
 
-{{if .Me.IsAdmin}}
 <section class="panel" id="discord">
 <h2>Discord</h2>
 {{with .DiscordError}}<p class="error">{{.}}</p>{{end}}
-{{if .Bot}}
-<form method="post" action="{{.WS.Path}}/settings/discord" class="row">
+{{if .Bot}}{{with .BotName}}<p class="status"><span class="dot on"></span> The bot is signed in as <strong>{{.}}</strong></p>{{end}}{{end}}
+<form method="post" action="{{.WS.Path}}/settings/discord/bot" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="row">
+    <label>Bot token <input type="password" name="token" autocomplete="off"{{if .Bot}} placeholder="A token is saved. Leave blank to keep it."{{else}} required{{end}}></label>
+    <label>Application public key <input name="public_key" value="{{.PublicKey}}" required autocomplete="off" spellcheck="false" class="code"></label>
+  </div>
+  <div class="row"><button>{{if .Bot}}Save{{else}}Set up the bot{{end}}</button></div>
+</form>
+<p>Interactions endpoint URL, for the application's General Information page: <code>{{.Interactions}}</code></p>
+{{if .BotName}}
+<form method="post" action="{{.WS.Path}}/settings/discord" class="row spaced">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <select name="forum" aria-label="Forum">
     <option value="">Not posted to Discord</option>
     {{range .Forums}}<option value="{{.ID}}"{{if eq .ID $.ForumID}} selected{{end}}>#{{.Name}} · {{.Server}}</option>{{end}}
   </select>
-  <button>Save</button>
+  <button>Save the forum</button>
 </form>
-{{else}}<p class="muted">{{with .ForumName}}#{{.}}: {{end}}No Discord bot is set up{{if .Me.IsAdmin}}: <a href="/admin/discord">set one up</a>{{end}}.</p>{{end}}
+{{end}}
+{{if .Bot}}
+<form method="post" action="{{.WS.Path}}/settings/discord/bot" class="row spaced">
+  <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="remove" value="on">
+  <button class="secondary">Remove the bot</button>
+</form>
+{{end}}
 </section>
+
+{{if .Me.IsAdmin}}
 
 <section class="panel">
 <h2>Members</h2>

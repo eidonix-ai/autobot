@@ -56,48 +56,54 @@ func fakeDiscord(t *testing.T) {
 	t.Cleanup(func() { discord.API = old; srv.Close() })
 }
 
+// Any member sets up the workspace's bot (no one else); its token is sealed and never shown; the
+// forum must be one the bot sees; and Discord's clicks are taken only when signed with this
+// workspace's key, at this workspace's address.
 func TestDiscordBotSetup(t *testing.T) {
 	fakeDiscord(t)
 	e := newEnv(t)
-	e.user("derek", true)
-	e.user("alice", false)
-	ws, _ := e.st.CreateWorkspace("o/r", mustUserByName(t, e, "derek"), "", "")
-	e.st.SetMembers(ws.ID, []int64{mustUserByName(t, e, "alice").ID}, mustUserByName(t, e, "derek"))
+	derek := e.user("derek", true)
+	alice := e.user("alice", false)
+	e.user("mallory", false)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	other, _ := e.st.CreateWorkspace("o/r2", derek, "", "")
+	e.st.SetMembers(ws.ID, []int64{alice.ID}, derek)
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	key := hex.EncodeToString(pub)
 
-	alice := e.signIn("alice")
-	if code, _ := alice.get("/admin/discord"); code != http.StatusNotFound {
-		t.Fatalf("a user opened the bot's page: %d", code)
+	m := e.signIn("mallory")
+	if code, _, _ := m.post("/w/o/r/settings/discord/bot", url.Values{"csrf": {m.csrf()}, "token": {"good-token"}, "public_key": {key}}); code != http.StatusNotFound {
+		t.Fatalf("a non-member set up the bot: %d", code)
 	}
-	admin := e.signIn("derek")
-	if code, _, _ := admin.post("/admin/discord", url.Values{"csrf": {admin.csrf()}, "token": {"bad-token"}, "public_key": {key}}); code != http.StatusBadRequest {
+	a := e.signIn("alice")
+	if code, _, _ := a.post("/w/o/r/settings/discord/bot", url.Values{"csrf": {a.csrf()}, "token": {"bad-token"}, "public_key": {key}}); code != http.StatusBadRequest {
 		t.Fatalf("a token Discord refuses was saved: %d", code)
 	}
-	if code, _, _ := admin.post("/admin/discord", url.Values{"csrf": {admin.csrf()}, "token": {"good-token"}, "public_key": {key}}); code != http.StatusSeeOther {
-		t.Fatalf("saving: %d", code)
+	if code, _, _ := a.post("/w/o/r/settings/discord/bot", url.Values{"csrf": {a.csrf()}, "token": {"good-token"}, "public_key": {key}}); code != http.StatusSeeOther {
+		t.Fatalf("a member setting up the bot: %d", code)
 	}
-	if _, body := admin.get("/admin/discord"); !strings.Contains(body, "flare-autobot") || strings.Contains(body, "good-token") {
-		t.Fatal("the page does not show the bot, or shows its token")
+	if _, body := a.get("/w/o/r/settings"); !strings.Contains(body, "flare-autobot") || strings.Contains(body, "good-token") || !strings.Contains(body, "/discord/interactions/o/r") {
+		i := strings.Index(body, `id="discord"`)
+		t.Fatalf("the settings page does not show the bot and its address, or shows its token:\n%s", body[i:min(len(body), i+1500)])
 	}
-	if v, _ := e.st.Setting("discord_bot_token"); strings.Contains(v, "good-token") {
-		t.Fatal("the token is stored in the clear")
+	if v, _ := e.st.Setting("discord/" + itoa(ws.ID) + "/token"); v == "" || strings.Contains(v, "good-token") {
+		t.Fatalf("the token is missing or stored in the clear: %q", v)
 	}
-
-	// A workspace picks only a forum the bot can see.
-	if code, _, _ := alice.post("/w/o/r/settings/discord", url.Values{"csrf": {alice.csrf()}, "forum": {"t1"}}); code != http.StatusBadRequest {
+	if code, _, _ := a.post("/w/o/r/settings/discord", url.Values{"csrf": {a.csrf()}, "forum": {"t1"}}); code != http.StatusBadRequest {
 		t.Fatalf("a text channel was taken as the forum: %d", code)
 	}
-	if code, _, _ := alice.post("/w/o/r/settings/discord", url.Values{"csrf": {alice.csrf()}, "forum": {"f1"}}); code != http.StatusSeeOther {
+	if code, _, _ := a.post("/w/o/r/settings/discord", url.Values{"csrf": {a.csrf()}, "forum": {"f1"}}); code != http.StatusSeeOther {
 		t.Fatalf("choosing the forum: %d", code)
 	}
 	if id, name := e.st.DiscordForum(ws.ID); id != "f1" || name != "flare-autobot" {
 		t.Fatalf("forum %q %q", id, name)
 	}
+	if id, _ := e.st.DiscordForum(other.ID); id != "" {
+		t.Fatal("another workspace got the forum")
+	}
 
-	// Discord's clicks are taken only when Discord signed them.
-	post := func(body, ts, sig string) int {
-		req, _ := http.NewRequest("POST", e.srv.URL+"/discord/interactions", bytes.NewReader([]byte(body)))
+	post := func(path, body, ts, sig string) int {
+		req, _ := http.NewRequest("POST", e.srv.URL+path, bytes.NewReader([]byte(body)))
 		req.Header.Set("X-Signature-Ed25519", sig)
 		req.Header.Set("X-Signature-Timestamp", ts)
 		resp, err := http.DefaultClient.Do(req)
@@ -109,11 +115,14 @@ func TestDiscordBotSetup(t *testing.T) {
 	}
 	ping := `{"type":1}`
 	good := hex.EncodeToString(ed25519.Sign(priv, []byte("100"+ping)))
-	if code := post(ping, "100", good); code != http.StatusOK {
+	if code := post("/discord/interactions/o/r", ping, "100", good); code != http.StatusOK {
 		t.Fatalf("Discord's signed check was refused: %d", code)
 	}
-	if code := post(ping, "101", good); code != http.StatusUnauthorized {
+	if code := post("/discord/interactions/o/r", ping, "101", good); code != http.StatusUnauthorized {
 		t.Fatalf("a forged interaction was taken: %d", code)
+	}
+	if code := post("/discord/interactions/o/r2", ping, "100", good); code != http.StatusNotFound {
+		t.Fatalf("a workspace without a bot took a click: %d", code)
 	}
 }
 

@@ -21,7 +21,7 @@ import (
 // Discord), and the run is not dry. The case's post is opened, titled after the item, if it has none.
 func (s *Server) toDiscord(ctx context.Context, rs *runState) (*discord.Bot, string, string, error) {
 	forum, _ := s.st.DiscordForum(rs.ws.ID)
-	b, _ := s.bot()
+	b, _ := s.bot(rs.ws)
 	switch {
 	case rs.run.DryRun:
 		return nil, "", "", errors.New("dry run: nothing posted")
@@ -163,7 +163,7 @@ func (s *Server) awaitApproval(ctx context.Context, rs *runState, n workflow.Nod
 				}
 			}
 			if ap.Message != "" && ap.DecidedOn != "Discord" { // a click on Discord updates its own message
-				if b, _ := s.bot(); b != nil {
+				if b, _ := s.bot(rs.ws); b != nil {
 					b.Edit(ctx, ap.Channel, ap.Message, approvalMessage(n, ap))
 				}
 			}
@@ -229,7 +229,7 @@ func (s *Server) resume(ctx context.Context, id int64) error {
 
 // approvalClick takes a click on an approval's button. Anyone who can see the forum may answer
 // (Derek, 2026-11-23: its members are the people trusted to make these calls); a bot may not.
-func (s *Server) approvalClick(w http.ResponseWriter, body []byte) {
+func (s *Server) approvalClick(w http.ResponseWriter, ws *store.Workspace, body []byte) {
 	var in struct {
 		Data struct {
 			CustomID string `json:"custom_id"`
@@ -259,6 +259,11 @@ func (s *Server) approvalClick(w http.ResponseWriter, body []byte) {
 	id, _ := strconv.ParseInt(parts[1], 10, 64)
 	ap, err := s.st.Approval(id)
 	if err != nil {
+		w.Write(discord.Private("This request is not Autobot's any more."))
+		return
+	}
+	// A workspace's bot answers only that workspace's requests.
+	if run, err := s.st.WorkflowRun(ap.RunID); err != nil || run.WorkspaceID != ws.ID {
 		w.Write(discord.Private("This request is not Autobot's any more."))
 		return
 	}

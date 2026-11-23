@@ -39,7 +39,7 @@ func TestItemToolsAndSettingsLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	br := e.signIn("derek")
-	if code, body := br.get("/w/o/r/settings"); code != 200 || !strings.Contains(body, "Copying from GitHub: starting") {
+	if code, body := br.get("/w/o/r/settings"); code != 200 || !strings.Contains(body, "Pull requests and issues: copying, starting") {
 		t.Fatalf("settings before the copy: %d %s", code, body)
 	}
 	if got := e.ui.itemTools(a); len(got) != 0 {
@@ -68,8 +68,8 @@ func TestItemToolsAndSettingsLine(t *testing.T) {
 	if got := e.ui.itemTools(b); len(got) != 0 {
 		t.Fatal("another workspace's agent got tools for a copy it does not have")
 	}
-	if code, body := br.get("/w/o/r/settings"); code != 200 || !strings.Contains(body, "2 items (0 pull requests, 2 issues, 1 open; 0 older ones kept as short records) and 0 comments") ||
-		!strings.Contains(body, "Last synced") {
+	if code, body := br.get("/w/o/r/settings"); code != 200 || !strings.Contains(body, "Pull requests and issues: 2 (1 open, 0 short records), 0 comments") ||
+		!strings.Contains(body, "synced") {
 		t.Fatalf("settings after the copy: %d %s", code, body)
 	}
 }

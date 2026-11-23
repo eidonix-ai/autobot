@@ -138,6 +138,8 @@ func serve(args []string) error {
 	go ui.ResumeWorkflows(ctx) // runs that were waiting for a person when Autobot stopped
 	go ui.Poll(ctx)
 	go ui.Index(ctx) // the local copy of each workspace's pull requests and issues
+	ui.UseRepos(*db) // a local copy of each workspace's repository, for the agents' code tools
+	go ui.SyncRepos(ctx)
 	done := make(chan error, 1)
 	go func() {
 		<-ctx.Done()

@@ -148,6 +148,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	if st, err := index.StatusOf(s.st, ws.ID); err == nil {
 		data["Index"] = st
 	}
+	s.repoSettings(ws, data)
 
 	s.render(w, r, status, "settings.html", data)
 }

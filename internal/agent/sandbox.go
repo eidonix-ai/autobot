@@ -374,11 +374,12 @@ func SandboxTools(s Session) []Tool {
 var cutRE = regexp.MustCompile(`\[… \d+ bytes of output left out …\]`)
 
 // startBackground starts the job whose command is in bgDir/id.sh, in its own session so that it
-// outlives the command that starts it, with its output in id.log, its process in id.pid and its
-// exit code, when it ends by itself, in id.exit.
+// outlives the command that starts it, with its output in id.log, its process group's leader in
+// id.pid (written by the job's own shell, since setsid may or may not fork) and its exit code, when
+// it ends by itself, in id.exit. It returns once the pid is written.
 func startBackground(id string) string {
-	return fmt.Sprintf(`cd %[1]s && nohup setsid bash -c '. /work/.autobot/env; cd /work/source 2>/dev/null || cd /work; bash %[1]s/%[2]s.sh; echo $? > %[1]s/%[2]s.exit' > %[2]s.log 2>&1 < /dev/null &
-echo $! > %[1]s/%[2]s.pid`, bgDir, id)
+	return fmt.Sprintf(`cd %[1]s && nohup setsid bash -c 'echo $$ > %[1]s/%[2]s.pid; . /work/.autobot/env; cd /work/source 2>/dev/null || cd /work; bash %[1]s/%[2]s.sh; echo $? > %[1]s/%[2]s.exit' > %[2]s.log 2>&1 < /dev/null &
+for i in $(seq 100); do [ -s %[1]s/%[2]s.pid ] && break; sleep 0.05; done; [ -s %[1]s/%[2]s.pid ]`, bgDir, id)
 }
 
 // readBackground prints a job's state on one line, then the end of its log.

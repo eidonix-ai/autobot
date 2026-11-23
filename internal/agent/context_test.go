@@ -431,7 +431,11 @@ func closing(t *testing.T, replies []Message, writerTurns int, readFile string) 
 	m := &script{replies: replies}
 	pad := &memPad{}
 	read := Tool{Spec: ToolSpec{Name: "read_file"}, Run: func(context.Context, json.RawMessage) (string, error) { return "package a", nil },
-		Reads: func(raw json.RawMessage) []string { return []string{readFile} }}
+		Reads: func(raw json.RawMessage) []string {
+			var a struct{ Path string }
+			json.Unmarshal(raw, &a)
+			return []string{a.Path}
+		}}
 	conv := NewConversation("m", 1, "preamble", []Tool{read, bigTool("bash", 5)})
 	wconv := NewWriterConversation("m", 1, "preamble", []Tool{read})
 	cr := &closingRun{m: m, pad: pad, wconv: wconv}
@@ -458,7 +462,7 @@ func TestClosingReport(t *testing.T) {
 		call("fin2", "finish", `{"status":"met","report":"Final: a.go:1 and b.go:2 and c.go:3."}`))
 	cr := closing(t, replies, 15, "a.go")
 	m, tr := cr.m, cr.tr
-	if tr.Outcome != Met || tr.Report != "Final: a.go:1 and b.go:2 (not opened) and c.go:3 (not opened)." {
+	if tr.Outcome != Met || tr.Report != "Final: a.go:1 and b.go:2 and c.go:3 (not opened)." {
 		t.Fatalf("%s: %q", tr.Outcome, tr.Report)
 	}
 	// The research's report was saved as a high-importance note, then the late note was written.

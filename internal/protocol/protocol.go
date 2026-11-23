@@ -6,6 +6,14 @@
 //	POST /connector/v1/runs/{id}/output  raw text -> Reply   while a run goes, at most OutputChunk bytes
 //	POST /connector/v1/runs/{id}/result  Result   -> Reply   once, when the run ends
 //
+// A session is a run that has no script: its container stays open for an agent, and the connector
+// asks Autobot for the agent's commands while it lasts:
+//
+//	GET  /connector/v1/runs/{id}/commands                 -> Commands  held up to PollWait until some are queued
+//	POST /connector/v1/runs/{id}/commands/{cid}/result  CommandResult -> Reply
+//
+// Both answer 404 unless the run is this machine's active session.
+//
 // The connector downloads a public repository straight from GitHub, over the donor's own
 // connection. Only a private repository's code comes through Autobot, which fetches it with the
 // workspace's GitHub identity, so no GitHub token ever reaches a donated machine.
@@ -16,6 +24,7 @@ package protocol
 
 import (
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -28,6 +37,12 @@ const (
 	MaxOutput = 8 << 20
 	// MaxRun is the longest a run may last.
 	MaxRun = 2 * time.Hour
+	// PollWait is how long Autobot holds a request for commands when it has none.
+	PollWait = 25 * time.Second
+	// MaxFile is the largest file a command may put into a session.
+	MaxFile = 8 << 20
+	// MaxCommandOutput is the most output one command returns: its beginning and its end.
+	MaxCommandOutput = 1 << 20
 )
 
 // Status is the connector's report on its machine.
@@ -72,7 +87,8 @@ type Job struct {
 	Repo       string `json:"repo"`    // GitHub owner/repo, when Commit is set
 	Commit     string `json:"commit"`  // copied to /work/source before the script; "" for none
 	Private    bool   `json:"private"` // fetch the code from Autobot, not from GitHub
-	Script     string `json:"script"`  // bash, run with -e and -x
+	Script     string `json:"script"`  // bash, run with -e and -x; empty for a session
+	Session    bool   `json:"session"` // keep the container open and take commands, instead of running a script
 	GPUs       int    `json:"gpus"`
 	TimeoutSec int    `json:"timeout_sec"`
 }
@@ -99,7 +115,7 @@ var (
 
 // Valid checks a job before the connector acts on it.
 func (j Job) Valid() bool {
-	if j.Run <= 0 || j.Script == "" || len(j.Script) > 64<<10 || j.GPUs < 0 || j.GPUs > 8 ||
+	if j.Run <= 0 || (j.Script == "") != j.Session || len(j.Script) > 64<<10 || j.GPUs < 0 || j.GPUs > 8 ||
 		j.TimeoutSec <= 0 || j.TimeoutSec > int(MaxRun/time.Second) {
 		return false
 	}
@@ -107,4 +123,40 @@ func (j Job) Valid() bool {
 		return j.Repo == ""
 	}
 	return commitRE.MatchString(j.Commit) && repoRE.MatchString(j.Repo)
+}
+
+// Command is one thing an agent asks its session for: a bash script to run, or a file to write.
+type Command struct {
+	ID         string `json:"id"`
+	Script     string `json:"script,omitempty"`      // bash to run; empty when writing a file
+	TimeoutSec int    `json:"timeout_sec,omitempty"` // for a script
+	Path       string `json:"path,omitempty"`        // a file to write, absolute or relative to the code's folder
+	Data       []byte `json:"data,omitempty"`        // its contents
+}
+
+// Commands is the reply to a request for commands: none when the wait ran out.
+type Commands struct {
+	Commands []Command `json:"commands"`
+}
+
+// CommandResult is how a command ended.
+type CommandResult struct {
+	ExitCode int    `json:"exit_code"`
+	Output   string `json:"output"`
+	TimedOut bool   `json:"timed_out"`
+	Error    string `json:"error"` // what went wrong outside the command, or ""
+}
+
+var commandIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+
+// Valid checks a command before the connector acts on it. Its id names a folder on the donor's
+// disk, so it must be plain.
+func (c Command) Valid() bool {
+	if !commandIDRE.MatchString(c.ID) {
+		return false
+	}
+	if c.Path != "" {
+		return c.Script == "" && len(c.Path) <= 4096 && !strings.ContainsRune(c.Path, 0) && len(c.Data) <= MaxFile
+	}
+	return c.Script != "" && len(c.Script) <= 256<<10 && len(c.Data) == 0 && c.TimeoutSec > 0 && c.TimeoutSec <= int(MaxRun/time.Second)
 }

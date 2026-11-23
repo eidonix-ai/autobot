@@ -119,8 +119,14 @@ func (s *Store) AgentRun(id int64) (*AgentRun, error) {
 }
 
 // StopOrphanRuns marks runs left running by an earlier Autobot process as failed: whatever ran
-// them is gone. Call it once at start, before any run begins.
+// them is gone. A session's commands are queued in memory, so a session left over from the last
+// process is ended too (its connector is told to stop at its next check-in). Call it once at
+// start, before any run begins.
 func (s *Store) StopOrphanRuns() error {
-	_, err := s.db.Exec(`UPDATE agent_runs SET status = 'failed', finished_at = ? WHERE status = 'running'`, now())
+	if _, err := s.db.Exec(`UPDATE agent_runs SET status = 'failed', finished_at = ? WHERE status = 'running'`, now()); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE test_runs SET state = 'error', summary = 'Autobot restarted: the session ended.', ended_at = ?
+		WHERE session = 1 AND state IN ('queued', 'running')`, now())
 	return err
 }

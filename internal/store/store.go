@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -359,3 +359,9 @@ CREATE TABLE discord_channels (
 // The Discord webhook channels of schemaV12 are gone: Discord is reached through a bot instead
 // (Derek, 2026-11-23), which can post into a case's forum post, show buttons and read mentions.
 const schemaV13 = `DROP TABLE discord_channels;`
+
+// A session is a test run that holds its machine open for an agent: the connector starts the
+// container with the code and keeps it, and Autobot sends it commands until the run is closed.
+const schemaV14 = `
+ALTER TABLE test_runs ADD COLUMN session INTEGER NOT NULL DEFAULT 0;
+`

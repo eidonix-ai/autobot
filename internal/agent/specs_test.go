@@ -30,7 +30,12 @@ func TestEveryToolDefinitionIsValid(t *testing.T) {
 			specs = append(specs, tool.Spec)
 		}
 	}
-	specs = append(specs, finishSpec, planSpec)
+	specs = append(specs, researchSpecs...)
+	for _, s := range researchSpecs {
+		if !json.Valid(s.Parameters) {
+			t.Errorf("%s has invalid parameters", s.Name)
+		}
+	}
 	// What the chat client sends, built the same way.
 	type fn struct {
 		Name        string          `json:"name"`

@@ -338,11 +338,72 @@ func (s *Store) SetProviderModels(id int64, models []string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	windows := map[string]int{} // a model that stays permitted keeps its context window
+	rows, err := tx.Query(`SELECT model_id, context_window FROM provider_models WHERE provider_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var m string
+		var w int
+		if err := rows.Scan(&m, &w); err != nil {
+			rows.Close()
+			return err
+		}
+		windows[m] = w
+	}
+	rows.Close()
 	if _, err := tx.Exec(`DELETE FROM provider_models WHERE provider_id = ?`, id); err != nil {
 		return err
 	}
 	for _, m := range clean {
-		if _, err := tx.Exec(`INSERT INTO provider_models (provider_id, model_id) VALUES (?, ?)`, id, m); err != nil {
+		if _, err := tx.Exec(`INSERT INTO provider_models (provider_id, model_id, context_window) VALUES (?, ?, ?)`, id, m, windows[m]); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ModelWindows are the context windows, in tokens, set for a provider's permitted models; a model
+// with none is not in the map.
+func (s *Store) ModelWindows(provider int64) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT model_id, context_window FROM provider_models WHERE provider_id = ? AND context_window > 0`, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var m string
+		var w int
+		if err := rows.Scan(&m, &w); err != nil {
+			return nil, err
+		}
+		out[m] = w
+	}
+	return out, rows.Err()
+}
+
+// ModelWindow is a permitted model's context window in tokens, or 0 when none is set.
+func (s *Store) ModelWindow(provider int64, model string) int {
+	var w int
+	s.db.QueryRow(`SELECT context_window FROM provider_models WHERE provider_id = ? AND model_id = ?`, provider, model).Scan(&w)
+	return w
+}
+
+// SetModelWindows sets the context window of each permitted model named in windows (0 clears it);
+// a model that is not permitted is ignored.
+func (s *Store) SetModelWindows(provider int64, windows map[string]int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for m, w := range windows {
+		if w < 0 {
+			return invalid("%s: a context window is a number of tokens.", m)
+		}
+		if _, err := tx.Exec(`UPDATE provider_models SET context_window = ? WHERE provider_id = ? AND model_id = ?`, w, provider, m); err != nil {
 			return err
 		}
 	}

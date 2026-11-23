@@ -63,74 +63,53 @@ func bigTool(name string, size int) Tool {
 		}}
 }
 
-// Over ten turns a request is always the previous request with messages added, except at a batch,
-// where the old tool results are shortened for good: the two together cost one cache miss, not one a
-// turn.
+// Nothing is trimmed automatically: over a long run, with results far larger than any batch used to
+// allow, every request is the previous request with messages added at its end, so the provider's cache
+// is never lost; and what a conversation's file replays to is the conversation that was sent.
 func TestRequestsOnlyGrow(t *testing.T) {
 	var replies []Message
-	for i := 0; i < 9; i++ {
+	for i := 0; i < 29; i++ {
 		replies = append(replies, call(fmt.Sprint("c", i), "long", `{}`))
 	}
 	replies = append(replies, call("f", "finish", `{"status":"met","report":"done"}`))
 	cs := newChatServer(t, replies...)
 	conv := NewConversation("m", 1, "system prompt", []Tool{bigTool("long", 10_000)})
 	var events []store.ConvEvent
-	var batchAt []int // the request each batch came before
-	cfg := Config{Model: cs.model(conv.Session), Tools: []Tool{bigTool("long", 10_000)}, MaxTurns: 20, BatchTokens: 16_000, Task: "go",
-		Save: func(*Transcript) {
-			for _, e := range conv.Take() {
-				events = append(events, e)
-				if e.T == "trim" {
-					batchAt = append(batchAt, len(cs.bodies)-1) // saved after the turn whose request it changed
-				}
-			}
-		}}
+	cfg := Config{Model: cs.model(conv.Session), Tools: []Tool{bigTool("long", 10_000)}, MaxTurns: 40, Window: 10_000_000, Task: "go",
+		Save: func(*Transcript) { events = append(events, conv.Take()...) }}
 	tr := Run(context.Background(), cfg, conv)
-	if tr.Outcome != Met || len(cs.bodies) != 10 {
+	if tr.Outcome != Met || len(cs.bodies) != 30 {
 		t.Fatalf("%s after %d requests: %s", tr.Outcome, len(cs.bodies), tr.Error)
-	}
-	var broke []int
-	for i := 1; i < len(cs.bodies); i++ {
-		if !continues(cs.bodies[i-1], cs.bodies[i]) {
-			broke = append(broke, i)
-		}
-	}
-	if len(broke) == 0 || len(broke) > 2 {
-		t.Fatalf("%d batches in 10 turns, want one or two: %v", len(broke), broke)
-	}
-	if !reflect.DeepEqual(broke, batchAt) {
-		t.Fatalf("requests changed their start at %v, batches were recorded at %v", broke, batchAt)
-	}
-	// Shortened for good: the last request has the first tool result as a stub, and every request
-	// after a batch keeps what the batch cut.
-	last := cs.bodies[len(cs.bodies)-1]
-	if !strings.Contains(last, "left out to save room") || strings.Count(last, strings.Repeat("y", 10_000)) != keepTurns {
-		t.Fatalf("the last request has %d full results", strings.Count(last, strings.Repeat("y", 10_000)))
-	}
-	// A conversation read back from its events is the one that was sent.
-	events = append([]store.ConvEvent{events[0]}, events[1:]...)
-	back, err := LoadConversation(events)
-	if err != nil || !reflect.DeepEqual(back.Messages, conv.Messages) || back.Turns != 10 || back.Session != conv.Session {
-		t.Fatalf("replay: %v, %d turns", err, back.Turns)
-	}
-}
-
-// With no way to cut anything (every result is in the last six turns) nothing is rewritten and no
-// batch is recorded.
-func TestNothingToShortenNothingChanges(t *testing.T) {
-	replies := []Message{call("1", "long", `{}`), call("2", "long", `{}`), call("f", "finish", `{"status":"met","report":"done"}`)}
-	cs := newChatServer(t, replies...)
-	conv := NewConversation("m", 1, "s", []Tool{bigTool("long", 10_000)})
-	Run(context.Background(), Config{Model: cs.model(""), Tools: []Tool{bigTool("long", 10_000)}, MaxTurns: 5, BatchTokens: 100, Task: "go"}, conv)
-	for _, e := range conv.Take() {
-		if e.T == "trim" {
-			t.Fatal("a batch was recorded with nothing to cut")
-		}
 	}
 	for i := 1; i < len(cs.bodies); i++ {
 		if !continues(cs.bodies[i-1], cs.bodies[i]) {
 			t.Fatalf("request %d does not start with the one before", i)
 		}
+	}
+	// Every one of the 29 results is still there, in full, in the last request.
+	if n := strings.Count(cs.bodies[len(cs.bodies)-1], strings.Repeat("y", 10_000)); n != 29 {
+		t.Fatalf("the last request has %d full results", n)
+	}
+	for _, e := range events {
+		if e.T == "trim" {
+			t.Fatal("a trim was recorded")
+		}
+	}
+	back, err := LoadConversation(events)
+	if err != nil || !reflect.DeepEqual(back.Messages, conv.Messages) || back.Turns != 30 || back.Session != conv.Session {
+		t.Fatalf("replay: %v, %d turns", err, back.Turns)
+	}
+}
+
+// Files written before: a "trim" event still replays to what it did.
+func TestOldTrimEventsStillReplay(t *testing.T) {
+	long := "first line\n" + strings.Repeat("z", 2000)
+	mk := func(m Message) store.ConvEvent { b, _ := json.Marshal(m); return store.ConvEvent{T: "msg", M: b} }
+	events := []store.ConvEvent{{T: "header", System: "s"}, mk(Message{Role: "user", Content: "go"}), mk(call("a", "long", `{}`)),
+		mk(Message{Role: "tool", ToolCallID: "a", Content: long}), mk(Message{Role: "user", Content: "more"}), {T: "trim", Upto: 3}}
+	c, err := LoadConversation(events)
+	if err != nil || c.Messages[2].Content != stub(long) || !strings.Contains(c.Messages[2].Content, "characters left out") {
+		t.Fatalf("%v %q", err, c.Messages[2].Content)
 	}
 }
 

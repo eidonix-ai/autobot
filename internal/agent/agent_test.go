@@ -16,15 +16,27 @@ type script struct {
 	replies []Message
 	seen    [][]Message
 	tools   [][]ToolSpec
+	ins     []int         // the input tokens each answer reports (10 when not given)
+	fail    map[int]error // requests, counted from 0, that are refused with this error and use up no reply
+	given   int
 }
 
 func (s *script) Complete(ctx context.Context, msgs []Message, tools []ToolSpec) (Message, Usage, error) {
+	idx := len(s.seen)
 	s.seen = append(s.seen, append([]Message{}, msgs...))
 	s.tools = append(s.tools, tools)
-	if len(s.seen) > len(s.replies) {
+	if err, ok := s.fail[idx]; ok {
+		return Message{}, Usage{}, err
+	}
+	if s.given >= len(s.replies) {
 		return Message{}, Usage{}, errors.New("the script ran out")
 	}
-	return s.replies[len(s.seen)-1], Usage{In: 10, Out: 2}, nil
+	in := 10
+	if s.given < len(s.ins) {
+		in = s.ins[s.given]
+	}
+	s.given++
+	return s.replies[s.given-1], Usage{In: in, Out: 2}, nil
 }
 
 func call(id, name, args string) Message {
@@ -114,7 +126,7 @@ func TestParallelTools(t *testing.T) {
 	}}
 	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{ta, tb}, MaxTurns: 5}, nil)
 	got := m.seen[1]
-	if tr.Outcome != Met || got[len(got)-2].Content != "met" || got[len(got)-1].Content != "met" {
+	if tr.Outcome != Met || got[len(got)-2].Content != "[result 1] met" || got[len(got)-1].Content != "[result 2] met" {
 		t.Fatalf("results %q %q", got[len(got)-2].Content, got[len(got)-1].Content)
 	}
 }
@@ -127,7 +139,7 @@ func TestBudgetAndClip(t *testing.T) {
 	m := &script{replies: []Message{call("1", "long", `{}`), call("2", "long", `{}`), call("3", "long", `{}`)}}
 	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 2}, nil)
 	res := m.seen[1][len(m.seen[1])-2].Content // the tool's result, before the last-turn message
-	if tr.Outcome != Budget || len(res) > maxResult+100 || !strings.HasPrefix(res, "START") || !strings.HasSuffix(res, "END") {
+	if tr.Outcome != Budget || len(res) > maxResult+100 || !strings.HasPrefix(res, "[result 1] START") || !strings.HasSuffix(res, "END") {
 		t.Fatalf("%s, result of %d characters", tr.Outcome, len(res))
 	}
 }

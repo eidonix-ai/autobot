@@ -13,20 +13,23 @@ import (
 	"time"
 )
 
-// An agent conversation belongs to (workspace, workflow kind, the Agent block that started it,
-// item) and may span several runs: the same block again on the item, or another block that
-// continues it. The row here says whose it is and when it last moved; the conversation itself is one
-// compressed file, runs/conv-<id>.jsonl.gz, of JSON lines (ConvEvent):
+// An agent conversation is one session of a run: its research, or the writing of its report. Each
+// starts fresh (a continuation or re-run opens with the thread's last report and scratchpad: see
+// threads.go), so a conversation is never continued; the ones from before threads are only shown.
+// The row here says whose it is and when it last moved; the conversation itself is one compressed
+// file, runs/conv-<id>.jsonl.gz, of JSON lines (ConvEvent):
 //
 //	header    the model, provider, session key, system prompt and tool definitions: sent unchanged
-//	          on every turn of every run
+//	          on every turn
 //	msg       one message of the conversation (never rewritten once sent)
-//	trim      the tool results of the messages before upto were shortened, for good
+//	trim      the tool results of the messages before upto were shortened, for good (old files only:
+//	          nothing is trimmed automatically any more)
+//	prune     the agent pruned the tool results with these numbers
+//	compact   the conversation was compacted: from then on its messages are exactly these
 //	turn      what one model call cost (input, output and cached input tokens), after its reply
-//	run_end   a run ended: the item's head commit it saw and when, and the files it read
+//	run_end   a run ended (old files; the thread keeps what the run saw of the item now)
 //
-// A run is a row in agent_runs that records its conversation and which messages and turns it
-// added; its own summary stays small.
+// A run is a row in agent_runs that records its conversations; its own summary stays small.
 const schemaRunFiles = `
 ALTER TABLE test_runs ADD COLUMN output_size INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE conversations (
@@ -50,9 +53,6 @@ ALTER TABLE agent_runs ADD COLUMN turns_from   INTEGER NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX agent_runs_one_running ON agent_runs (conversation) WHERE status = 'running' AND conversation != 0;
 `
 
-// ErrConversationBusy means the conversation already has a run in progress.
-var ErrConversationBusy = errors.New("the conversation has a run in progress")
-
 // ConvEvent is one line of a conversation's file. T says which kind it is.
 type ConvEvent struct {
 	T string `json:"t"`
@@ -67,6 +67,9 @@ type ConvEvent struct {
 	M json.RawMessage `json:"m,omitempty"` // msg: the message
 
 	Upto int `json:"upto,omitempty"` // trim: messages before this one
+
+	Nums []int             `json:"nums,omitempty"` // prune: the result numbers pruned
+	Msgs []json.RawMessage `json:"msgs,omitempty"` // compact: the messages the conversation now has
 
 	// turn, and run_end
 	Run    int64 `json:"run,omitempty"`
@@ -93,38 +96,6 @@ type Conversation struct {
 	Deleted     bool // its file was removed by retention
 	CreatedAt   time.Time
 	LastTurnAt  time.Time
-}
-
-// LatestConversation is the newest conversation the block started on the item that can still be
-// continued, or ErrNotFound.
-func (s *Store) LatestConversation(ws int64, kind, node string, item int) (*Conversation, error) {
-	var c Conversation
-	var created, last int64
-	err := s.db.QueryRow(`SELECT id, workspace_id, kind, node_id, item, model, standalone, deleted, created_at, last_turn_at FROM conversations
-		WHERE workspace_id = ? AND kind = ? AND node_id = ? AND item = ? AND standalone = 0 AND deleted = 0 ORDER BY id DESC LIMIT 1`, ws, kind, node, item).
-		Scan(&c.ID, &c.WorkspaceID, &c.Kind, &c.NodeID, &c.Item, &c.Model, &c.Standalone, &c.Deleted, &created, &last)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	c.CreatedAt, c.LastTurnAt = time.Unix(created, 0), time.Unix(last, 0)
-	return &c, nil
-}
-
-// ForgetConversation sets a conversation aside so that it is never continued: its file is missing or
-// cannot be read.
-func (s *Store) ForgetConversation(id int64) error {
-	_, err := s.db.Exec(`UPDATE conversations SET deleted = 1 WHERE id = ?`, id)
-	return err
-}
-
-// ConversationRunning reports whether a run of the conversation is in progress.
-func (s *Store) ConversationRunning(id int64) (bool, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM agent_runs WHERE conversation = ? AND status = 'running'`, id).Scan(&n)
-	return n > 0, err
 }
 
 // AppendConv adds events to a conversation's file, in one write, and notes that it moved.
@@ -410,40 +381,24 @@ func (s *Store) PruneRuns(at time.Time, complete func(ws int64) bool) (RunsPrune
 		}
 	}
 
-	// A conversation's end is when its item closed, if the local copy of items knows it; else its last turn.
-	rows, err = s.db.Query(`SELECT c.id, c.workspace_id, c.item, c.last_turn_at, COALESCE(i.state, ''), COALESCE(MAX(i.closed_at, i.merged_at), 0)
-		FROM conversations c LEFT JOIN items i ON i.workspace_id = c.workspace_id AND i.number = c.item AND c.item != 0
-		WHERE c.deleted = 0`)
-	if err != nil {
-		return p, err
-	}
-	var gone []int64
-	for rows.Next() {
-		var id, ws, item, last, closed int64
-		var state string
-		if err := rows.Scan(&id, &ws, &item, &last, &state, &closed); err != nil {
-			rows.Close()
+	// A conversation's end is when its item closed, if the local copy of items knows it; else its last
+	// turn. A thread, and so its scratchpad, goes with it.
+	for _, table := range []string{"conversations", "threads"} {
+		gone, err := s.expired(table, cutoff, complete)
+		if err != nil {
 			return p, err
 		}
-		end := last // a conversation continued after its item closed is kept from its last turn
-		switch {
-		case state == "open":
-			continue
-		case state == "" && item != 0 && !complete(ws):
-			continue
-		case state != "":
-			end = max(last, closed)
+		for _, id := range gone {
+			if table == "threads" {
+				err = s.dropThread(id)
+			} else {
+				err = s.dropConversation(id)
+				p.Conversations++
+			}
+			if err != nil {
+				return p, err
+			}
 		}
-		if end < cutoff {
-			gone = append(gone, id)
-		}
-	}
-	rows.Close()
-	for _, id := range gone {
-		if err := s.dropConversation(id); err != nil {
-			return p, err
-		}
-		p.Conversations++
 	}
 	n, err := s.removeOrphans()
 	p.Orphans = n
@@ -497,7 +452,7 @@ func (s *Store) dropConversation(id int64) error {
 	if err := removeFile(s.convFile(id)); err != nil {
 		return err
 	}
-	rows, err := s.db.Query(`SELECT id, summary FROM agent_runs WHERE conversation = ?`, id)
+	rows, err := s.db.Query(`SELECT id, summary FROM agent_runs WHERE conversation = ? OR writer_conversation = ?`, id, id)
 	if err != nil {
 		return err
 	}
@@ -522,4 +477,41 @@ func (s *Store) dropConversation(id int64) error {
 	}
 	_, err = s.db.Exec(`UPDATE conversations SET deleted = 1 WHERE id = ?`, id)
 	return err
+}
+
+// expired lists the conversations (or threads) whose keeping has run out: their item closed, or
+// they last moved, before cutoff.
+func (s *Store) expired(table string, cutoff int64, complete func(ws int64) bool) ([]int64, error) {
+	last := "c.last_turn_at"
+	if table == "threads" {
+		last = "c.last_at"
+	}
+	rows, err := s.db.Query(`SELECT c.id, c.workspace_id, c.item, ` + last + `, COALESCE(i.state, ''), COALESCE(MAX(i.closed_at, i.merged_at), 0)
+		FROM ` + table + ` c LEFT JOIN items i ON i.workspace_id = c.workspace_id AND i.number = c.item AND c.item != 0
+		WHERE c.deleted = 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var gone []int64
+	for rows.Next() {
+		var id, ws, item, last, closed int64
+		var state string
+		if err := rows.Scan(&id, &ws, &item, &last, &state, &closed); err != nil {
+			return nil, err
+		}
+		end := last // a conversation continued after its item closed is kept from its last turn
+		switch {
+		case state == "open":
+			continue
+		case state == "" && item != 0 && !complete(ws):
+			continue
+		case state != "":
+			end = max(last, closed)
+		}
+		if end < cutoff {
+			gone = append(gone, id)
+		}
+	}
+	return gone, rows.Err()
 }

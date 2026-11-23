@@ -1,9 +1,13 @@
 // Package agent is Autobot's harness: a model working toward a goal over many turns with tools,
 // until it calls finish. It stops only through finish (or its budget): a reply without a tool call
-// is answered with a nudge to keep going, finish with "met" is refused while the agent's own plan
-// has open items, and an optional check (a decision model) can send it back to work. Tool calls of
-// one turn run in parallel. Nothing here runs commands: tools that touch code or machines are
-// given to it, and run in the connector's sandbox on donated hardware.
+// is answered with a nudge to keep going, and an optional check (a decision model) can send a "met"
+// finish back to work. Tool calls of one turn run in parallel. Nothing here runs commands: tools
+// that touch code or machines are given to it, and run in the connector's sandbox on donated hardware.
+//
+// The context is the agent's to manage. Every tool result is numbered; the agent prunes results it
+// has finished with (prune_result), keeps what it needs in a scratchpad outside the context, and
+// compacts when the context grows large. Nothing is ever dropped automatically, except that a
+// conversation that outgrows its model's window is compacted by the harness, from the scratchpad.
 package agent
 
 import (
@@ -44,62 +48,54 @@ type PlanItem struct {
 }
 
 // Transcript is one run: its outcome and what it cost. The conversation it added to is the
-// Conversation's. It is saved after every turn.
+// Conversation's. It is saved after every turn. A run that ends with a written report has the
+// writing session's own transcript in Writing: its turns and tokens are counted there, not here.
 type Transcript struct {
 	Plan    []PlanItem `json:"plan,omitempty"`
 	Turns   int        `json:"turns"`
 	In      int        `json:"tokens_in"`
 	Out     int        `json:"tokens_out"`
 	Cached  int        `json:"tokens_cached"`  // input tokens the provider answered from its cache
-	Read    []string   `json:"read,omitempty"` // the files its tools have read, in this conversation
+	Read    []string   `json:"read,omitempty"` // the files its tools have read
 	Outcome string     `json:"outcome,omitempty"`
 	Report  string     `json:"report,omitempty"`
 	Error   string     `json:"error,omitempty"`
+
+	Writing *Transcript `json:"writing,omitempty"`
 }
 
 // Config is one run.
 type Config struct {
 	Model    Model
-	System   string // the system prompt, for a new conversation (a resumed one keeps its own)
-	Task     string // the next message: the instruction, with the goal
+	System   string // the system prompt, for a new conversation
+	Task     string // the first message: the instruction, with the goal
 	Goal     string
-	Tools    []Tool // what can run now; a resumed conversation sends its own stored definitions
+	Tools    []Tool // what can run now
 	MaxTurns int
 	// Verify, when set, judges a "met" finish; a false answer sends the agent back to work with why.
 	Verify func(ctx context.Context, goal, report string) (ok bool, why string, err error)
 	// Save is called with the transcript after every turn.
 	Save func(*Transcript)
 
-	RunID int64 // recorded with each turn and with the end of the run, in the conversation's file
-	// What the run saw of the item (its head commit and when), recorded when it ends so that a later
-	// run of the conversation knows what is new.
-	Head string
-	Seen time.Time
-	// Once a request is estimated at BatchTokens (when 0: 60% of Window, the model's context window
-	// in tokens, when known, else 100,000) the conversation's old tool results are shortened, in one batch.
-	Window      int
-	BatchTokens int
+	RunID int64 // recorded with each turn, in the conversation's file
+
+	// Pad is the scratchpad the scratchpad tools use.
+	Pad Pad
+	// Window is the model's context window in tokens; when 0, 128,000.
+	Window int
+	// Read is what the tools of an earlier session of the same piece of work have read, so that a
+	// citation of it is not marked "(not opened)".
+	Read []string
 }
 
 const (
-	maxNudges    = 3
-	maxRejected  = 3
-	maxResult    = 24_000 // characters of a tool's result shown to the model
-	keepTurns    = 6      // when old tool results are shortened, those of the last turns are kept in full
-	maxCalls     = 16     // tool calls one turn may make; the rest are refused, to be made next turn
-	defaultBatch = 100_000
+	maxNudges     = 3
+	maxRejected   = 3
+	maxResult     = 24_000 // characters of a tool's result shown to the model
+	maxCalls      = 16     // tool calls one turn may make; the rest are refused, to be made next turn
+	defaultWindow = 128_000
+	forceAt       = 85 // percent of the window past which the agent is told to compact
 )
-
-// batchAt is the estimated size, in tokens, of a request past which old tool results are shortened.
-func (cfg Config) batchAt() int {
-	switch {
-	case cfg.BatchTokens > 0:
-		return cfg.BatchTokens
-	case cfg.Window > 0:
-		return cfg.Window * 6 / 10
-	}
-	return defaultBatch
-}
 
 var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it when the goal is met, or when you are blocked and cannot meet it. " +
 	"The report is your final answer: complete, specific, and saying what you did and found. Do not call it before the goal is met unless you are truly blocked.",
@@ -125,49 +121,75 @@ const turnsWarned = 5
 // lastTurn is the agent's last message: on that turn finish is its only tool.
 const lastTurn = "This is your last turn: call finish now with your report of what you have found."
 
+// session is one Run: a conversation being added to.
+type session struct {
+	cfg       Config
+	conv      *Conversation
+	tr        *Transcript
+	tools     map[string]Tool
+	lineShown bool // this turn's answers already carry the context line
+}
+
+func (s *session) window() int {
+	if s.cfg.Window > 0 {
+		return s.cfg.Window
+	}
+	return defaultWindow
+}
+
+// turnSpecs adds what the turn needs to say and returns the tools it offers: on the last turn only
+// finish; when the next request is estimated past 85% of the window, only what the agent needs to
+// save its work and compact.
+func (s *session) turnSpecs(turn int) (specs []ToolSpec, last, forced bool) {
+	if s.cfg.MaxTurns > 1 && turn == s.cfg.MaxTurns-1 {
+		s.conv.add(Message{Role: "user", Content: lastTurn})
+		return []ToolSpec{finishSpec}, true, false
+	}
+	if est := s.conv.estimate(); hasTool(s.conv.Tools, "compact") && est*100 > s.window()*forceAt {
+		s.conv.add(Message{Role: "user", Content: fmt.Sprintf("Your context is at %d%% of its window. Save to your scratchpad what you still need, then call compact.", est*100/s.window())})
+		return pick(s.conv.Tools, forcedTools...), false, true
+	}
+	return s.conv.Tools, false, false
+}
+
 // Run works until the agent finishes or runs out of turns or time (ctx), and returns the run's
-// transcript. It adds to conv, a conversation to continue (cfg.Task is then its next message), or,
-// when conv is nil, to a new one made from cfg.System and cfg.Tools. A continued conversation sends
-// the system prompt and tool definitions it was started with, whatever cfg says; a tool it has
-// that cfg does not (a sandbox that is gone) answers that it is not available now.
+// transcript. It adds to conv, or, when conv is nil, to a new one made from cfg.System and cfg.Tools;
+// cfg.Task is its next message. A conversation sends the system prompt and tool definitions it was
+// started with, whatever cfg says; a tool it has that cfg does not answers that it is not available.
 func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 	if conv == nil {
 		conv = NewConversation("", 0, cfg.System, cfg.Tools)
 	}
-	tr := &Transcript{Read: slices.Clone(conv.Read)}
+	tr := &Transcript{Read: slices.Clone(cfg.Read)}
+	s := &session{cfg: cfg, conv: conv, tr: tr, tools: map[string]Tool{}}
+	for _, t := range cfg.Tools {
+		s.tools[t.Spec.Name] = t
+	}
 	conv.repair()
 	conv.add(Message{Role: "user", Content: cfg.Task})
-	tools := map[string]Tool{}
-	for _, t := range cfg.Tools {
-		tools[t.Spec.Name] = t
-	}
 	save := func() {
 		if cfg.Save != nil {
 			cfg.Save(tr)
 		}
 	}
-	defer func() { conv.endRun(cfg.RunID, cfg.Head, cfg.Seen, tr.Read) }() // the caller's last save writes it
-	nudges, rejected, afterBatch := 0, 0, 0
+	nudges, rejected := 0, 0
 	for turn := 0; ; turn++ {
 		if turn >= cfg.MaxTurns {
 			tr.Outcome, tr.Error = Budget, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
 			save()
 			return tr
 		}
-		// A request that has grown too large has its old tool results shortened, once, for good. Never
-		// every turn: each time the start of the conversation changes, the provider's cache starts over.
-		// Over the limit even after that, it waits until the request has grown by a fifth of the limit.
-		if est := conv.tokens(); est > cfg.batchAt() && est >= afterBatch+cfg.batchAt()/5 && conv.shortenOld() {
-			afterBatch = conv.tokens()
-		}
 		// The last turn can only finish, so a run that reaches its limit still ends with its report.
 		// (Its request leaves out the other tools, so it misses the provider's cache, once.)
-		specs, last := conv.Tools, cfg.MaxTurns > 1 && turn == cfg.MaxTurns-1
-		if last {
-			conv.add(Message{Role: "user", Content: lastTurn})
-			specs = []ToolSpec{finishSpec}
-		}
+		specs, last, forced := s.turnSpecs(turn)
 		reply, use, err := complete(ctx, cfg.Model, conv.request(), specs)
+		if err != nil && tooLong(err) {
+			// The provider refused the request as longer than its model's context: compact from the
+			// scratchpad, and ask once more.
+			s.compact(carriedByAutobot)
+			specs, last, forced = s.turnSpecs(turn)
+			reply, use, err = complete(ctx, cfg.Model, conv.request(), specs)
+		}
 		if err != nil {
 			tr.Outcome, tr.Error = Failed, err.Error()
 			if ctx.Err() != nil {
@@ -180,9 +202,15 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		tr.In += use.In
 		tr.Out += use.Out
 		tr.Cached += use.Cached
+		conv.sent(use.In)
 		conv.add(reply)
 		conv.recordTurn(cfg.RunID, use)
 		if len(reply.ToolCalls) == 0 {
+			if forced { // told to compact and did not: Autobot does it from the scratchpad
+				s.compact(carriedByAutobot)
+				save()
+				continue
+			}
 			if last && strings.TrimSpace(reply.Content) != "" { // it answered in words: that is its report
 				tr.Outcome, tr.Report, tr.Error = Budget, reply.Content, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
 				save()
@@ -198,27 +226,42 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			continue
 		}
 		nudges = 0
+		s.lineShown = false
 		results := make([]string, len(reply.ToolCalls))
 		var finish *ToolCall
+		var carry *string
 		var wg sync.WaitGroup
 		for i, call := range reply.ToolCalls {
-			if i >= maxCalls && call.Function.Name != "finish" {
+			name := call.Function.Name
+			if i >= maxCalls && name != "finish" {
 				results[i] = fmt.Sprintf("error: at most %d tool calls run in one turn; make this one in your next turn", maxCalls)
 				continue
 			}
-			switch call.Function.Name {
+			if forced && name != "finish" && !slices.Contains(forcedTools, name) {
+				results[i] = "error: only scratchpad_write, update_plan and compact are available this turn"
+				continue
+			}
+			switch name {
 			case "finish":
+				if forced {
+					results[i] = "error: finish is not available this turn: save your notes, then call compact"
+					continue
+				}
 				c := call
 				finish = &c
 				results[i] = "" // filled below, once the other calls of this turn are done
 			case "update_plan":
 				results[i] = tr.setPlan(call.Function.Arguments)
 			default:
-				t, ok := tools[call.Function.Name]
-				if !slices.ContainsFunc(conv.Tools, func(sp ToolSpec) bool { return sp.Name == call.Function.Name }) {
-					results[i] = "error: there is no tool " + call.Function.Name
+				if !hasTool(conv.Tools, name) {
+					results[i] = "error: there is no tool " + name
 					continue
 				}
+				if harnessTool(name) {
+					results[i] = s.builtin(name, call.Function.Arguments, &carry)
+					continue
+				}
+				t, ok := s.tools[name]
 				if !ok { // one the conversation was given, that cannot run now
 					results[i] = notAvailable
 					continue
@@ -232,7 +275,7 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		}
 		wg.Wait()
 		for i, call := range reply.ToolCalls {
-			if t, ok := tools[call.Function.Name]; ok && t.Reads != nil && !strings.HasPrefix(results[i], "error:") {
+			if t, ok := s.tools[call.Function.Name]; ok && t.Reads != nil && !strings.HasPrefix(results[i], "error:") {
 				for _, p := range t.Reads(json.RawMessage(call.Function.Arguments)) {
 					if !slices.Contains(tr.Read, p) {
 						tr.Read = append(tr.Read, p)
@@ -251,7 +294,19 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			}
 		}
 		for i, call := range reply.ToolCalls {
-			conv.add(Message{Role: "tool", ToolCallID: call.ID, Content: clip(results[i])})
+			out := clip(results[i])
+			if line := s.contextLine(); i == len(reply.ToolCalls)-1 && line != "" && !s.lineShown {
+				out += "\n" + line // appended, never rewriting what came before
+			}
+			conv.addResult(call.ID, out)
+		}
+		if !done {
+			switch {
+			case carry != nil:
+				s.compact(*carry)
+			case forced: // told to compact and did not: Autobot does it from the scratchpad
+				s.compact(carriedByAutobot)
+			}
 		}
 		if left := cfg.MaxTurns - turn - 1; !done && left == turnsWarned && cfg.MaxTurns > 2*turnsWarned {
 			conv.add(Message{Role: "user", Content: fmt.Sprintf("You have %d turns left: finish with your report within them.", left)})
@@ -261,6 +316,36 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			return tr
 		}
 	}
+}
+
+// builtin runs one of the harness's own tools, other than finish and the plan. A compact call
+// only notes what the agent carries forward: the compaction itself is after the turn's other calls.
+func (s *session) builtin(name, args string, carry **string) string {
+	switch name {
+	case "prune_result":
+		return s.prune(args)
+	case "compact":
+		var a struct {
+			Carry string `json:"carry_forward"`
+		}
+		if json.Unmarshal([]byte(args), &a) != nil {
+			return `error: compact takes {"carry_forward": text}`
+		}
+		if strings.TrimSpace(a.Carry) == "" {
+			a.Carry = "(nothing: your notes are in the scratchpad)"
+		}
+		*carry = &a.Carry
+		return "Compacting."
+	case "scratchpad_write":
+		return s.padWrite(args)
+	case "scratchpad_index":
+		return s.padIndex(args)
+	case "scratchpad_read":
+		return s.padRead(args)
+	case "scratchpad_search":
+		return s.padSearch(args)
+	}
+	return "error: there is no tool " + name
 }
 
 // finish handles a call to finish: accepted, it sets the outcome and returns done. Finish takes the

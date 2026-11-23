@@ -25,7 +25,7 @@ type WorkflowRun struct {
 // WorkflowStep is one node's part in a run.
 type WorkflowStep struct {
 	NodeID     string
-	Status     string // pending, running, done, skipped or failed
+	Status     string // pending, running, waiting (for a person), done, skipped or failed
 	Port       string // the output it took (a decision's choice); "" until done
 	Output     string
 	Error      string
@@ -135,7 +135,9 @@ func (s *Store) StopOrphanWorkflows() error {
 		WHERE status = 'running' AND run_id IN (SELECT id FROM workflow_runs WHERE status = 'running')`, now()); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE workflow_runs SET status = 'failed', finished_at = ? WHERE status = 'running'`, now()); err != nil {
+	// A run waiting for a person is kept, to be resumed; only runs with nothing left to wait for end.
+	if _, err := tx.Exec(`UPDATE workflow_runs SET status = 'failed', finished_at = ? WHERE status = 'running'
+		AND id NOT IN (SELECT run_id FROM workflow_steps WHERE status = 'waiting')`, now()); err != nil {
 		return err
 	}
 	return tx.Commit()

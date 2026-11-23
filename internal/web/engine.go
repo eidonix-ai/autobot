@@ -298,6 +298,20 @@ func (s *Server) drive(rs *runState) {
 	}
 	results := make(chan finished)
 	running := 0
+	// A resumed run picks up its steps that were waiting for a person.
+	for _, n := range rs.g.Nodes {
+		if steps[n.ID].Status == "waiting" && n.Type == workflow.Approval {
+			running++
+			go func(n workflow.Node) {
+				o := stepOutcome{err: errors.New("the step crashed")}
+				defer func() { results <- finished{n.ID, o} }()
+				defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*24*time.Hour)
+				defer cancel()
+				o = s.awaitApproval(ctx, rs, n)
+			}(n)
+		}
+	}
 	for {
 		for progressed := true; progressed; {
 			progressed = false
@@ -453,7 +467,11 @@ func (s *Server) runStep(rs *runState, n workflow.Node, prev string) stepOutcome
 		values["case_file"] = c.Contents
 	}
 	kind := rs.run.Kind
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
+	limit := 4 * time.Hour
+	if n.Type == workflow.Approval {
+		limit = 15 * 24 * time.Hour // a person may take up to two weeks
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	switch n.Type {
 	case workflow.Decision:
@@ -536,6 +554,24 @@ func (s *Server) runStep(rs *runState, n workflow.Node, prev string) stepOutcome
 			return stepOutcome{err: err}
 		}
 		return s.testStep(ctx, rs, t, workflow.Render(t.Script, values))
+	case workflow.DiscordPost:
+		d, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost())
+		if err == nil {
+			err = d.Check()
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		return s.discordStep(ctx, rs, d, strings.TrimSpace(workflow.Render(d.Message, values)))
+	case workflow.Approval:
+		a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind))
+		if err == nil {
+			err = a.Check()
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		return s.approvalStep(ctx, rs, n, a, strings.TrimSpace(workflow.Render(a.Request, values)))
 	}
 	return stepOutcome{err: fmt.Errorf("a %s block cannot run yet", n.Type)}
 }
@@ -752,6 +788,7 @@ type stepView struct {
 	Name, Label, Status, Port, Output, Error string
 	AgentRun                                 int64
 	Took                                     string
+	Approval                                 *store.Approval // a Human Approval's request
 }
 
 // workflowRun is a run's page: live while it runs (the page refreshes itself), then its record.
@@ -792,6 +829,11 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 		}
 		return sa.StartedAt.Compare(sb.StartedAt)
 	})
+	approvals, err := s.st.RunApprovals(run.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	var views []stepView
 	for _, n := range order {
 		st := steps[n.ID]
@@ -803,6 +845,7 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 		if v.Port == "out" {
 			v.Port = ""
 		}
+		v.Approval = approvals[n.ID]
 		views = append(views, v)
 	}
 	what := "pull request"

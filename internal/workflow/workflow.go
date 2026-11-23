@@ -54,6 +54,8 @@ var Types = []NodeType{
 	{Type: GitHubComment, Label: "GitHub Comment"},
 	{Type: Condition, Label: "Condition"},
 	{Type: TestRun, Label: "Test Run"},
+	{Type: DiscordPost, Label: "Post to Discord"},
+	{Type: Approval, Label: "Human Approval"},
 }
 
 // TypesFor lists the node types a kind's canvas offers.
@@ -119,6 +121,8 @@ func Outputs(n Node) []string {
 		return []string{"yes", "no"}
 	case TestRun:
 		return []string{"passed", "failed"}
+	case Approval:
+		return []string{"approved", "denied", "timed_out"}
 	}
 	return []string{"out"}
 }
@@ -205,6 +209,10 @@ func (g Graph) Check(kind string) error {
 			_, err = SettingsOf(n, DefaultCondition())
 		case TestRun:
 			_, err = SettingsOf(n, DefaultTestRun())
+		case DiscordPost:
+			_, err = SettingsOf(n, DefaultDiscordPost())
+		case Approval:
+			_, err = SettingsOf(n, DefaultApproval(kind))
 		}
 		if err != nil {
 			return err

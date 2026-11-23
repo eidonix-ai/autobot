@@ -61,6 +61,18 @@ func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 			err = s.Check()
 		}
 		return s, []string{s.Message}, err
+	case workflow.DiscordPost:
+		s, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost())
+		if err == nil {
+			err = s.Check()
+		}
+		return s, []string{s.Message}, err
+	case workflow.Approval:
+		s, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind))
+		if err == nil {
+			err = s.Check()
+		}
+		return s, []string{s.Request}, err
 	case workflow.Condition, workflow.TestRun:
 		return nil, nil, errors.New("this block needs a real pull request or issue: shift-click the event block to run the workflow, perhaps as a dry run")
 	}
@@ -143,6 +155,10 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
 	case workflow.GitHubCommentSettings:
 		data["Comment"] = workflow.Render(st.Message, values)
+	case workflow.DiscordPostSettings:
+		data["Preview"], data["Where"] = workflow.Render(st.Message, values), "Would post on Discord"
+	case workflow.ApprovalSettings:
+		data["Preview"], data["Where"] = workflow.Render(st.Request, values), "Would ask"
 	case workflow.DecisionSettings:
 		answer, err := s.decide(r.Context(), ws, st, values)
 		if err != nil {

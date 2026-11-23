@@ -301,6 +301,10 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		settings, err = workflow.SettingsOf(n, workflow.DefaultCondition())
 	case workflow.TestRun:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultTestRun())
+	case workflow.DiscordPost:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultDiscordPost())
+	case workflow.Approval:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 	default:
 		settings, err = workflow.EventSettingsOf(n)
 	}
@@ -340,6 +344,10 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page = "node_github.html"
 	case workflow.ConditionSettings:
 		page = "node_condition.html"
+	case workflow.DiscordPostSettings:
+		page = "node_discordpost.html"
+	case workflow.ApprovalSettings:
+		page = "node_approval.html"
 	case workflow.TestRunSettings:
 		page = "node_testrun.html"
 		machines, err := s.st.Machines(ws.ID)
@@ -438,6 +446,19 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		settings = t
+	case workflow.DiscordPost:
+		d := workflow.DiscordPostSettings{Message: strings.TrimSpace(f.Get("message")), Summary: f.Get("summary") == "on"}
+		if err = d.Check(); err == nil {
+			err = workflow.CheckTemplates(kind, outputs, d.Message)
+		}
+		settings = d
+	case workflow.Approval:
+		a := workflow.ApprovalSettings{Request: strings.TrimSpace(f.Get("request"))}
+		a.Hours, _ = strconv.Atoi(f.Get("hours"))
+		if err = a.Check(); err == nil {
+			err = workflow.CheckTemplates(kind, outputs, a.Request)
+		}
+		settings = a
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)

@@ -135,6 +135,7 @@ func serve(args []string) error {
 	defer stop()
 	go ui.Watch(ctx)
 	go ui.CheckRoutes(ctx)
+	go ui.ResumeWorkflows(ctx) // runs that were waiting for a person when Autobot stopped
 	done := make(chan error, 1)
 	go func() {
 		<-ctx.Done()

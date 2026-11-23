@@ -266,3 +266,59 @@ func SettingsOf[T any](n Node, def T) (T, error) {
 	}
 	return s, nil
 }
+
+// Discord and people.
+const (
+	DiscordPost = "discord_post"
+	Approval    = "approval"
+)
+
+// DiscordPostSettings are a Post to Discord node's settings: a message in the case's forum post, or
+// the post's first message (its summary) replaced.
+type DiscordPostSettings struct {
+	Message string `json:"message"` // a template
+	Summary bool   `json:"summary"` // replace the post's first message instead of adding one
+}
+
+// DefaultDiscordPost is a new Post to Discord node's settings.
+func DefaultDiscordPost() DiscordPostSettings {
+	return DiscordPostSettings{Message: "{previous_output}"}
+}
+
+// Check confirms a Post to Discord node's settings are complete.
+func (s DiscordPostSettings) Check() error {
+	switch {
+	case strings.TrimSpace(s.Message) == "":
+		return errors.New("write the message")
+	case len(s.Message) > maxTemplate:
+		return fmt.Errorf("the message is limited to %d characters", maxTemplate)
+	}
+	return nil
+}
+
+// ApprovalSettings are a Human Approval node's settings: what is asked, and how long to wait.
+type ApprovalSettings struct {
+	Request string `json:"request"` // a template
+	Hours   int    `json:"hours"`
+}
+
+// DefaultApproval is a new Human Approval node's settings, for a workflow of kind.
+func DefaultApproval(kind string) ApprovalSettings {
+	if kind == Issue {
+		return ApprovalSettings{Request: "Go on with {issue_link}?", Hours: 24}
+	}
+	return ApprovalSettings{Request: "Run {pr_link} on the hardware?", Hours: 24}
+}
+
+// Check confirms a Human Approval node's settings are complete.
+func (s ApprovalSettings) Check() error {
+	switch {
+	case strings.TrimSpace(s.Request) == "":
+		return errors.New("write what is asked")
+	case len(s.Request) > 4000:
+		return errors.New("the request is limited to 4,000 characters")
+	case s.Hours < 1 || s.Hours > 336:
+		return errors.New("the time limit is 1 to 336 hours (two weeks)")
+	}
+	return nil
+}

@@ -16,7 +16,13 @@ import (
 )
 
 // fakeDiscord answers as Discord does for a bot in one server with one forum.
+// discordSent records what the bot sent to the fake Discord.
+var discordSent []string
+
+func readBody(r *http.Request) string { b, _ := io.ReadAll(r.Body); return string(b) }
+
 func fakeDiscord(t *testing.T) {
+	discordSent = nil
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bot good-token" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -30,7 +36,18 @@ func fakeDiscord(t *testing.T) {
 			io.WriteString(w, `[{"id":"g1","name":"Local Inference Lab"}]`)
 		case "/guilds/g1/channels":
 			io.WriteString(w, `[{"id":"f1","name":"flare-autobot","type":15},{"id":"t1","name":"general","type":0}]`)
+		case "/channels/f1/threads":
+			discordSent = append(discordSent, "post: "+readBody(r))
+			io.WriteString(w, `{"id":"th1","message":{"id":"m1"}}`)
+		case "/channels/th1/messages":
+			discordSent = append(discordSent, "send: "+readBody(r))
+			io.WriteString(w, `{"id":"m2","channel_id":"th1"}`)
 		default:
+			if r.Method == http.MethodPatch {
+				discordSent = append(discordSent, "edit "+r.URL.Path+": "+readBody(r))
+				io.WriteString(w, `{}`)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	}))

@@ -442,6 +442,17 @@ func stepSummary(n Node, kind string, models func(ModelRef) string) string {
 			return "Posts, keeping one comment"
 		}
 		return "Posts a comment"
+	case DiscordPost:
+		if s, err := SettingsOf(n, DefaultDiscordPost()); err == nil && s.Summary {
+			return "Sets the case's summary"
+		}
+		return "Posts in the case's thread"
+	case Approval:
+		s, err := SettingsOf(n, DefaultApproval(kind))
+		if err != nil {
+			return ""
+		}
+		return fmt.Sprintf("Waits up to %d hours", s.Hours)
 	case Condition:
 		s, err := SettingsOf(n, DefaultCondition())
 		if err != nil || s.rules() == 0 {

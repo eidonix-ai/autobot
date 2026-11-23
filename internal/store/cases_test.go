@@ -140,3 +140,44 @@ func TestHeadlineEscapesTitle(t *testing.T) {
 		t.Fatalf("%s", h)
 	}
 }
+
+// The first answer to a request wins; none counts after its time limit, which only the time-out takes.
+func TestDecide(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
+	run, _ := st.StartWorkflowRun(WorkflowRun{WorkspaceID: ws.ID, Kind: "pr", EventNode: "ev", Item: 7, Graph: "{}"}, []string{"ev", "ap", "late"}, admin)
+	a, _ := st.OpenApproval(run, "ap", "Run it?", time.Now().Add(time.Hour))
+	if ok, _ := st.Decide(a.ID, "timed_out", "", ""); ok {
+		t.Fatal("timed out before its time")
+	}
+	if ok, _ := st.Decide(a.ID, "approved", "alice", "Discord"); !ok {
+		t.Fatal("the first answer was not taken")
+	}
+	if ok, _ := st.Decide(a.ID, "denied", "bob", "Autobot"); ok {
+		t.Fatal("a second answer replaced the first")
+	}
+	if got, _ := st.Approval(a.ID); got.Status != "approved" || got.DecidedBy != "alice" {
+		t.Fatalf("%+v", got)
+	}
+	late, _ := st.OpenApproval(run, "late", "Run it?", time.Now().Add(-time.Second))
+	if ok, _ := st.Decide(late.ID, "approved", "alice", "Discord"); ok {
+		t.Fatal("an answer after the time limit was taken")
+	}
+	if ok, _ := st.Decide(late.ID, "timed_out", "", ""); !ok {
+		t.Fatal("the time-out was not taken")
+	}
+	// A run waiting for a person survives a restart; others end.
+	st.SetWorkflowStep(run, WorkflowStep{NodeID: "ap", Status: "waiting"})
+	other, _ := st.StartWorkflowRun(WorkflowRun{WorkspaceID: ws.ID, Kind: "pr", EventNode: "ev", Item: 8, Graph: "{}"}, []string{"ev"}, admin)
+	st.StopOrphanWorkflows()
+	if r, _ := st.WorkflowRun(run); r.Status != "running" {
+		t.Fatal("a waiting run was ended at start")
+	}
+	if r, _ := st.WorkflowRun(other); r.Status != "failed" {
+		t.Fatal("an orphaned run was kept")
+	}
+	if ids, _ := st.WaitingRuns(); len(ids) != 1 || ids[0] != run {
+		t.Fatalf("waiting runs %v", ids)
+	}
+}

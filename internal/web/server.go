@@ -175,6 +175,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/agent-runs/{id}", s.auth(s.agentRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/run", s.auth(s.runWorkflow))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflow-runs/{id}", s.auth(s.workflowRun))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/approvals/{approval}", s.auth(s.decideOnPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/models", s.auth(s.modelsPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members", s.auth(s.membersPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members/{username}", s.auth(s.memberPage))

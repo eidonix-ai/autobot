@@ -9,10 +9,16 @@
 <ol class="steps">
 {{range .Steps}}
 <li class="{{.Status}}">
-  <div class="step-head"><span class="dot {{if eq .Status "running"}}busy{{else if eq .Status "done"}}on{{else}}off{{end}}"></span>
+  <div class="step-head"><span class="dot {{if or (eq .Status "running") (eq .Status "waiting")}}busy{{else if eq .Status "done"}}on{{else}}off{{end}}"></span>
     <strong>{{.Name}}</strong> <span class="muted">{{.Label}} · {{.Status}}{{with .Port}} → {{.}}{{end}}{{with .Took}} · {{.}}{{end}}</span>
     {{if .AgentRun}}<a href="{{$.WS.Path}}/agent-runs/{{.AgentRun}}">transcript</a>{{end}}</div>
   {{with .Error}}<p class="{{if eq $.Run.Status "failed"}}error{{else}}muted{{end}}">{{.}}</p>{{end}}
+  {{with .Approval}}<blockquote class="request">{{.Request}}</blockquote>
+  {{if eq .Status "pending"}}<form method="post" action="{{$.WS.Path}}/workflow-runs/{{$.Run.ID}}/approvals/{{.ID}}" class="row">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button name="answer" value="approved">Approve</button><button name="answer" value="denied" class="danger">Deny</button>
+    <span class="muted">or on Discord · until {{ts .ExpiresAt}}</span>
+  </form>{{end}}{{end}}
   {{with .Output}}<details{{if le (len .) 600}} open{{end}}><summary>Output</summary><pre>{{.}}</pre></details>{{end}}
 </li>
 {{end}}

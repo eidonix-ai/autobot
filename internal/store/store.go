@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -430,5 +430,24 @@ CREATE TABLE discord_posts (
 	case_uuid  TEXT PRIMARY KEY REFERENCES cases(uuid) ON DELETE CASCADE,
 	thread_id  TEXT NOT NULL,
 	summary_id TEXT NOT NULL
+);
+`
+
+// Approvals: a Human Approval step's request, waiting for a person (on Discord, or on the run's
+// page) or for its time limit. Its status changes once, from pending, and the first answer wins.
+const schemaV18 = `
+CREATE TABLE approvals (
+	id         INTEGER PRIMARY KEY,
+	run_id     INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+	node_id    TEXT    NOT NULL,
+	request    TEXT    NOT NULL,
+	status     TEXT    NOT NULL DEFAULT 'pending',
+	channel    TEXT    NOT NULL DEFAULT '',
+	message    TEXT    NOT NULL DEFAULT '',
+	decided_by TEXT    NOT NULL DEFAULT '',
+	decided_on TEXT    NOT NULL DEFAULT '',
+	decided_at INTEGER NOT NULL DEFAULT 0,
+	expires_at INTEGER NOT NULL,
+	UNIQUE (run_id, node_id)
 );
 `

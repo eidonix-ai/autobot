@@ -151,7 +151,5 @@ func (s *Server) interaction(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// discordClick answers a click; buttons arrive with Human Approval.
-func (s *Server) discordClick(w http.ResponseWriter, body []byte) {
-	io.WriteString(w, `{"type":4,"data":{"content":"This button does nothing yet.","flags":64}}`)
-}
+// discordClick answers a click on one of the bot's buttons.
+func (s *Server) discordClick(w http.ResponseWriter, body []byte) { s.approvalClick(w, body) }

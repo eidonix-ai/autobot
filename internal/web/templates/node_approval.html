@@ -1,0 +1,16 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <div class="row">
+    <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+    <label>Time limit (hours) <input type="number" name="hours" min="1" max="336" value="{{.S.Hours}}"></label>
+  </div>
+  <label><span class="lbl">Request <span class="info" tabindex="0" data-tip="Asked in the case's Discord post with Approve and Deny buttons, and on the run's page. Anyone who can see the forum may answer; the first answer counts.">ⓘ</span></span>
+    <textarea name="request" rows="4" class="code" spellcheck="false" required>{{.S.Request}}</textarea></label>
+  {{template "tags" .}}
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

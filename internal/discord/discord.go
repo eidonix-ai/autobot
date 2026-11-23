@@ -282,3 +282,15 @@ func Verify(publicKey, signature, timestamp string, body []byte) bool {
 	}
 	return ed25519.Verify(key, append([]byte(timestamp), body...), sig)
 }
+
+// Update is the answer to a click that replaces the clicked message with m.
+func Update(m Message) []byte {
+	b, _ := json.Marshal(map[string]any{"type": 7, "data": m.body(nil)})
+	return b
+}
+
+// Private is the answer to a click that only the clicker sees.
+func Private(text string) []byte {
+	b, _ := json.Marshal(map[string]any{"type": 4, "data": map[string]any{"content": text, "flags": 64, "allowed_mentions": map[string]any{"parse": []string{}}}})
+	return b
+}

@@ -87,7 +87,7 @@ func TestAgentRunUsesTheModelsWindow(t *testing.T) {
 	if !strings.Contains(second, "Your context is at") || !strings.Contains(second, "then call compact.") {
 		t.Fatalf("with a window of 1,000 tokens:\n%.300s", second)
 	}
-	if got := requestTools(t, second); strings.Join(got, ",") != "update_plan,compact,scratchpad_write" {
+	if got, first := requestTools(t, second), requestTools(t, c.llm.requests()[0]); strings.Join(got, ",") != strings.Join(first, ",") || !strings.Contains(second, "Only scratchpad_write, update_plan and compact are available on this turn.") {
 		t.Fatalf("offered %v", got)
 	}
 }

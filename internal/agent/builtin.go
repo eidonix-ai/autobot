@@ -62,17 +62,6 @@ func harnessTool(name string) bool {
 	return slices.ContainsFunc(researchSpecs, func(s ToolSpec) bool { return s.Name == name })
 }
 
-// pick keeps the specs with the given names.
-func pick(specs []ToolSpec, names ...string) []ToolSpec {
-	var out []ToolSpec
-	for _, s := range specs {
-		if slices.Contains(names, s.Name) {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 func hasTool(specs []ToolSpec, name string) bool {
 	return slices.ContainsFunc(specs, func(s ToolSpec) bool { return s.Name == name })
 }

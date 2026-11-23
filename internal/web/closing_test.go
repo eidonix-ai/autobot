@@ -93,8 +93,8 @@ func TestClosingReportEndToEnd(t *testing.T) {
 	if !slices.Contains(research, "compact") || !slices.Contains(research, "scratchpad_write") || !slices.Contains(research, "read_file") {
 		t.Fatalf("research tools %v", research)
 	}
-	if strings.Join(save, ",") != "scratchpad_write" {
-		t.Fatalf("the save turn offered %v", save)
+	if !slices.Equal(save, research) {
+		t.Fatalf("the save turn changed the tools: %v", save)
 	}
 	allowed := append([]string{"finish", "update_plan", "prune_result", "scratchpad_index", "scratchpad_read", "scratchpad_search"}, readOnlyTools...)
 	for _, name := range writer {

@@ -140,7 +140,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		}
 		data["Answer"] = answer
 	case workflow.AgentSettings:
-		id, err := s.startAgent(ws, kind, n, st, values, me(r))
+		id, err := s.startAgent(ws, kind, n, st, values, me(r), true)
 		if err != nil {
 			data["Error"] = err.Error()
 			s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, values, data)
@@ -213,7 +213,7 @@ so make it complete and specific.`
 var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/(\d+)`)
 
 // startAgent starts an agent run in the background and returns its id.
-func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a workflow.AgentSettings, values map[string]string, by *store.User) (int64, error) {
+func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a workflow.AgentSettings, values map[string]string, by *store.User, test bool) (int64, error) {
 	p, key, err := s.stepModel(ws, a.Model, false)
 	if err != nil {
 		return 0, err
@@ -287,7 +287,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		cfg.Verify = verifier(vp, vkey, a.Verify.Model)
 	}
 	id, err := s.st.StartAgentRun(store.AgentRun{WorkspaceID: ws.ID, Kind: kind, NodeID: n.ID, NodeName: workflow.DisplayName(n),
-		Item: item, Test: true, Model: a.Model.Model}, by)
+		Item: item, Test: test, Model: a.Model.Model}, by)
 	if err != nil {
 		return 0, err
 	}

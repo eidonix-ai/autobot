@@ -529,7 +529,7 @@ func (s *Server) writeEntry(rs *runState, n workflow.Node, text string, finalize
 
 // agentStep runs an agent and waits for it to end.
 func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a workflow.AgentSettings, values map[string]string) stepOutcome {
-	id, err := s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by)
+	id, err := s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by, false)
 	if err != nil {
 		return stepOutcome{err: err}
 	}

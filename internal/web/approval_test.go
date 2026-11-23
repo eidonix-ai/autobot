@@ -23,7 +23,7 @@ func approvalWorkflow(t *testing.T, e *env, ws *store.Workspace, by *store.User)
 		{ID: "ev", Type: "pr_ready"},
 		{ID: "ap", Type: workflow.Approval, Name: "Hardware", Settings: raw(workflow.ApprovalSettings{Request: "Run {pr_title} on cn7?", Hours: 1})},
 		{ID: "ya", Type: workflow.CaseEntry, Settings: entry("Running it.")},
-		{ID: "no", Type: workflow.CaseEntry, Settings: entry("Not running it.")},
+		{ID: "no", Type: workflow.CaseEntry, Settings: entry("Not running it. Charter: {charter}")},
 	}, Links: []workflow.Link{{From: "ev", Out: "out", To: "ap", In: "in"}, {From: "ap", Out: "approved", To: "ya", In: "in"}, {From: "ap", Out: "denied", To: "no", In: "in"}}}
 	if _, err := e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(raw(g)), by); err != nil {
 		t.Fatal(err)
@@ -116,6 +116,9 @@ func TestApprovalOnPageAndResume(t *testing.T) {
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: "waiting", StartedAt: time.Now()})
 	ap, _ := e.st.OpenApproval(id, "ap", "Run Retry uploads on cn7?", time.Now().Add(time.Hour))
 	e.st.StopOrphanWorkflows()
+	if _, err := e.st.SaveCharter(ws.ID, 1, "THE CHARTER", derek); err != nil {
+		t.Fatal(err)
+	}
 	e.ui.ResumeWorkflows(t.Context())
 
 	path := "/w/o/r/workflow-runs/" + itoa(id) + "/approvals/" + itoa(ap.ID)
@@ -138,5 +141,9 @@ func TestApprovalOnPageAndResume(t *testing.T) {
 	steps, _ := e.st.WorkflowSteps(id)
 	if steps["ap"].Port != "denied" || steps["no"].Status != "done" || steps["ya"].Status != "skipped" {
 		t.Fatalf("%+v", steps)
+	}
+	// The resumed run fills {charter} like any run.
+	if c, err := e.st.CaseByNumber(ws.ID, 7); err != nil || !strings.Contains(c.Contents, "Not running it. Charter: THE CHARTER") {
+		t.Fatalf("the resumed run's case file: %v", err)
 	}
 }

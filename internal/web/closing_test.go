@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eidonix-ai/autobot/internal/agent"
+	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
@@ -74,7 +75,7 @@ func TestClosingReportEndToEnd(t *testing.T) {
 		titles = append(titles, e.Title)
 	}
 	if len(pad) != 4 || strings.Join(titles[:3], "|") != "Found|Research summary|Late" || pad[1].Importance != "high" || pad[1].Body != "RESEARCH REPORT" ||
-		!pad[3].Report || pad[3].Title != reportTitle(run.ID) || pad[3].Body != "WRITTEN REPORT: the findings, high ones first." {
+		!pad[3].Report || pad[3].Title != store.ReportTitle(run.ID) || pad[3].Body != "WRITTEN REPORT: the findings, high ones first." {
 		t.Fatalf("the scratchpad: %+v", pad)
 	}
 	// What each session was offered.

@@ -219,11 +219,57 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 			log.Printf("agent run %d: %v", id, err)
 		}
 	}
-	cfg.Save = func(tr *agent.Transcript) { save(tr, "running") }
+	var last *agent.Transcript // the transcript as last saved: a crash must not throw it away
+	cfg.Save = func(tr *agent.Transcript) {
+		last = tr
+		save(tr, "running")
+		if saveHook != nil {
+			saveHook(tr)
+		}
+	}
+	// finish ends the run with a transcript. Every final report is kept in the thread's scratchpad (the
+	// next run of the thread opens with the newest), once however often this is called; the thread
+	// notes what the run saw of the item only when the run came to a report.
+	reportKept := false
+	finish := func(tr *agent.Transcript) {
+		if strings.TrimSpace(tr.Report) != "" {
+			if !reportKept {
+				reportKept = true
+				if _, err := pad.Add(store.PadEntry{Author: "main", Title: store.ReportTitle(id), Importance: store.High, Description: oneLineOf(tr.Report, 160), Body: tr.Report, Report: true}); err != nil {
+					log.Printf("agent run %d: saving its report to the scratchpad: %v", id, err)
+				}
+			}
+			if err := s.st.SetThreadSeen(threadID, commit, seen); err != nil {
+				log.Printf("agent run %d: %v", id, err)
+			}
+		}
+		save(tr, tr.Outcome)
+	}
 	started = true
 	go func() {
 		defer survive(fmt.Sprintf("agent run %d", id), func(msg string) {
-			save(&agent.Transcript{Outcome: agent.Failed, Error: msg}, agent.Failed)
+			// A crash keeps what the run had: the written report if there is one, else the research's,
+			// else the notes, and the run's outcome so far.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("agent run %d: saving after a crash: %v", id, r)
+				}
+			}()
+			tr := agent.Transcript{}
+			if last != nil {
+				tr = *last
+			}
+			if w := tr.Writing; w != nil && strings.TrimSpace(w.Report) != "" {
+				tr.Report = w.Report
+			}
+			if strings.TrimSpace(tr.Report) == "" {
+				tr.Report = agent.NotesReport(pad)
+			}
+			if tr.Outcome == "" {
+				tr.Outcome = agent.Failed
+			}
+			tr.Error = strings.TrimSpace(tr.Error + " " + msg)
+			finish(&tr)
 		})
 		if sess != nil {
 			defer sess.Close()
@@ -244,29 +290,14 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		} else {
 			tr = agent.Run(ctx, cfg, conv)
 		}
-		// Every final report is kept in the thread's scratchpad: the next run of it opens with the newest.
-		if strings.TrimSpace(tr.Report) != "" {
-			_, err := pad.Add(store.PadEntry{Author: "main", Title: reportTitle(id), Importance: store.High, Description: oneLineOf(tr.Report, 160), Body: tr.Report, Report: true})
-			if err != nil {
-				log.Printf("agent run %d: saving its report to the scratchpad: %v", id, err)
-			}
-		}
-		if err := s.st.SetThreadSeen(threadID, commit, seen); err != nil {
-			log.Printf("agent run %d: %v", id, err)
-		}
-		save(tr, tr.Outcome)
+		finish(tr)
 	}()
 	return id, nil
 }
 
-// reportTitle is the title of the scratchpad entry that keeps a run's final report.
-func reportTitle(run int64) string {
-	loc, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		loc = time.UTC
-	}
-	return fmt.Sprintf("Report of %s, run %d", time.Now().In(loc).Format("2006-01-02"), run)
-}
+// saveHook is called after each save of a run's transcript, by the run's own goroutine. Tests set
+// it to make a run crash at a chosen moment.
+var saveHook func(*agent.Transcript)
 
 // oneLineOf is the first line of a text, at most n characters.
 func oneLineOf(s string, n int) string {

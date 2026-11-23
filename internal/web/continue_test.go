@@ -293,7 +293,7 @@ func TestEachReportIsAnEntryAndTheNewestOpensTheNext(t *testing.T) {
 	}
 	for i, e := range pad {
 		run := []*store.AgentRun{r1, r2, r3}[i]
-		if e.N != i+1 || !e.Report || e.Importance != "high" || e.Author != "main" || e.Body != fmt.Sprintf("Report %d.", i+1) || e.Title != reportTitle(run.ID) {
+		if e.N != i+1 || !e.Report || e.Importance != "high" || e.Author != "main" || e.Body != fmt.Sprintf("Report %d.", i+1) || e.Title != store.ReportTitle(run.ID) {
 			t.Errorf("entry %d: %+v", i, e)
 		}
 	}

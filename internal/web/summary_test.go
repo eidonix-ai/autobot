@@ -14,7 +14,9 @@ func finishOf(t *testing.T, body string) (description, system string) {
 	t.Helper()
 	var req struct {
 		Messages []agent.Message
-		Tools    []struct{ Function struct{ Name, Description string } }
+		Tools    []struct {
+			Function struct{ Name, Description string }
+		}
 	}
 	if err := json.Unmarshal([]byte(body), &req); err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -204,4 +205,28 @@ func (p *Pad) LastReport() (PadEntry, bool, error) {
 		}
 	}
 	return PadEntry{}, false, nil
+}
+
+// ReportTitle is the title of the scratchpad entry that keeps a run's final report: its date, in
+// Eastern time, and the run.
+func ReportTitle(run int64) string {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		loc = time.UTC
+	}
+	return fmt.Sprintf("Report of %s, run %d", time.Now().In(loc).Format("2006-01-02"), run)
+}
+
+// NotesText is a report made of the high and medium notes in order, each with its title and body:
+// what a run that took notes ends with when it wrote no report. The final reports of earlier runs
+// and the low notes are not part of it.
+func NotesText(entries []PadEntry) string {
+	var parts []string
+	for _, e := range entries {
+		if e.Report || e.Importance == Low {
+			continue
+		}
+		parts = append(parts, "## "+e.Title+"\n\n"+e.Body)
+	}
+	return strings.Join(parts, "\n\n")
 }

@@ -128,20 +128,12 @@ func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer)
 	return wt.Report
 }
 
-// NotesReport is a report made of the scratchpad's high and medium notes, in order, each with its
-// title and body: what a run that took notes ends with when no report was written. The final
-// reports of earlier runs are not part of it.
+// NotesReport is a report made of the scratchpad's high and medium notes in order: what a run that
+// took notes ends with when no report was written.
 func NotesReport(pad Pad) string {
 	all, err := pad.List()
 	if err != nil {
 		return ""
 	}
-	var parts []string
-	for _, e := range all {
-		if e.Report || e.Importance == store.Low {
-			continue
-		}
-		parts = append(parts, "## "+e.Title+"\n\n"+e.Body)
-	}
-	return strings.Join(parts, "\n\n")
+	return store.NotesText(all)
 }

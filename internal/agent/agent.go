@@ -43,41 +43,63 @@ type PlanItem struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// Transcript is a run: the conversation and its outcome. It is saved after every turn, and a later
-// run can resume from it.
+// Transcript is one run: its outcome and what it cost. The conversation it added to is the
+// Conversation's. It is saved after every turn.
 type Transcript struct {
-	Messages []Message  `json:"messages"`
-	Plan     []PlanItem `json:"plan,omitempty"`
-	Turns    int        `json:"turns"`
-	In       int        `json:"tokens_in"`
-	Out      int        `json:"tokens_out"`
-	Read     []string   `json:"read,omitempty"` // the files its tools have read
-	Outcome  string     `json:"outcome,omitempty"`
-	Report   string     `json:"report,omitempty"`
-	Error    string     `json:"error,omitempty"`
+	Plan    []PlanItem `json:"plan,omitempty"`
+	Turns   int        `json:"turns"`
+	In      int        `json:"tokens_in"`
+	Out     int        `json:"tokens_out"`
+	Cached  int        `json:"tokens_cached"`  // input tokens the provider answered from its cache
+	Read    []string   `json:"read,omitempty"` // the files its tools have read, in this conversation
+	Outcome string     `json:"outcome,omitempty"`
+	Report  string     `json:"report,omitempty"`
+	Error   string     `json:"error,omitempty"`
 }
 
 // Config is one run.
 type Config struct {
 	Model    Model
-	System   string // the system prompt
-	Task     string // the first message: the instruction, with the goal
+	System   string // the system prompt, for a new conversation (a resumed one keeps its own)
+	Task     string // the next message: the instruction, with the goal
 	Goal     string
-	Tools    []Tool
+	Tools    []Tool // what can run now; a resumed conversation sends its own stored definitions
 	MaxTurns int
 	// Verify, when set, judges a "met" finish; a false answer sends the agent back to work with why.
 	Verify func(ctx context.Context, goal, report string) (ok bool, why string, err error)
 	// Save is called with the transcript after every turn.
 	Save func(*Transcript)
+
+	RunID int64 // recorded with each turn and with the end of the run, in the conversation's file
+	// What the run saw of the item (its head commit and when), recorded when it ends so that a later
+	// run of the conversation knows what is new.
+	Head string
+	Seen time.Time
+	// Once a request is estimated at BatchTokens (when 0: 60% of Window, the model's context window
+	// in tokens, when known, else 100,000) the conversation's old tool results are shortened, in one batch.
+	Window      int
+	BatchTokens int
 }
 
 const (
-	maxNudges   = 3
-	maxRejected = 3
-	maxResult   = 24_000 // characters of a tool's result shown to the model
-	keepTurns   = 6      // turns whose tool results are sent in full; older ones are cut to a line
-	maxCalls    = 16     // tool calls one turn may make; the rest are refused, to be made next turn
+	maxNudges    = 3
+	maxRejected  = 3
+	maxResult    = 24_000 // characters of a tool's result shown to the model
+	keepTurns    = 6      // when old tool results are shortened, those of the last turns are kept in full
+	maxCalls     = 16     // tool calls one turn may make; the rest are refused, to be made next turn
+	defaultBatch = 100_000
 )
+
+// batchAt is the estimated size, in tokens, of a request past which old tool results are shortened.
+func (cfg Config) batchAt() int {
+	switch {
+	case cfg.BatchTokens > 0:
+		return cfg.BatchTokens
+	case cfg.Window > 0:
+		return cfg.Window * 6 / 10
+	}
+	return defaultBatch
+}
 
 var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it when the goal is met, or when you are blocked and cannot meet it. " +
 	"The report is your final answer: complete, specific, and saying what you did and found. Do not call it before the goal is met unless you are truly blocked.",
@@ -94,36 +116,44 @@ var planSpec = ToolSpec{Name: "update_plan", Description: "Set your plan: the st
 const nudge = "Keep working toward the goal with your tools. When the goal is met, call finish with status met and your report; " +
 	"if you truly cannot meet it, call finish with status blocked and say why."
 
-// Run works until the agent finishes or runs out of turns or time (ctx), and returns the transcript
-// with its outcome. A transcript with messages is resumed: task is then the next message.
-func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
-	if tr == nil {
-		tr = &Transcript{}
+// notAvailable is the answer to a call of a tool the conversation was given but cannot run now.
+const notAvailable = "error: this tool is not available now"
+
+// Run works until the agent finishes or runs out of turns or time (ctx), and returns the run's
+// transcript. It adds to conv, a conversation to continue (cfg.Task is then its next message), or,
+// when conv is nil, to a new one made from cfg.System and cfg.Tools. A continued conversation sends
+// the system prompt and tool definitions it was started with, whatever cfg says; a tool it has
+// that cfg does not (a sandbox that is gone) answers that it is not available now.
+func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
+	if conv == nil {
+		conv = NewConversation("", 0, cfg.System, cfg.Tools)
 	}
-	if len(tr.Messages) == 0 {
-		tr.Messages = []Message{{Role: "system", Content: cfg.System}}
-	}
-	tr.Outcome, tr.Report, tr.Error = "", "", ""
-	tr.Messages = append(tr.Messages, Message{Role: "user", Content: cfg.Task})
+	tr := &Transcript{Read: slices.Clone(conv.Read)}
+	conv.add(Message{Role: "user", Content: cfg.Task})
 	tools := map[string]Tool{}
-	specs := []ToolSpec{finishSpec, planSpec}
 	for _, t := range cfg.Tools {
 		tools[t.Spec.Name] = t
-		specs = append(specs, t.Spec)
 	}
 	save := func() {
 		if cfg.Save != nil {
 			cfg.Save(tr)
 		}
 	}
-	nudges, rejected := 0, 0
+	defer func() { conv.endRun(cfg.RunID, cfg.Head, cfg.Seen, tr.Read) }() // the caller's last save writes it
+	nudges, rejected, afterBatch := 0, 0, 0
 	for turn := 0; ; turn++ {
 		if turn >= cfg.MaxTurns {
 			tr.Outcome, tr.Error = Budget, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
 			save()
 			return tr
 		}
-		reply, use, err := complete(ctx, cfg.Model, trimmed(tr.Messages), specs)
+		// A request that has grown too large has its old tool results shortened, once, for good. Never
+		// every turn: each time the start of the conversation changes, the provider's cache starts over.
+		// Over the limit even after that, it waits until the request has grown by a fifth of the limit.
+		if est := conv.tokens(); est > cfg.batchAt() && est >= afterBatch+cfg.batchAt()/5 && conv.shortenOld() {
+			afterBatch = conv.tokens()
+		}
+		reply, use, err := complete(ctx, cfg.Model, conv.request(), conv.Tools)
 		if err != nil {
 			tr.Outcome, tr.Error = Failed, err.Error()
 			if ctx.Err() != nil {
@@ -135,14 +165,16 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 		tr.Turns++
 		tr.In += use.In
 		tr.Out += use.Out
-		tr.Messages = append(tr.Messages, reply)
+		tr.Cached += use.Cached
+		conv.add(reply)
+		conv.recordTurn(cfg.RunID, use)
 		if len(reply.ToolCalls) == 0 {
 			if nudges++; nudges > maxNudges {
 				tr.Outcome, tr.Report, tr.Error = Unfinished, reply.Content, "kept answering without calling finish"
 				save()
 				return tr
 			}
-			tr.Messages = append(tr.Messages, Message{Role: "user", Content: nudge})
+			conv.add(Message{Role: "user", Content: nudge})
 			save()
 			continue
 		}
@@ -164,8 +196,12 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 				results[i] = tr.setPlan(call.Function.Arguments)
 			default:
 				t, ok := tools[call.Function.Name]
-				if !ok {
+				if !slices.ContainsFunc(conv.Tools, func(sp ToolSpec) bool { return sp.Name == call.Function.Name }) {
 					results[i] = "error: there is no tool " + call.Function.Name
+					continue
+				}
+				if !ok { // one the conversation was given, that cannot run now
+					results[i] = notAvailable
 					continue
 				}
 				wg.Add(1)
@@ -196,10 +232,10 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 			}
 		}
 		for i, call := range reply.ToolCalls {
-			tr.Messages = append(tr.Messages, Message{Role: "tool", ToolCallID: call.ID, Content: clip(results[i])})
+			conv.add(Message{Role: "tool", ToolCallID: call.ID, Content: clip(results[i])})
 		}
 		if left := cfg.MaxTurns - turn - 1; !done && (left == max(3, cfg.MaxTurns/4) || left == 2) {
-			tr.Messages = append(tr.Messages, Message{Role: "user", Content: fmt.Sprintf("You have %d turns left. "+
+			conv.add(Message{Role: "user", Content: fmt.Sprintf("You have %d turns left. "+
 				"Stop exploring and finish soon with what you have found: call finish with your report.", left)})
 		}
 		save()
@@ -331,37 +367,6 @@ func (tr *Transcript) unread(report string) []string {
 func samePath(a, b string) bool {
 	a, b = strings.TrimPrefix(a, "/"), strings.TrimPrefix(b, "/")
 	return a == b || strings.HasSuffix(a, "/"+b) || strings.HasSuffix(b, "/"+a)
-}
-
-// trimmed is the conversation as sent to the model: tool results from before the last keepTurns
-// turns are cut to their first line, which keeps a long run's requests from growing without end.
-// The transcript itself keeps everything.
-func trimmed(msgs []Message) []Message {
-	turns := 0
-	cut := len(msgs)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" {
-			if turns++; turns == keepTurns {
-				cut = i
-				break
-			}
-		}
-	}
-	if cut == len(msgs) {
-		return msgs
-	}
-	out := make([]Message, len(msgs))
-	copy(out, msgs)
-	for i := range out[:cut] {
-		if m := out[i]; m.Role == "tool" && len(m.Content) > 400 {
-			first, _, _ := strings.Cut(m.Content, "\n")
-			if len(first) > 200 {
-				first = first[:200]
-			}
-			out[i].Content = strings.ToValidUTF8(first, "") + fmt.Sprintf("\n[%d characters left out to save room; call the tool again if you need them]", len(m.Content))
-		}
-	}
-	return out
 }
 
 // clip keeps a long result's beginning and end, which is where the useful parts usually are.

@@ -17,7 +17,7 @@
 </section>
 <section class="panel">
   <h2>Output</h2>
-  {{if .Run.Output}}<pre class="output">{{.Run.Output}}</pre>{{else}}<p class="muted">{{if .Run.Active}}Waiting for output…{{else}}No output.{{end}}</p>{{end}}
+  {{if .Output}}<pre class="output">{{.Output}}</pre>{{else}}<p class="muted">{{if .Run.Active}}Waiting for output…{{else if .Expired}}The output was deleted after 30 days.{{else}}No output.{{end}}</p>{{end}}
   <span id="end"></span>
   {{if .Run.Active}}<p class="hint">This page refreshes every few seconds while the run is going.</p>{{end}}
 </section>

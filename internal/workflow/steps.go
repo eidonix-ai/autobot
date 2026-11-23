@@ -86,7 +86,22 @@ type AgentSettings struct {
 	Rerun        string   `json:"rerun"`         // run again on the same item: "resume" its conversation, or start "fresh"
 	FollowUp     string   `json:"follow_up"`     // resume: a template sent as the next message; "" sends the instruction again
 	OutputTo     string   `json:"output_to,omitempty"`
+
+	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
+	// the item this block continues: it sends its own Instruction and Done when as the next message of
+	// that conversation, which keeps the model, system prompt and tools it was started with. Its own
+	// Model is then only a copy of the other block's, shown read-only. NoConversation says what it does when the item has none yet: "skip" (the
+	// default) takes its output with a note and lets the workflow go on, "fresh" starts a conversation
+	// of its own with its Instruction.
+	ContinueOf     string `json:"continue_of,omitempty"`
+	NoConversation string `json:"no_conversation,omitempty"`
 }
+
+// Continues reports whether the block continues another block's conversation.
+func (s AgentSettings) Continues() bool { return s.ContinueOf != "" }
+
+// FreshWithoutConversation reports whether, with no conversation to continue, the block starts one.
+func (s AgentSettings) FreshWithoutConversation() bool { return s.NoConversation == "fresh" }
 
 // UsesMachine reports whether the agent may use a machine, for the settings form.
 func (s AgentSettings) UsesMachine(id int64) bool { return slices.Contains(s.Machines, id) }
@@ -189,8 +204,10 @@ func checkOutputTo(name, kind string) error {
 // Check confirms an agent's settings are complete and sensible.
 func (s AgentSettings) Check(kind string) error {
 	switch {
-	case !s.Model.Set():
+	case !s.Model.Set() && !s.Continues():
 		return errors.New("choose a model")
+	case s.NoConversation != "" && s.NoConversation != "skip" && s.NoConversation != "fresh":
+		return errors.New("choose what to do when the item has no earlier conversation")
 	case PersonaOf(s.Persona) == nil && s.Persona != "custom":
 		return errors.New("choose a preset, or Custom")
 	case strings.TrimSpace(s.EffectiveInstruction(kind)) == "":
@@ -275,6 +292,9 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 		OutputTo:     strings.TrimSpace(get("output_to")),
 		Machines:     []int64{},
 	}
+	if s.ContinueOf = get("continue_of"); s.ContinueOf != "" {
+		s.NoConversation = get("no_conversation")
+	}
 	for _, m := range all("machine") {
 		if id, err := strconv.ParseInt(m, 10, 64); err == nil {
 			s.Machines = append(s.Machines, id)
@@ -324,6 +344,8 @@ var prTags = []Tag{
 	{"pr_author", "its author"},
 	{"pr_diff", "its diff"},
 	{"pr_files", "the files it changes"},
+	{"pr_new_commits", "in a continued conversation: the commits pushed since its last turn, with their diff"},
+	{"pr_new_comments", "in a continued conversation: the comments and reviews posted since its last turn"},
 }
 
 var issueTags = []Tag{
@@ -422,7 +444,10 @@ func stepSummary(n Node, kind string, models func(ModelRef) string) string {
 		if err != nil || !s.Model.Set() {
 			return "Choose a model"
 		}
-		parts := []string{models(s.Model)}
+		var parts []string
+		if !s.Continues() {
+			parts = append(parts, models(s.Model))
+		}
 		if s.OutputTo != "" {
 			parts = append(parts, "→ {"+s.OutputTo+"}")
 		}

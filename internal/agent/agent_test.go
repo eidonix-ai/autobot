@@ -162,8 +162,9 @@ func TestCitedFilesMustBeRead(t *testing.T) {
 	}
 }
 
-// Running low on turns, the agent is told to wrap up; old tool results are cut when sent.
-func TestBudgetWarningAndTrimming(t *testing.T) {
+// Running low on turns, the agent is told to wrap up. Results are not cut while the request is small:
+// what was sent is never rewritten (see cache_test.go for when it is).
+func TestBudgetWarning(t *testing.T) {
 	var replies []Message
 	for i := 0; i < 12; i++ {
 		replies = append(replies, call(fmt.Sprint(i), "long", `{}`))
@@ -173,28 +174,17 @@ func TestBudgetWarningAndTrimming(t *testing.T) {
 	}}
 	m := &script{replies: replies}
 	Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 12}, nil)
-	warned := 0
+	warned, cut := 0, 0
 	for _, msg := range m.seen[len(m.seen)-1] {
 		if msg.Role == "user" && strings.Contains(msg.Content, "turns left") {
 			warned++
 		}
-	}
-	if warned != 2 {
-		t.Fatalf("%d warnings", warned)
-	}
-	sent := m.seen[len(m.seen)-1]
-	var full, cut int
-	for _, msg := range sent {
-		if msg.Role == "tool" {
-			if strings.Contains(msg.Content, "left out to save room") {
-				cut++
-			} else if len(msg.Content) > 5000 {
-				full++
-			}
+		if msg.Role == "tool" && strings.Contains(msg.Content, "left out to save room") {
+			cut++
 		}
 	}
-	if full != keepTurns || cut == 0 {
-		t.Fatalf("%d sent in full, %d cut", full, cut)
+	if warned != 2 || cut != 0 {
+		t.Fatalf("%d warnings, %d results cut", warned, cut)
 	}
 }
 

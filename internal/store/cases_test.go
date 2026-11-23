@@ -103,36 +103,6 @@ func TestWorkflowVersions(t *testing.T) {
 	}
 }
 
-func TestAgentMessagesCompressed(t *testing.T) {
-	st := open(t)
-	admin := mustUser(t, st, "admin", true)
-	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
-	id, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: "a", NodeName: "A", Model: "m"}, admin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	big := []byte(`{"role":"tool","content":"` + strings.Repeat("func send() { retry() } ", 4000) + `"}`)
-	if err := st.SaveAgentRun(id, "running", "{}", 0, [][]byte{[]byte(`{"role":"system"}`), big}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SaveAgentRun(id, "met", `{"outcome":"met"}`, 2, [][]byte{[]byte(`{"role":"assistant"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	msgs, err := st.AgentMessages(id)
-	if err != nil || len(msgs) != 3 || string(msgs[1]) != string(big) || string(msgs[2]) != `{"role":"assistant"}` {
-		t.Fatalf("%d messages, %v", len(msgs), err)
-	}
-	var stored int
-	var plain bool
-	st.db.QueryRow(`SELECT length(body), instr(body, 'retry()') > 0 FROM agent_messages WHERE run_id = ? AND seq = 1`, id).Scan(&stored, &plain)
-	if plain || stored > len(big)/20 {
-		t.Fatalf("stored %d bytes of %d, plain %v", stored, len(big), plain)
-	}
-	if r, _ := st.AgentRun(id); r.Status != "met" || r.FinishedAt.IsZero() {
-		t.Fatalf("%+v", r)
-	}
-}
-
 // A title from GitHub cannot add links or images to a case file.
 func TestHeadlineEscapesTitle(t *testing.T) {
 	h := CaseHeadline(time.Now(), "o/r", "pr", 7, "![x](https://evil.example/?d=1) [click](https://evil.example)")

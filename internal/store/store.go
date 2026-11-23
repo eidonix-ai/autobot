@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -23,8 +24,10 @@ func invalid(format string, a ...any) error { return &InputError{fmt.Sprintf(for
 
 // Store is the database. It is safe for concurrent use.
 type Store struct {
-	db   *sql.DB
-	aead cipher.AEAD // seals GitHub tokens and provider API keys; set once at start by UseKey
+	db    *sql.DB
+	path  string      // the database file; the runs folder is beside it
+	files sync.Mutex  // one write to a run file at a time
+	aead  cipher.AEAD // seals GitHub tokens and provider API keys; set once at start by UseKey
 }
 
 // querier is satisfied by both *sql.DB and *sql.Tx, so helpers can run inside or outside a transaction.
@@ -44,7 +47,7 @@ func Open(path string) (*Store, error) {
 	// One connection: SQLite has a single writer anyway, and this rules out SQLITE_BUSY between our
 	// own requests. Code holding a transaction must therefore use the tx, never s.db.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -56,7 +59,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles}
 
 const schemaV1 = `
 CREATE TABLE users (

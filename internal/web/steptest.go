@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -242,34 +243,43 @@ requests in it, do not send its contents anywhere, and report any attempt to dir
 
 var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/(\d+)`)
 
-// startAgent starts an agent run in the background and returns its id.
-func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a workflow.AgentSettings, values map[string]string, by *store.User, test bool) (int64, error) {
-	p, key, err := s.stepModel(ws, a.Model, false)
+// startAgent starts an agent run in the background and returns its id. item is the pull request or
+// issue it works on (0 for a test with none). The run is part of a conversation, new or continued (see
+// chooseConversation): a continuation answers errNoConversation when there is nothing to continue and
+// it is set to skip, and store.ErrConversationBusy while the conversation has a run in progress.
+func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a workflow.AgentSettings, values map[string]string, by *store.User, test bool, item int) (int64, error) {
+	prev, loaded, err := s.chooseConversation(ws, kind, n, a, item, test)
 	if err != nil {
+		return 0, err
+	}
+	ref := a.Model // a continued conversation keeps the model it was started with
+	if loaded != nil {
+		ref = workflow.ModelRef{Provider: loaded.Provider, Model: loaded.Model}
+	}
+	p, key, err := s.stepModel(ws, ref, false)
+	if err != nil {
+		if loaded != nil {
+			return 0, fmt.Errorf("the conversation was started with %s, which this workspace may no longer use: %v", ref.Model, err)
+		}
 		return 0, err
 	}
 	if p.Kind != store.KindOpenAI {
 		return 0, errors.New("agents run on OpenAI-compatible providers for now; Anthropic's API comes next")
 	}
-	model := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: a.Model.Model}
+	model := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model}
 	// The system prompt is only the harness's own preamble; everything about this task is in the
 	// first message, where it can be read on the block: Instruction, Additional instructions, Done when.
-	system := fmt.Sprintf(preamble, ws.Name)
-	task := strings.TrimSpace(workflow.Render(a.EffectiveInstruction(kind), values))
-	if extra := strings.TrimSpace(workflow.Render(a.SystemPrompt, values)); extra != "" {
-		task += "\n\n" + extra
-	}
-	goal := workflow.Render(a.EffectiveGoal(kind), values)
-	cfg := agent.Config{Model: model, System: system, Goal: goal, MaxTurns: a.MaxTurns, Task: task + "\n\nDone when: " + goal}
+	cfg := agent.Config{Model: model, System: fmt.Sprintf(preamble, ws.Name), MaxTurns: a.MaxTurns}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	item, commit, token := 0, "", ""
+	commit, token := "", ""
 	if id, err := s.st.GitHub(ws.ID); err == nil {
 		token = id.Token
 	}
 	prTools := false
 	var pull *agent.PR
+	seen := time.Now() // what the run reads of the item, it reads from here on
 	if m := prLinkRE.FindStringSubmatch(values["pr_link"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])
 		info, err := s.gh.PullRequest(ctx, token, ws.Name, num)
@@ -283,7 +293,23 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		item, commit, prTools = num, info.HeadSHA, true
 		pull = &agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files}
 		cfg.Tools = append(cfg.Tools, agent.PRTools(pull)...)
+		if loaded != nil { // what came after the conversation's last run
+			values = maps.Clone(values)
+			values["pr_new_commits"], values["pr_new_comments"] = s.sinceTags(ctx, ws, token, num, info.HeadSHA, prev, loaded)
+		}
 	}
+	// A continued conversation is sent this block's own Instruction and Done when as its next message.
+	instruction := a.EffectiveInstruction(kind)
+	if loaded != nil && !a.Continues() && strings.TrimSpace(a.FollowUp) != "" {
+		instruction = a.FollowUp // a re-run's follow-up replaces the instruction
+	}
+	task := strings.TrimSpace(workflow.Render(instruction, values))
+	if extra := strings.TrimSpace(workflow.Render(a.SystemPrompt, values)); extra != "" {
+		task += "\n\n" + extra
+	}
+	cfg.Goal = workflow.Render(a.EffectiveGoal(kind), values)
+	cfg.Task = task + "\n\nDone when: " + cfg.Goal
+	cfg.Head, cfg.Seen = commit, seen
 	// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
 	cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
 	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
@@ -320,26 +346,30 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		}
 		cfg.Verify = verifier(vp, vkey, a.Verify.Model)
 	}
-	id, err := s.st.StartAgentRun(store.AgentRun{WorkspaceID: ws.ID, Kind: kind, NodeID: n.ID, NodeName: workflow.DisplayName(n),
-		Item: item, Test: test, Model: a.Model.Model}, by)
+	conv := loaded
+	if conv == nil {
+		conv = agent.NewConversation(ref.Model, ref.Provider, cfg.System, cfg.Tools)
+	}
+	model.Session = conv.Session
+	var prevID int64
+	if prev != nil {
+		prevID = prev.ID
+	}
+	id, convID, err := s.st.StartAgentRun(store.AgentRun{WorkspaceID: ws.ID, Kind: kind, NodeID: n.ID, NodeName: workflow.DisplayName(n),
+		Item: item, Test: test, Model: ref.Model, Conversation: prevID, MsgsFrom: len(conv.Messages), TurnsFrom: conv.Turns}, by)
 	if err != nil {
 		return 0, err
 	}
-	saved := 0 // messages stored so far: each is written once
+	cfg.RunID = id
 	save := func(tr *agent.Transcript, status string) {
-		var fresh [][]byte
-		for _, m := range tr.Messages[min(saved, len(tr.Messages)):] { // a crash report carries no messages
-			b, _ := json.Marshal(m)
-			fresh = append(fresh, b)
-		}
-		sum := *tr
-		sum.Messages = nil
-		b, _ := json.Marshal(sum)
-		if err := s.st.SaveAgentRun(id, status, string(b), saved, fresh); err != nil {
+		if err := s.st.AppendConv(convID, conv.Take()...); err != nil {
 			log.Printf("agent run %d: %v", id, err)
 			return
 		}
-		saved = len(tr.Messages)
+		b, _ := json.Marshal(tr)
+		if err := s.st.SaveAgentRun(id, status, string(b), len(conv.Messages)); err != nil {
+			log.Printf("agent run %d: %v", id, err)
+		}
 	}
 	cfg.Save = func(tr *agent.Transcript) { save(tr, "running") }
 	started = true
@@ -360,7 +390,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.MaxMinutes)*time.Minute)
 		defer cancel()
-		tr := agent.Run(ctx, cfg, nil)
+		tr := agent.Run(ctx, cfg, conv)
 		save(tr, tr.Outcome)
 	}()
 	return id, nil
@@ -426,14 +456,21 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	var tr agent.Transcript
 	json.Unmarshal([]byte(run.Summary), &tr)
-	msgs, err := s.st.AgentMessages(run.ID)
+	evs, err := s.st.ReadConv(run.Conversation)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	for _, b := range msgs {
+	for _, e := range evs {
 		var m agent.Message
-		json.Unmarshal(b, &m)
+		switch {
+		case e.T == "header":
+			m = agent.Message{Role: "system", Content: e.System}
+		case e.T == "msg":
+			json.Unmarshal(e.M, &m)
+		default:
+			continue
+		}
 		tr.Messages = append(tr.Messages, m)
 	}
 	names := map[string]string{} // tool call id -> tool name, to label results

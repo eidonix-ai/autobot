@@ -226,7 +226,7 @@ func (s *Server) runResult(w http.ResponseWriter, r *http.Request, m *store.Mach
 		http.Error(w, "bad result: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	state, summary := judge(res, len(run.Output) >= protocol.MaxOutput, run.Timeout)
+	state, summary := judge(res, run.OutputSize >= protocol.MaxOutput, run.Timeout)
 	if run.Session && res.Error == "" && (res.Cancelled || res.TimedOut) {
 		// A session has no script to pass or fail: closing it, or reaching its time limit, is how it ends.
 		state, summary = "passed", "Session closed."

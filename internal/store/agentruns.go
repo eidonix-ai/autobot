@@ -6,95 +6,87 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
-// AgentRun is one run of an agent block. Summary is the harness's small JSON (plan, outcome, report,
-// tokens); the conversation is read with AgentMessages. Status is "running" until the run ends,
-// then its outcome.
-type AgentRun struct {
-	ID          int64
-	WorkspaceID int64
-	Kind        string
-	NodeID      string
-	NodeName    string
-	Item        int  // the pull request or issue; 0 for a test with none
-	Test        bool // started from the canvas, not by a workflow
-	Model       string
-	Status      string
-	Summary     string
-	StartedBy   string
-	StartedAt   time.Time
-	FinishedAt  time.Time // zero while running
+// gunzip reads one gzipped value.
+func gunzip(z []byte) ([]byte, error) {
+	zr, err := gzip.NewReader(bytes.NewReader(z))
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(zr)
 }
 
-// StartAgentRun records a run as running and returns its id.
-func (s *Store) StartAgentRun(r AgentRun, by *User) (int64, error) {
+// AgentRun is one run of an agent block. Summary is the harness's small JSON (plan, outcome, report,
+// tokens); the conversation is in a file (see conversations.go), and the run records which of its
+// messages and turns it added. Status is "running" until the run ends, then its outcome.
+type AgentRun struct {
+	ID           int64
+	WorkspaceID  int64
+	Kind         string
+	NodeID       string
+	NodeName     string
+	Item         int  // the pull request or issue; 0 for a test with none
+	Test         bool // started from the canvas, not by a workflow
+	Model        string
+	Status       string
+	Summary      string
+	StartedBy    string
+	StartedAt    time.Time
+	FinishedAt   time.Time // zero while running
+	Conversation int64     // the conversation it belongs to; 0 in StartAgentRun starts a new one
+	MsgsFrom     int       // the first message it added to the conversation
+	MsgsTo       int       // one past the last
+	TurnsFrom    int       // the conversation's turns before it
+}
+
+// StartAgentRun records a run as running and returns its id and its conversation's. A run with no
+// conversation starts one (standalone, when it is a test from the canvas). A conversation takes one
+// run at a time: if another is running in it, the answer is ErrConversationBusy.
+func (s *Store) StartAgentRun(r AgentRun, by *User) (run, conv int64, err error) {
 	var uid any
 	if by != nil {
 		uid = by.ID
 	}
-	res, err := s.db.Exec(`INSERT INTO agent_runs (workspace_id, kind, node_id, node_name, item, test, model, status, started_by, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`, r.WorkspaceID, r.Kind, r.NodeID, r.NodeName, r.Item, r.Test, r.Model, uid, now())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-// SaveAgentRun stores a run's summary and the messages from number first on (messages are only ever
-// added, so each is written once), and, when status is not "running", ends the run with it.
-func (s *Store) SaveAgentRun(id int64, status, summary string, first int, messages [][]byte) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	defer tx.Rollback()
-	for i, m := range messages {
-		var buf bytes.Buffer
-		zw := gzip.NewWriter(&buf)
-		zw.Write(m)
-		if err := zw.Close(); err != nil {
-			return err
+	conv = r.Conversation
+	if conv == 0 {
+		res, err := tx.Exec(`INSERT INTO conversations (workspace_id, kind, node_id, item, model, standalone, created_at, last_turn_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, r.WorkspaceID, r.Kind, r.NodeID, r.Item, r.Model, r.Test, now(), now())
+		if err != nil {
+			return 0, 0, err
 		}
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO agent_messages (run_id, seq, body) VALUES (?, ?, ?)`, id, first+i, buf.Bytes()); err != nil {
-			return err
-		}
+		conv, _ = res.LastInsertId()
 	}
+	res, err := tx.Exec(`INSERT INTO agent_runs (workspace_id, kind, node_id, node_name, item, test, model, status, started_by, started_at,
+		conversation, msgs_from, msgs_to, turns_from) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
+		r.WorkspaceID, r.Kind, r.NodeID, r.NodeName, r.Item, r.Test, r.Model, uid, now(), conv, r.MsgsFrom, r.MsgsFrom, r.TurnsFrom)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return 0, 0, ErrConversationBusy
+		}
+		return 0, 0, err
+	}
+	run, _ = res.LastInsertId()
+	return run, conv, tx.Commit()
+}
+
+// SaveAgentRun stores a run's summary and how far its messages reach (msgsTo), and, when status is
+// not "running", ends the run with it.
+func (s *Store) SaveAgentRun(id int64, status, summary string, msgsTo int) error {
 	finished := int64(0)
 	if status != "running" {
 		finished = now()
 	}
-	if _, err := tx.Exec(`UPDATE agent_runs SET status = ?, summary = ?, finished_at = ? WHERE id = ?`, status, summary, finished, id); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// AgentMessages returns a run's messages, in order.
-func (s *Store) AgentMessages(id int64) ([][]byte, error) {
-	rows, err := s.db.Query(`SELECT body FROM agent_messages WHERE run_id = ? ORDER BY seq`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out [][]byte
-	for rows.Next() {
-		var z []byte
-		if err := rows.Scan(&z); err != nil {
-			return nil, err
-		}
-		zr, err := gzip.NewReader(bytes.NewReader(z))
-		if err != nil {
-			return nil, err
-		}
-		m, err := io.ReadAll(zr)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	_, err := s.db.Exec(`UPDATE agent_runs SET status = ?, summary = ?, finished_at = ?, msgs_to = MAX(msgs_to, ?) WHERE id = ?`,
+		status, summary, finished, msgsTo, id)
+	return err
 }
 
 // AgentRun returns one run, or ErrNotFound.
@@ -102,9 +94,10 @@ func (s *Store) AgentRun(id int64) (*AgentRun, error) {
 	var r AgentRun
 	var started, finished int64
 	err := s.db.QueryRow(`SELECT a.id, a.workspace_id, a.kind, a.node_id, a.node_name, a.item, a.test, a.model, a.status, a.summary,
-		`+authorName+`, a.started_at, a.finished_at FROM agent_runs a LEFT JOIN users u ON u.id = a.started_by WHERE a.id = ?`, id).
+		`+authorName+`, a.started_at, a.finished_at, a.conversation, a.msgs_from, a.msgs_to, a.turns_from
+		FROM agent_runs a LEFT JOIN users u ON u.id = a.started_by WHERE a.id = ?`, id).
 		Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.NodeID, &r.NodeName, &r.Item, &r.Test, &r.Model, &r.Status, &r.Summary,
-			&r.StartedBy, &started, &finished)
+			&r.StartedBy, &started, &finished, &r.Conversation, &r.MsgsFrom, &r.MsgsTo, &r.TurnsFrom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -108,6 +108,9 @@ func serve(args []string) error {
 	if err := st.StopOrphanWorkflows(); err != nil {
 		return err
 	}
+	if err := st.MoveRunFiles(); err != nil { // test-run output and agent messages that earlier versions kept in the database
+		return err
+	}
 	// Providers reach only public addresses, and these hosts, which an admin trusts on the LAN.
 	trusted, err := st.TrustedHosts()
 	if err != nil {
@@ -137,8 +140,9 @@ func serve(args []string) error {
 	go ui.CheckRoutes(ctx)
 	go ui.ResumeWorkflows(ctx) // runs that were waiting for a person when Autobot stopped
 	go ui.Poll(ctx)
-	go ui.Index(ctx) // the local copy of each workspace's pull requests and issues
-	ui.UseRepos(*db) // a local copy of each workspace's repository, for the agents' code tools
+	go ui.Retain(ctx) // deletes run details that have outlived their keeping
+	go ui.Index(ctx)  // the local copy of each workspace's pull requests and issues
+	ui.UseRepos(*db)  // a local copy of each workspace's repository, for the agents' code tools
 	go ui.SyncRepos(ctx)
 	done := make(chan error, 1)
 	go func() {

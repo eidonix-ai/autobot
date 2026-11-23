@@ -270,7 +270,13 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data := map[string]any{"Title": fmt.Sprintf("Run %d · %s", run.ID, ws.Name), "WS": ws, "Run": run,
+	output, _, err := s.st.RunOutput(run)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	data := map[string]any{"Title": fmt.Sprintf("Run %d · %s", run.ID, ws.Name), "WS": ws, "Run": run, "Output": output,
+		"Expired":     run.OutputSize < 0,
 		"MachinePath": fmt.Sprintf("%s/machines/%d", ws.Path(), run.MachineID)}
 	if run.Active() {
 		data["Refresh"] = r.URL.Path + "#end" // reload every few seconds, at the end of the output

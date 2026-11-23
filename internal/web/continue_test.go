@@ -26,6 +26,11 @@ type chatLog struct {
 	*httptest.Server
 	mu     sync.Mutex
 	bodies []string
+	// reply, when set, makes the answer: it is given the messages and the names of the tools offered.
+	reply func(msgs []agent.Message, tools []string) agent.Message
+	// status, when set, may make a request fail: it is given the request's number (from 1) and answers
+	// an HTTP status, or 0 to let it through.
+	status func(n int) int
 }
 
 func newChatLog(t *testing.T, hold chan struct{}) *chatLog {
@@ -39,13 +44,32 @@ func newChatLog(t *testing.T, hold chan struct{}) *chatLog {
 		if n == 1 && hold != nil {
 			<-hold
 		}
+		if c.status != nil {
+			if code := c.status(n); code != 0 {
+				http.Error(w, "refused on purpose", code)
+				return
+			}
+		}
 		cached := 0
 		if n > 1 {
 			cached = 600
 		}
 		tc := agent.ToolCall{ID: fmt.Sprint("f", n), Type: "function"}
 		tc.Function.Name, tc.Function.Arguments = "finish", fmt.Sprintf(`{"status":"met","report":"Report %d."}`, n)
-		reply, _ := json.Marshal(agent.Message{Role: "assistant", ToolCalls: []agent.ToolCall{tc}})
+		answer := agent.Message{Role: "assistant", ToolCalls: []agent.ToolCall{tc}}
+		if c.reply != nil {
+			var req struct {
+				Messages []agent.Message
+				Tools    []struct{ Function struct{ Name string } }
+			}
+			json.Unmarshal(b, &req)
+			var names []string
+			for _, tl := range req.Tools {
+				names = append(names, tl.Function.Name)
+			}
+			answer = c.reply(req.Messages, names)
+		}
+		reply, _ := json.Marshal(answer)
 		fmt.Fprintf(w, `{"choices":[{"message":%s}],"usage":{"prompt_tokens":1000,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":%d}}}`, reply, cached)
 	}))
 	t.Cleanup(c.Close)
@@ -169,69 +193,176 @@ func (c *contEnv) agentRun(steps map[string]store.WorkflowStep, node string) *st
 
 var events = []workflow.Node{{ID: "ev1", Type: "pr_ready"}, {ID: "ev2", Type: "pr_activity"}}
 
-// A block that continues another's conversation sends what the conversation was started with, the
-// same bytes, and then its own Instruction and Done when. It has the conversation's model even when
-// the block it continues has since been given another; its report is its own.
-func TestContinuationSendsTheStoredPrefixThenItsOwnInstruction(t *testing.T) {
+// messagesOf is the messages of a request.
+func messagesOf(t *testing.T, body string) []agent.Message {
+	t.Helper()
+	var req struct{ Messages []agent.Message }
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("a request: %v", err)
+	}
+	return req.Messages
+}
+
+// pad is a thread's scratchpad.
+func (c *contEnv) pad(thread int64) []store.PadEntry {
+	c.t.Helper()
+	list, err := c.st.Pad(thread).List()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return list
+}
+
+// section is the text of an opening message from a heading to the next blank line followed by
+// another heading, or the end.
+func section(text, from, to string) string {
+	_, rest, ok := strings.Cut(text, from)
+	if !ok {
+		return ""
+	}
+	if to != "" {
+		rest, _, _ = strings.Cut(rest, to)
+	}
+	return rest
+}
+
+// A block that continues another's thread starts a fresh session: its first request is the system
+// prompt and one message, which has its own Instruction and Done when, then the other block's last
+// report in full, its scratchpad's index, and what is new on the pull request since: and none of
+// the earlier messages.
+func TestContinuationOpensFreshFromTheLastReport(t *testing.T) {
 	c := newContEnv(t, nil)
 	a := c.agentNode("A", "Reviewer", nil)
 	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) {
-		s.ContinueOf, s.Model = "A", workflow.ModelRef{}
-		s.Instruction, s.Goal = "Recheck {pr_title}.\n{pr_new_commits}\n{pr_new_comments}", "goal of B"
+		s.ContinueOf = "A"
+		s.Instruction, s.Goal = "Recheck {pr_title}.", "goal of B"
 	})
 	c.saveGraph(append(append([]workflow.Node{}, events...), a, b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
 	first := c.run("ev1")
-	// The block it continues now uses another model; the conversation keeps the one it began with.
-	a2 := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Model.Model = "m2" })
-	c.saveGraph(append(append([]workflow.Node{}, events...), a2, b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
+	c.editPR(1, func(l *github.Listed) { l.HeadSHA = "sha1-2" })
+	c.gh.compare = func(base, head string) ([]github.Commit, []github.ChangedFile, error) {
+		return []github.Commit{{SHA: "abcdef0123456789", Author: "alice", Message: "fix the typo"}}, []github.ChangedFile{{Path: "typo.go", Status: "modified", Additions: 1, Patch: "+the fixed line"}}, nil
+	}
+	c.gh.mu.Lock()
+	c.gh.records = append(c.gh.records, github.CommentRecord{Kind: "comment", ID: 1, Number: 1, Author: "dave", Body: "please add a test", Created: time.Now().Add(time.Hour)})
+	c.gh.mu.Unlock()
 	second := c.run("ev2")
 
 	reqs := c.llm.requests()
 	if len(reqs) != 2 || second["B"].Status != "done" || second["B"].Output != "Report 2." {
 		t.Fatalf("%d requests, B %+v", len(reqs), second["B"])
 	}
-	if !continues(reqs[0], reqs[1]) {
-		t.Fatalf("the continuation does not start with the conversation as it was:\n%.400s\n%.400s", reqs[0], reqs[1])
+	msgs := messagesOf(t, reqs[1])
+	if len(msgs) != 2 || msgs[0].Role != "system" || msgs[1].Role != "user" {
+		t.Fatalf("the continuation's first request has %d messages: %.600s", len(msgs), reqs[1])
 	}
-	if requestField(t, reqs[1], "model") != "m" || requestField(t, reqs[1], "user") != requestField(t, reqs[0], "user") || requestField(t, reqs[0], "user") == "" {
-		t.Fatalf("model %q, session %q then %q", requestField(t, reqs[1], "model"), requestField(t, reqs[0], "user"), requestField(t, reqs[1], "user"))
+	opening := msgs[1].Content
+	wantStart := "Recheck PR 1.\n\nDone when: goal of B\n\nYour last report on this item:\nReport 1.\n\nYour notes so far, readable with scratchpad_read and scratchpad_search:\n#1 [high] Report of "
+	if !strings.HasPrefix(opening, wantStart) {
+		t.Fatalf("the opening message:\n%s", opening)
 	}
-	if got, want := lastMessage(t, reqs[1]), "Recheck PR 1.\nNo new commits.\nNo new comments.\n\nDone when: goal of B"; got != want {
-		t.Fatalf("the new message:\n%q\nwant\n%q", got, want)
+	for _, want := range []string{"New since that report:\nCommits pushed since", "abcdef01 alice: fix the typo", "+the fixed line", "@dave commented at", "please add a test"} {
+		if !strings.Contains(opening, want) {
+			t.Errorf("the opening lacks %q:\n%s", want, opening)
+		}
+	}
+	// None of the earlier session: not its task, not its tool calls, not the conversation's session key.
+	if strings.Contains(reqs[1], "This is A.") || strings.Contains(reqs[1], `"role":"assistant"`) || requestField(t, reqs[1], "user") == requestField(t, reqs[0], "user") {
+		t.Fatalf("the continuation carried over the earlier session:\n%.800s", reqs[1])
 	}
 	ra, rb := c.agentRun(first, "A"), c.agentRun(second, "B")
-	if rb.Conversation != ra.Conversation || rb.MsgsFrom != ra.MsgsTo || rb.MsgsTo <= rb.MsgsFrom || rb.TurnsFrom != 1 || rb.NodeID != "B" {
+	if rb.Conversation == ra.Conversation || rb.MsgsFrom != 0 || rb.Thread != ra.Thread || rb.Thread == 0 || rb.NodeID != "B" {
 		t.Fatalf("A's run %+v\nB's run %+v", ra, rb)
 	}
-	// The run's page shows the run's own part of the conversation, and how much input was reused.
+	// The run's page shows the scratchpad of the thread and the session's own transcript.
 	code, page := c.b.get(fmt.Sprintf("/w/o/r/agent-runs/%d", rb.ID))
 	if code != 200 || !strings.Contains(page, "cache: 60% of input reused") || !strings.Contains(page, "Recheck PR 1.") || strings.Contains(page, "This is A.") ||
-		!strings.Contains(page, "continues a conversation") {
+		!strings.Contains(page, "Scratchpad") || !strings.Contains(page, "Report of ") {
 		t.Fatalf("run page %d:\n%s", code, page)
 	}
 }
 
-// The conversation's model is enforced: when the workspace may no longer use it, the continuation
-// fails plainly and asks the provider for nothing.
+// Every final report is an entry of the thread's scratchpad, titled with its date and run, in
+// high importance; the continuation appends to the same scratchpad, and the next one opens with
+// the newest report, not an older one.
+func TestEachReportIsAnEntryAndTheNewestOpensTheNext(t *testing.T) {
+	c := newContEnv(t, nil)
+	a := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Rerun = "resume" })
+	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) { s.ContinueOf = "A" })
+	c.saveGraph(append(append([]workflow.Node{}, events...), a, b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
+	r1 := c.agentRun(c.run("ev1"), "A")
+	r2 := c.agentRun(c.run("ev1"), "A")
+	r3 := c.agentRun(c.run("ev2"), "B")
+	if r1.Thread == 0 || r2.Thread != r1.Thread || r3.Thread != r1.Thread {
+		t.Fatalf("threads %d %d %d", r1.Thread, r2.Thread, r3.Thread)
+	}
+	pad := c.pad(r1.Thread)
+	if len(pad) != 3 {
+		t.Fatalf("%d entries: %+v", len(pad), pad)
+	}
+	for i, e := range pad {
+		run := []*store.AgentRun{r1, r2, r3}[i]
+		if e.N != i+1 || !e.Report || e.Importance != "high" || e.Author != "main" || e.Body != fmt.Sprintf("Report %d.", i+1) || e.Title != store.ReportTitle(run.ID) {
+			t.Errorf("entry %d: %+v", i, e)
+		}
+	}
+	// The second run's opening had the first report; the third's has the second, and not the first.
+	reqs := c.llm.requests()
+	if got := section(messagesOf(t, reqs[1])[1].Content, "Your last report on this item:\n", "\n\nYour notes so far"); got != "Report 1." {
+		t.Fatalf("the second run opened with %q", got)
+	}
+	if got := section(messagesOf(t, reqs[2])[1].Content, "Your last report on this item:\n", "\n\nYour notes so far"); got != "Report 2." {
+		t.Fatalf("the third run opened with %q", got)
+	}
+}
+
+// A reference block's model is its own, once set: it defaults to the other block's but may be
+// changed, and a block left with none uses the other's.
+func TestReferenceBlockCanUseItsOwnModel(t *testing.T) {
+	c := newContEnv(t, nil)
+	a := c.agentNode("A", "Reviewer", nil)
+	own := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) {
+		s.ContinueOf, s.Model = "A", workflow.ModelRef{Provider: c.prov.ID, Model: "m2"}
+	})
+	c.saveGraph(append(append([]workflow.Node{}, events...), a, own), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
+	c.run("ev1")
+	steps := c.run("ev2")
+	reqs := c.llm.requests()
+	if len(reqs) != 2 || steps["B"].Status != "done" || requestField(t, reqs[0], "model") != "m" || requestField(t, reqs[1], "model") != "m2" {
+		t.Fatalf("%d requests, models %q then %q, B %+v", len(reqs), requestField(t, reqs[0], "model"), requestField(t, reqs[len(reqs)-1], "model"), steps["B"])
+	}
+	// With none of its own, the other block's.
+	none := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) { s.ContinueOf, s.Model = "A", workflow.ModelRef{} })
+	c.saveGraph(append(append([]workflow.Node{}, events...), a, none), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
+	c.run("ev2")
+	if reqs = c.llm.requests(); len(reqs) != 3 || requestField(t, reqs[2], "model") != "m" {
+		t.Fatalf("a block with no model of its own: %d requests", len(reqs))
+	}
+}
+
+// A continuation whose own model the workspace may no longer use fails plainly and asks the
+// provider for nothing.
 func TestContinuationFailsWhenItsModelIsGone(t *testing.T) {
 	c := newContEnv(t, nil)
-	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) { s.ContinueOf, s.Model = "A", workflow.ModelRef{} })
+	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) {
+		s.ContinueOf, s.Model = "A", workflow.ModelRef{Provider: c.prov.ID, Model: "m2"}
+	})
 	c.saveGraph(append(append([]workflow.Node{}, events...), c.agentNode("A", "Reviewer", nil), b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
 	c.run("ev1")
-	c.st.SetProviderModels(c.prov.ID, []string{"m2"})
+	c.st.SetProviderModels(c.prov.ID, []string{"m"})
 	steps := c.run("ev2")
-	if steps["B"].Status != "failed" || !strings.Contains(steps["B"].Error, "started with m, which this workspace may no longer use") || len(c.llm.requests()) != 1 {
+	if steps["B"].Status != "failed" || len(c.llm.requests()) != 1 {
 		t.Fatalf("%+v, %d requests", steps["B"], len(c.llm.requests()))
 	}
 }
 
-// With no earlier conversation on the item, a continuation either skips (takes its output with a
-// note, and the workflow goes on) or starts a conversation of its own.
-func TestNoEarlierConversationSkipOrStartFresh(t *testing.T) {
+// With no earlier report on the item, a continuation either skips (takes its output with a note, and
+// the workflow goes on) or starts a thread of its own.
+func TestNoEarlierReportSkipOrStartFresh(t *testing.T) {
 	for _, fresh := range []bool{false, true} {
 		c := newContEnv(t, nil)
 		b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) {
-			s.ContinueOf, s.Model = "A", workflow.ModelRef{}
+			s.ContinueOf = "A"
 			s.Instruction = "Recheck {pr_title}, this is B."
 			if fresh {
 				s.NoConversation = "fresh"
@@ -242,17 +373,17 @@ func TestNoEarlierConversationSkipOrStartFresh(t *testing.T) {
 		steps := c.run("ev2")
 		reqs := c.llm.requests()
 		if fresh {
-			// A conversation of its own, with the model of the block it refers to and its own instruction.
-			if len(reqs) != 1 || steps["B"].Output != "Report 1." || steps["B"].Error != "" || requestField(t, reqs[0], "model") != "m" ||
-				!strings.Contains(lastMessage(t, reqs[0]), "Recheck PR 1, this is B.") {
+			// A thread of its own, opening with its instruction and no report.
+			if len(reqs) != 1 || steps["B"].Output != "Report 1." || steps["B"].Error != "" ||
+				!strings.Contains(lastMessage(t, reqs[0]), "Recheck PR 1, this is B.") || strings.Contains(reqs[0], "Your last report") {
 				t.Fatalf("fresh: %d requests, %+v", len(reqs), steps["B"])
 			}
-			if conv, err := c.st.LatestConversation(c.ws.ID, workflow.PR, "B", 1); err != nil || conv.NodeID != "B" {
-				t.Fatalf("its conversation: %v %v", conv, err)
+			if th, err := c.st.LatestThread(c.ws.ID, workflow.PR, "B", 1); err != nil || th.NodeID != "B" {
+				t.Fatalf("its thread: %v %v", th, err)
 			}
 			continue
 		}
-		if len(reqs) != 0 || steps["B"].Status != "done" || steps["B"].Port != "out" || steps["B"].Output != "" || steps["B"].Error != "no earlier conversation" ||
+		if len(reqs) != 0 || steps["B"].Status != "done" || steps["B"].Port != "out" || steps["B"].Output != "" || steps["B"].Error != "no earlier report" ||
 			steps["C"].Status != "done" || steps["C"].Output != "after: []" {
 			t.Fatalf("skip: %d requests, B %+v, C %+v", len(reqs), steps["B"], steps["C"])
 		}
@@ -262,49 +393,117 @@ func TestNoEarlierConversationSkipOrStartFresh(t *testing.T) {
 	}
 }
 
-// A continuation waits for the conversation's run in progress to end, then continues from where it
-// left off.
-func TestContinuationWaitsForARunInProgress(t *testing.T) {
-	hold := make(chan struct{})
-	c := newContEnv(t, hold)
-	release := sync.OnceFunc(func() { close(hold) })
-	t.Cleanup(release) // a failed check must not leave the provider holding the first request
-	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) { s.ContinueOf, s.Model = "A", workflow.ModelRef{} })
-	c.saveGraph(append(append([]workflow.Node{}, events...), c.agentNode("A", "Reviewer", nil), b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
-	runA := c.start("ev1")
-	for i := 0; len(c.llm.requests()) == 0; i++ { // A is with the provider
-		if i > 400 {
-			t.Fatal("A never asked")
-		}
-		time.Sleep(10 * time.Millisecond)
+// A thread the block started that has notes but no report (its run failed) is no report to
+// continue from: the block skips; a block run again on the item resumes it all the same.
+func TestThreadWithoutAReport(t *testing.T) {
+	c := newContEnv(t, nil)
+	_, _, th, err := c.st.StartAgentRun(store.AgentRun{WorkspaceID: c.ws.ID, Kind: workflow.PR, NodeID: "A", NodeName: "A", Item: 1, Model: "m"}, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	runB := c.start("ev2")
-	time.Sleep(300 * time.Millisecond)
-	if n := len(c.llm.requests()); n != 1 {
-		t.Fatalf("B did not wait: %d requests", n)
+	c.st.StopOrphanRuns()
+	c.st.Pad(th).Add(store.PadEntry{Title: "a finding", Importance: store.High, Description: "d", Body: "b"})
+	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) { s.ContinueOf = "A" })
+	a := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Rerun = "resume" })
+	c.saveGraph(append(append([]workflow.Node{}, events...), a, b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
+	if steps := c.run("ev2"); steps["B"].Error != "no earlier report" || len(c.llm.requests()) != 0 {
+		t.Fatalf("%+v", steps["B"])
 	}
-	if st, _ := c.st.WorkflowSteps(runB); st["B"].Status != "running" {
-		t.Fatalf("B: %+v", st["B"])
-	}
-	release()
-	c.finish(runA)
-	steps := c.finish(runB)
-	reqs := c.llm.requests()
-	if len(reqs) != 2 || steps["B"].Status != "done" || !continues(reqs[0], reqs[1]) {
-		t.Fatalf("%d requests, B %+v", len(reqs), steps["B"])
-	}
-	// What A said is in what B was sent.
-	if !strings.Contains(reqs[1], "Report 1.") && !strings.Contains(reqs[1], "Finished.") {
-		t.Fatalf("B did not see A's turn:\n%.600s", reqs[1])
+	steps := c.run("ev1")
+	opening := lastMessage(t, c.llm.requests()[0])
+	if c.agentRun(steps, "A").Thread != th || strings.Contains(opening, "Your last report") || !strings.Contains(opening, "#1 [high] a finding — d") {
+		t.Fatalf("thread %d, opening:\n%s", c.agentRun(steps, "A").Thread, opening)
 	}
 }
 
-// What a continued conversation is told is new: the commits pushed since its last run, with their
-// diff, and the comments and reviews posted since, and nothing older.
+// A block run again on the same item resumes its thread (its follow-up replaces its instruction, and
+// it opens with its last report and notes), or, set to start fresh, starts a new thread with an empty
+// scratchpad and no report.
+func TestRerunResumesOrStartsAnEmptyThread(t *testing.T) {
+	c := newContEnv(t, nil)
+	set := func(change func(*workflow.AgentSettings)) {
+		a := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) {
+			s.Rerun, s.FollowUp = "resume", "Anything new? {pr_new_comments}"
+			if change != nil {
+				change(s)
+			}
+		})
+		c.saveGraph(append(append([]workflow.Node{}, events...), a), [2]string{"ev1", "A"})
+	}
+	set(nil)
+	r1 := c.agentRun(c.run("ev1"), "A")
+	r2 := c.agentRun(c.run("ev1"), "A")
+	reqs := c.llm.requests()
+	msgs := messagesOf(t, reqs[1])
+	if r2.Thread != r1.Thread || len(msgs) != 2 || !strings.HasPrefix(msgs[1].Content, "Anything new? No new comments.\n\nDone when: goal of A\n\nYour last report on this item:\nReport 1.") {
+		t.Fatalf("resumed (thread %d, then %d):\n%q", r1.Thread, r2.Thread, msgs[len(msgs)-1].Content)
+	}
+	set(func(s *workflow.AgentSettings) { s.Rerun = "fresh" })
+	r3 := c.agentRun(c.run("ev1"), "A")
+	reqs = c.llm.requests()
+	if r3.Thread == r1.Thread || strings.Contains(reqs[2], "Your last report") || strings.Contains(reqs[2], "Your notes so far") || requestField(t, reqs[2], "user") == requestField(t, reqs[1], "user") {
+		t.Fatalf("a fresh start used the earlier thread:\n%.500s", reqs[2])
+	}
+	if pad := c.pad(r3.Thread); len(pad) != 1 || pad[0].Body != "Report 3." {
+		t.Fatalf("the new thread's scratchpad: %+v", pad)
+	}
+	if pad := c.pad(r1.Thread); len(pad) != 2 {
+		t.Fatalf("the old thread's scratchpad changed: %+v", pad)
+	}
+	// Fresh again: the next resume is of the newest thread.
+	set(nil)
+	r4 := c.agentRun(c.run("ev1"), "A")
+	if r4.Thread != r3.Thread || !strings.Contains(lastMessage(t, c.llm.requests()[3]), "Your last report on this item:\nReport 3.") {
+		t.Fatalf("thread %d, want %d", r4.Thread, r3.Thread)
+	}
+}
+
+// A continuation waits for the thread's run in progress to end, then opens with its report; so does
+// a block that resumes its own thread.
+func TestContinuationWaitsForARunInProgress(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		hold := make(chan struct{})
+		c := newContEnv(t, hold)
+		release := sync.OnceFunc(func() { close(hold) })
+		t.Cleanup(release) // a failed check must not leave the provider holding the first request
+		second, ev := "B", "ev2"
+		nodes := []workflow.Node{c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Rerun = "resume" }),
+			c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) { s.ContinueOf = "A" })}
+		if resume {
+			second, ev = "A", "ev1"
+		}
+		c.saveGraph(append(append([]workflow.Node{}, events...), nodes...), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
+		runA := c.start("ev1")
+		for i := 0; len(c.llm.requests()) == 0; i++ { // A is with the provider
+			if i > 400 {
+				t.Fatal("A never asked")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		runB := c.start(ev)
+		time.Sleep(300 * time.Millisecond)
+		if n := len(c.llm.requests()); n != 1 {
+			t.Fatalf("resume %v: the second run did not wait: %d requests", resume, n)
+		}
+		if st, _ := c.st.WorkflowSteps(runB); st[second].Status != "running" {
+			t.Fatalf("%s: %+v", second, st[second])
+		}
+		release()
+		c.finish(runA)
+		steps := c.finish(runB)
+		reqs := c.llm.requests()
+		if len(reqs) != 2 || steps[second].Status != "done" || !strings.Contains(lastMessage(t, reqs[1]), "Your last report on this item:\nReport 1.") {
+			t.Fatalf("resume %v: %d requests, %+v", resume, len(reqs), steps[second])
+		}
+	}
+}
+
+// What a continued thread is told is new: the commits pushed since its last run, with their diff,
+// and the comments and reviews posted since, and nothing older.
 func TestNewCommitsAndCommentsAreWhatCameAfter(t *testing.T) {
 	c := newContEnv(t, nil)
 	b := c.agentNode("B", "Rechecker", func(s *workflow.AgentSettings) {
-		s.ContinueOf, s.Model = "A", workflow.ModelRef{}
+		s.ContinueOf = "A"
 		s.Instruction = "COMMITS:\n{pr_new_commits}\nCOMMENTS:\n{pr_new_comments}\nEND"
 	})
 	c.saveGraph(append(append([]workflow.Node{}, events...), c.agentNode("A", "Reviewer", nil), b), [2]string{"ev1", "A"}, [2]string{"ev2", "B"})
@@ -355,50 +554,15 @@ func TestNewCommitsAndCommentsAreWhatCameAfter(t *testing.T) {
 	}
 }
 
-// A block run again on the same item resumes its own conversation, with its follow-up as the next
-// message; set to start fresh, or with a new model, it starts a conversation of its own.
-func TestRerunResumesOrStartsFresh(t *testing.T) {
-	c := newContEnv(t, nil)
-	set := func(change func(*workflow.AgentSettings)) {
-		a := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) {
-			s.Rerun, s.FollowUp = "resume", "Anything new? {pr_new_comments}"
-			if change != nil {
-				change(s)
-			}
-		})
-		c.saveGraph(append(append([]workflow.Node{}, events...), a), [2]string{"ev1", "A"})
-	}
-	set(nil)
-	c.run("ev1")
-	c.run("ev1")
-	reqs := c.llm.requests()
-	if !continues(reqs[0], reqs[1]) || lastMessage(t, reqs[1]) != "Anything new? No new comments.\n\nDone when: goal of A" {
-		t.Fatalf("resumed:\n%q", lastMessage(t, reqs[1]))
-	}
-	set(func(s *workflow.AgentSettings) { s.Rerun = "fresh" })
-	c.run("ev1")
-	reqs = c.llm.requests()
-	if continues(reqs[1], reqs[2]) || strings.Count(reqs[2], `"role":"user"`) != 1 || requestField(t, reqs[2], "user") == requestField(t, reqs[1], "user") {
-		t.Fatalf("a fresh start continued the conversation:\n%.300s", reqs[2])
-	}
-	// A new model cannot take over a conversation it did not have.
-	set(func(s *workflow.AgentSettings) { s.Model.Model = "m2" })
-	c.run("ev1")
-	reqs = c.llm.requests()
-	if requestField(t, reqs[3], "model") != "m2" || strings.Count(reqs[3], `"role":"user"`) != 1 {
-		t.Fatalf("a new model resumed the old conversation:\n%.300s", reqs[3])
-	}
-}
-
 // The poller starts no second run of an event block on an item while one is running, and the events
-// stay until it has ended: all of them then start one run, which continues the conversation.
-func TestPollerFoldsEventsWhileAConversationRuns(t *testing.T) {
+// stay until it has ended: all of them then start one run, which resumes the thread.
+func TestPollerFoldsEventsWhileAThreadRuns(t *testing.T) {
 	hold := make(chan struct{})
 	c := newContEnv(t, hold)
 	release := sync.OnceFunc(func() { close(hold) })
 	t.Cleanup(release)
 	c.saveGraph([]workflow.Node{c.eventNode("ev", "pr_activity", func(s *workflow.EventSettings) { s.Activity, s.QuietMinutes = []string{"comments"}, 0 }),
-		c.agentNode("A", "Reviewer", nil)}, [2]string{"ev", "A"})
+		c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Rerun = "resume" })}, [2]string{"ev", "A"})
 	c.goLive(workflow.PR)
 	c.held[1] = true // the first run is kept running on purpose
 	c.comment(1, "carol", "one")
@@ -423,8 +587,8 @@ func TestPollerFoldsEventsWhileAConversationRuns(t *testing.T) {
 	c.round()
 	c.wantRuns(1, 1)
 	reqs := c.llm.requests()
-	if len(reqs) != 2 || !continues(reqs[0], reqs[1]) {
-		t.Fatalf("the second run did not continue the conversation: %d requests", len(reqs))
+	if len(reqs) != 2 || !strings.Contains(lastMessage(t, reqs[1]), "Your last report on this item:\nReport 1.") {
+		t.Fatalf("the second run did not resume the thread: %d requests", len(reqs))
 	}
 	if pending, _ := c.st.PollPending(c.ws.ID, workflow.PR, "ev"); len(pending) != 0 {
 		t.Fatalf("still pending: %v", pending)
@@ -442,9 +606,9 @@ func (c *contEnv) eventNode(id, typ string, change func(*workflow.EventSettings)
 	return workflow.Node{ID: id, Type: typ, Settings: b}
 }
 
-// A conversation whose file is missing (Autobot stopped before its first turn was written) is set
-// aside: the next run of the block starts a new one instead of failing on every run.
-func TestMissingConversationFileIsSetAside(t *testing.T) {
+// A thread does not depend on its sessions' files: with one gone (retention, or a disk problem), the
+// next run still resumes the thread from its report and notes.
+func TestThreadSurvivesAMissingConversationFile(t *testing.T) {
 	c := newContEnv(t, nil)
 	a := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Rerun = "resume" })
 	c.saveGraph(append(append([]workflow.Node{}, events...), a), [2]string{"ev1", "A"})
@@ -452,7 +616,7 @@ func TestMissingConversationFileIsSetAside(t *testing.T) {
 	os.Remove(filepath.Join(c.st.RunsDir(), fmt.Sprintf("conv-%d.jsonl.gz", first.Conversation)))
 	steps := c.run("ev1")
 	second := c.agentRun(steps, "A")
-	if steps["A"].Status != "done" || second.Conversation == first.Conversation || second.Status != "met" {
+	if steps["A"].Status != "done" || second.Thread != first.Thread || second.Status != "met" || !strings.Contains(lastMessage(t, c.llm.requests()[1]), "Your last report on this item:\nReport 1.") {
 		t.Fatalf("step %+v, run %+v", steps["A"], second)
 	}
 }

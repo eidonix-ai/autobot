@@ -62,9 +62,9 @@ func (c *contEnv) postNode(id string, form url.Values) (int, string) {
 	return code, body
 }
 
-// A block set to continue another's conversation: its model is the other block's, read-only; it names
-// a block of its canvas that starts conversations of its own; and the canvas says whose it continues,
-// including when that block has been deleted, which never stops the canvas saving.
+// A block set to continue another's thread: its model starts as the other block's and may be
+// changed; it names a block of its canvas that starts threads of its own; and the canvas says whose
+// it continues, including when that block has been deleted, which never stops the canvas saving.
 func TestReferenceBlocks(t *testing.T) {
 	c := newContEnv(t, nil)
 	model := workflow.ModelRef{Provider: c.prov.ID, Model: "m"}
@@ -73,13 +73,23 @@ func TestReferenceBlocks(t *testing.T) {
 	b := c.agentNode("bb", "Rechecker", nil)
 	c.saveGraph(append(append([]workflow.Node{}, events...), a, other, b, workflow.Node{ID: "ee", Type: workflow.CaseEntry}))
 
-	// Saving it as a continuation of A copies A's model, whatever the form says, and keeps the choice.
-	code, body := c.postNode("bb", url.Values{"continue_of": {"aa"}, "no_conversation": {"fresh"}, "model": {"99:nonsense"}})
+	// Saved as a continuation of A with no model, it takes A's, and keeps the choice. With a model of
+	// its own it keeps that, an ordinary setting; one the workspace may not use is refused.
+	code, body := c.postNode("bb", url.Values{"continue_of": {"aa"}, "no_conversation": {"fresh"}, "model": {""}})
 	if got := c.storedNode("bb"); code != 200 || got.ContinueOf != "aa" || !got.FreshWithoutConversation() || got.Model != model {
 		t.Fatalf("save: %d %s\n%+v", code, body, got)
 	}
-	if code, page := c.b.get("/w/o/r/workflows/pr/nodes/bb"); code != 200 || !strings.Contains(page, `value="m · LLM" readonly`) ||
-		!strings.Contains(page, `<option value="aa" data-model="m · LLM" selected>Reviewer</option>`) || strings.Contains(page, `value="oo"`) || strings.Contains(page, `value="bb"`) {
+	own := workflow.ModelRef{Provider: c.prov.ID, Model: "m2"}
+	if code, body := c.postNode("bb", url.Values{"continue_of": {"aa"}, "no_conversation": {"fresh"}, "model": {modelValue(own)}}); code != 200 || c.storedNode("bb").Model != own {
+		t.Fatalf("a model of its own: %d %s\n%+v", code, body, c.storedNode("bb"))
+	}
+	if code, _ := c.postNode("bb", url.Values{"continue_of": {"aa"}, "model": {"99:nonsense"}}); code != 400 {
+		t.Fatalf("a model that is not the workspace's: %d", code)
+	}
+	if code, page := c.b.get("/w/o/r/workflows/pr/nodes/bb"); code != 200 || strings.Contains(page, "readonly data-source-model") ||
+		!strings.Contains(page, `<select name="model" data-model>`) || !strings.Contains(page, `<option value="`+modelValue(own)+`" selected>m2 · LLM</option>`) ||
+		!strings.Contains(page, `<option value="aa" data-model="`+modelValue(model)+`" selected>Reviewer</option>`) || strings.Contains(page, `value="oo"`) || strings.Contains(page, `value="bb"`) ||
+		!strings.Contains(page, "If this item has no earlier report") {
 		t.Fatalf("the form %d:\n%s", code, page)
 	}
 	// Not itself, not a block that continues another, not anything but an Agent block.
@@ -89,14 +99,14 @@ func TestReferenceBlocks(t *testing.T) {
 			t.Fatalf("continue_of %q: %d\n%s", bad, code, body)
 		}
 	}
-	if code, body := c.postNode("bb", url.Values{"continue_of": {"aa"}, "no_conversation": {"sometimes"}}); code != 400 || !strings.Contains(body, "no earlier conversation") {
+	if code, body := c.postNode("bb", url.Values{"continue_of": {"aa"}, "no_conversation": {"sometimes"}}); code != 400 || !strings.Contains(body, "no earlier report") {
 		t.Fatalf("no_conversation: %d\n%s", code, body)
 	}
 	if c.storedNode("bb").ContinueOf != "aa" {
 		t.Fatal("a refused save changed the block")
 	}
 
-	// A new reference placed on the canvas: an Agent block that continues A, with A's model.
+	// A new reference placed on the canvas: an Agent block that continues A, starting with A's model.
 	nodes := []map[string]any{{"id": "aa", "type": "agent", "x": 1, "y": 1}, {"id": "bb", "type": "agent", "x": 2, "y": 2},
 		{"id": "rr", "type": "agent", "x": 3, "y": 3, "continue_of": "aa"}, {"id": "evone", "type": "pr_ready"}}
 	code, answer := c.layout(nodes, []workflow.Link{})

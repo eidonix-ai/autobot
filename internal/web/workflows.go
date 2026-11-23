@@ -155,7 +155,7 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 			node.Settings, node.Name = k.Settings, k.Name
 		} else if n.Type == workflow.Agent && n.ContinueOf != "" {
 			// A reference to a block: an Agent block that continues its conversation. It starts from the
-			// defaults of a new Agent block, with the other block's model shown read-only.
+			// defaults of a new Agent block, with the other block's model, which it may change.
 			a := workflow.DefaultAgent(kind)
 			a.ContinueOf = n.ContinueOf
 			if err := checkContinuation(old, kind, node, a); err != nil {
@@ -398,25 +398,26 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			s.fail(w, err)
 			return
 		}
-		type preset struct{ Key, Label, Instruction, Goal string }
+		type preset struct{ Key, Label, Instruction, Goal, Closing string }
 		var presets []preset
 		for _, p := range workflow.Personas {
-			presets = append(presets, preset{p.Key, p.Label, p.InstructionFor(kind), p.GoalFor(kind)})
+			presets = append(presets, preset{p.Key, p.Label, p.InstructionFor(kind), p.GoalFor(kind), p.Closing})
 		}
 		data["Presets"], data["Machines"], data["Verifiers"] = presets, machines, verify
-		data["Instruction"], data["Goal"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind)
+		data["Instruction"], data["Goal"], data["Closing"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind), st.EffectiveClosing(kind)
+		data["ReportTurns"], data["TimeWarn"] = st.EffectiveReportTurns(), st.EffectiveTimeWarn()
 		data["Locked"] = workflow.PersonaOf(st.Persona) != nil
-		data["Preamble"] = fmt.Sprintf(preamble, ws.Name)
+		data["Preamble"] = preambleText(ws.Name, st.EffectiveClosing(kind) == workflow.ClosingReport)
 		// The blocks whose conversation this one may continue: the others that start their own.
 		type source struct {
-			ID, Name, Model string
+			ID, Name, Model string // Model is its value in a model dropdown
 			Selected        bool
 		}
 		var sources []source
 		found := st.ContinueOf == ""
 		for _, o := range g.Nodes {
 			if os, err := workflow.AgentSettingsOf(o, kind); o.Type == workflow.Agent && o.ID != n.ID && err == nil && !os.Continues() {
-				sources = append(sources, source{o.ID, workflow.DisplayName(o), s.modelLabel(os.Model), o.ID == st.ContinueOf})
+				sources = append(sources, source{o.ID, workflow.DisplayName(o), modelValue(os.Model), o.ID == st.ContinueOf})
 				found = found || o.ID == st.ContinueOf
 			}
 		}
@@ -424,11 +425,6 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			sources = append([]source{{ID: st.ContinueOf, Name: "(deleted)", Selected: true}}, sources...)
 		}
 		data["Sources"] = sources
-		for _, o := range sources {
-			if o.Selected {
-				data["SourceModel"] = o.Model
-			}
-		}
 	case workflow.DecisionSettings:
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
@@ -493,9 +489,8 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		a.Model = parseModel(f.Get("model"))
 		a.Verify = parseModel(f.Get("verify"))
 		if a.Continues() {
-			// Its model is the conversation's: a copy of the other block's, for the form to show.
-			a.Model = workflow.ModelRef{}
-			if err = checkContinuation(g, kind, *n, a); err == nil {
+			// Its model is its own, which starts as a copy of the other block's.
+			if err = checkContinuation(g, kind, *n, a); err == nil && !a.Model.Set() {
 				if _, src, serr := continuedBlock(g, kind, a); serr == nil {
 					a.Model = src.Model
 				}
@@ -504,9 +499,9 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			if err = a.Check(kind); err == nil {
 				if workflow.PersonaOf(a.Persona) != nil { // a preset's own text is not stored on the block
-					a.Instruction, a.Goal = "", ""
+					a.Instruction, a.Goal, a.Closing = "", "", ""
 				}
-				if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil && !a.Continues() {
+				if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil && a.Model.Set() {
 					err = s.checkModel(ws, a.Model, false)
 				}
 			}

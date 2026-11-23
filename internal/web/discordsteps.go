@@ -218,7 +218,7 @@ func (s *Server) resume(ctx context.Context, id int64) error {
 		}
 	}
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
-		rs.builtIn["repo:charter"] = c.Body
+		rs.builtIn["charter"] = c.Body
 	}
 	go func() {
 		defer survive(fmt.Sprintf("workflow run %d", id), func(string) { s.st.FinishWorkflowRun(id, "failed") })

@@ -12,7 +12,7 @@ type Turn struct{ In, Out, Cached int }
 // Shown is a conversation's file read for display.
 type Shown struct {
 	System   string
-	Messages []Message    // as they were first written: later shortenings are not applied
+	Messages []Message    // as they were first written: later prunes are not applied; a compaction's new messages follow
 	Usage    map[int]Turn // what the call that produced an assistant message cost, by message index
 }
 
@@ -27,6 +27,12 @@ func Show(events []store.ConvEvent) *Shown {
 			var m Message
 			json.Unmarshal(e.M, &m)
 			s.Messages = append(s.Messages, m)
+		case "compact": // what the conversation was compacted to is shown after what it had
+			for _, raw := range e.Msgs {
+				var m Message
+				json.Unmarshal(raw, &m)
+				s.Messages = append(s.Messages, m)
+			}
 		case "turn":
 			s.Usage[len(s.Messages)-1] = Turn{e.In, e.Out, e.Cached}
 		}

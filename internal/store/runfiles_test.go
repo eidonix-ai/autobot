@@ -96,10 +96,10 @@ func TestCutOffFileReads(t *testing.T) {
 	}
 }
 
-// startConv starts a run in a new conversation of a block on an item.
-func startConv(t *testing.T, st *Store, ws *Workspace, node string, item int, test bool) (run, conv int64) {
+// startConv starts a run of a block on an item, in a new thread, with a new conversation.
+func startConv(t *testing.T, st *Store, ws *Workspace, node string, item int, test bool) (run, conv, thread int64) {
 	t.Helper()
-	run, conv, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: node, NodeName: node, Item: item, Test: test, Model: "m"}, nil)
+	run, conv, thread, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: node, NodeName: node, Item: item, Test: test, Model: "m"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,12 +126,18 @@ func TestRetention(t *testing.T) {
 		}
 	}
 	long := strings.Repeat("a long report. ", 400)
+	threads := map[int64]int64{} // conversation -> its thread, which has a note in its scratchpad
 	conv := func(item int, lastTurnDaysAgo int) (run, id int64) {
-		run, id = startConv(t, st, ws, "ag", item, false)
+		run, id, th := startConv(t, st, ws, "ag", item, false)
 		st.AppendConv(id, ConvEvent{T: "header", Model: "m"}, ConvEvent{T: "msg", M: json.RawMessage(`{"role":"user","content":"hi"}`)})
 		sum := `{"plan":[{"step":"x","status":"done"}],"read":["a.go"],"turns":3,"tokens_in":900,"tokens_out":40,"outcome":"met","report":` + string(mustJSON(long)) + `}`
 		st.SaveAgentRun(run, "met", sum, 1)
 		st.db.Exec(`UPDATE conversations SET last_turn_at = ? WHERE id = ?`, ago(lastTurnDaysAgo).Unix(), id)
+		if _, err := st.Pad(th).Add(PadEntry{Title: "a note", Importance: High, Description: "d", Body: "b"}); err != nil {
+			t.Fatal(err)
+		}
+		st.db.Exec(`UPDATE threads SET last_at = ? WHERE id = ?`, ago(lastTurnDaysAgo).Unix(), th)
+		threads[id] = th
 		return
 	}
 	_, open := conv(1, 100) // open: kept however long ago its last turn was
@@ -149,6 +155,10 @@ func TestRetention(t *testing.T) {
 		if got := exists(st.convFile(id)); got != want {
 			t.Errorf("conversation %d kept %v, want %v", id, got, want)
 		}
+		// A thread's scratchpad goes with its conversation, on the same rule.
+		if notes, _ := st.Pad(threads[id]).List(); (len(notes) == 1) != want {
+			t.Errorf("conversation %d: %d notes kept, want kept %v", id, len(notes), want)
+		}
 	}
 	// The run of a deleted conversation stays, with outcome, turns, tokens, and the report cut to 2 KB.
 	r, _ := st.AgentRun(run2)
@@ -159,12 +169,12 @@ func TestRetention(t *testing.T) {
 		len(report) > maxKeptReport+10 || !strings.HasPrefix(report, "a long report.") || sum["plan"] != nil || sum["read"] != nil {
 		t.Fatalf("%s", r.Summary)
 	}
-	// A deleted conversation is not found again; an open item's is.
-	if _, err := st.LatestConversation(ws.ID, "pr", "ag", 2); err != ErrNotFound {
-		t.Fatalf("a deleted conversation was found: %v", err)
+	// A deleted thread is not found again; an open item's is.
+	if _, err := st.LatestThread(ws.ID, "pr", "ag", 2); err != ErrNotFound {
+		t.Fatalf("a deleted thread was found: %v", err)
 	}
-	if c, err := st.LatestConversation(ws.ID, "pr", "ag", 1); err != nil || c.ID != open {
-		t.Fatalf("%v %v", c, err)
+	if th, err := st.LatestThread(ws.ID, "pr", "ag", 1); err != nil || th.ID != threads[open] {
+		t.Fatalf("%v %v", th, err)
 	}
 
 	// Test-run output and workflow-step output older than 30 days go; the rows stay.
@@ -248,8 +258,8 @@ func TestMoveRunFilesOnce(t *testing.T) {
 	if left != 0 {
 		t.Fatalf("%d message rows left", left)
 	}
-	if _, err := st.LatestConversation(ws.ID, "pr", "ag", 7); err != ErrNotFound {
-		t.Fatalf("a moved conversation can be continued: %v", err)
+	if _, err := st.LatestThread(ws.ID, "pr", "ag", 7); err != ErrNotFound {
+		t.Fatalf("a moved conversation has a thread to continue: %v", err)
 	}
 	// A second start moves nothing and writes nothing.
 	before, _ := os.Stat(st.convFile(ar.Conversation))
@@ -264,27 +274,79 @@ func TestMoveRunFilesOnce(t *testing.T) {
 	}
 }
 
-// Only one run at a time in a conversation; a test is its own and is never continued.
-func TestOneRunPerConversation(t *testing.T) {
+// Only one run at a time in a thread; a test has a thread of its own, which is never continued.
+func TestOneRunPerThread(t *testing.T) {
 	st := open(t)
 	admin := mustUser(t, st, "admin", true)
 	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
-	run, conv := startConv(t, st, ws, "ag", 7, false)
-	if _, _, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: "other", NodeName: "x", Item: 7, Model: "m", Conversation: conv}, nil); err != ErrConversationBusy {
-		t.Fatalf("a second run in a busy conversation: %v", err)
+	run, _, th := startConv(t, st, ws, "ag", 7, false)
+	if _, _, _, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: "other", NodeName: "x", Item: 7, Model: "m", Thread: th}, nil); err != ErrThreadBusy {
+		t.Fatalf("a second run in a busy thread: %v", err)
 	}
-	if busy, _ := st.ConversationRunning(conv); !busy {
+	if busy, _ := st.ThreadRunning(th); !busy {
 		t.Fatal("not running")
 	}
+	// Another item's thread is free.
+	if _, _, _, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: "ag", NodeName: "x", Item: 8, Model: "m"}, nil); err != nil {
+		t.Fatalf("a run in another thread: %v", err)
+	}
 	st.SaveAgentRun(run, "met", "{}", 0)
-	if _, _, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: "other", NodeName: "x", Item: 7, Model: "m", Conversation: conv}, nil); err != nil {
-		t.Fatalf("after it ended: %v", err)
+	if busy, _ := st.ThreadRunning(th); busy {
+		t.Fatal("still running")
 	}
-	_, testConv := startConv(t, st, ws, "ag", 8, true)
-	if c, err := st.LatestConversation(ws.ID, "pr", "ag", 8); err == nil {
-		t.Fatalf("a test's conversation %d can be continued", c.ID)
+	// The next run joins the same thread, with a conversation of its own.
+	run2, conv2, th2, err := st.StartAgentRun(AgentRun{WorkspaceID: ws.ID, Kind: "pr", NodeID: "other", NodeName: "x", Item: 7, Model: "m", Thread: th}, nil)
+	if err != nil || th2 != th {
+		t.Fatalf("after it ended: %v, thread %d", err, th2)
 	}
-	_ = testConv
+	if r1, _ := st.AgentRun(run); r1.Conversation == conv2 || r1.Thread != th {
+		t.Fatalf("the sessions share a conversation: %+v", r1)
+	}
+	_ = run2
+	_, _, testThread := startConv(t, st, ws, "ag", 9, true)
+	if got, err := st.LatestThread(ws.ID, "pr", "ag", 9); err == nil {
+		t.Fatalf("a test's thread %d (%d) can be continued", got.ID, testThread)
+	}
+}
+
+// A thread's scratchpad is its own: another thread, of the same block or another workspace, never sees
+// it; numbers count per thread; entries are only added; the newest report is found.
+func TestScratchpad(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	a, _ := st.CreateWorkspace("o/a", admin, "", "")
+	b, _ := st.CreateWorkspace("o/b", admin, "", "")
+	_, _, ta := startConv(t, st, a, "ag", 1, false)
+	_, _, ta2 := startConv(t, st, a, "ag", 2, false)
+	_, _, tb := startConv(t, st, b, "ag", 1, false)
+	pa := st.Pad(ta)
+	n1, _ := pa.Add(PadEntry{Title: "one", Importance: High, Description: "first\nline  here", Body: "body one"})
+	n2, _ := pa.Add(PadEntry{Author: "helper", Title: "two", Importance: "weird", Body: "body two"})
+	nb, _ := st.Pad(tb).Add(PadEntry{Title: "other workspace", Importance: Low, Body: "secret of o/b"})
+	if n1 != 1 || n2 != 2 || nb != 1 {
+		t.Fatalf("numbers %d %d %d", n1, n2, nb)
+	}
+	got, err := pa.List()
+	if err != nil || len(got) != 2 || got[0].Author != "main" || got[0].Description != "first line here" || got[1].Author != "helper" || got[1].Importance != Medium {
+		t.Fatalf("%+v %v", got, err)
+	}
+	for _, other := range []int64{ta2, tb} {
+		if list, _ := st.Pad(other).List(); len(list) > 1 || (len(list) == 1 && list[0].Body != "secret of o/b") {
+			t.Fatalf("thread %d sees %+v", other, list)
+		}
+	}
+	if list, _ := st.Pad(ta2).List(); len(list) != 0 {
+		t.Fatalf("another item's thread sees %+v", list)
+	}
+	if _, ok, _ := pa.LastReport(); ok {
+		t.Fatal("a report with none saved")
+	}
+	pa.Add(PadEntry{Title: "Report of day 1", Importance: High, Body: "first report", Report: true})
+	pa.Add(PadEntry{Title: "later note", Body: "x"})
+	pa.Add(PadEntry{Title: "Report of day 2", Importance: High, Body: "second report", Report: true})
+	if rep, ok, _ := pa.LastReport(); !ok || rep.Body != "second report" {
+		t.Fatalf("%+v", rep)
+	}
 }
 
 // SQLite gives a new row the id of a deleted one when that was the highest: a new conversation or
@@ -294,7 +356,7 @@ func TestReusedIDsStartEmpty(t *testing.T) {
 	admin := mustUser(t, st, "admin", true)
 	a, _ := st.CreateWorkspace("o/a", admin, "", "")
 	b, _ := st.CreateWorkspace("o/b", admin, "", "")
-	_, conv := startConv(t, st, a, "ag", 1, false)
+	_, conv, _ := startConv(t, st, a, "ag", 1, false)
 	st.AppendConv(conv, ConvEvent{T: "header", Model: "m", System: "secret of o/a"})
 	r := newTestRun(t, st, a, admin)
 	st.AppendOutput(r.ID, "output of o/a\n", 1<<20)
@@ -308,7 +370,7 @@ func TestReusedIDsStartEmpty(t *testing.T) {
 	// Even if they were left, a new row with a reused id starts empty.
 	st.writeGz(st.convFile(conv), []byte(`{"t":"header","system":"secret of o/a"}`+"\n"))
 	st.writeGz(st.testLog(r.ID), []byte("output of o/a\n"))
-	_, conv2 := startConv(t, st, b, "ag", 1, false)
+	_, conv2, _ := startConv(t, st, b, "ag", 1, false)
 	r2 := newTestRun(t, st, b, admin)
 	if conv2 != conv || r2.ID != r.ID {
 		t.Skipf("ids were not reused (%d %d, %d %d): nothing to check", conv, conv2, r.ID, r2.ID)
@@ -335,7 +397,8 @@ func TestRetentionWaitsForTheLocalCopy(t *testing.T) {
 	ago := func(days int) time.Time { return at.Add(-time.Duration(days) * 24 * time.Hour) }
 	st.SaveItem(ws.ID, Item{Number: 2, Kind: "pr", Title: "closed", State: "closed", Created: ago(90), Updated: ago(40), Closed: ago(40)}, nil)
 	conv := func(item, lastTurnDaysAgo int) int64 {
-		_, id := startConv(t, st, ws, "ag", item, false)
+		run, id, _ := startConv(t, st, ws, "ag", item, false)
+		st.SaveAgentRun(run, "met", "{}", 0)
 		st.AppendConv(id, ConvEvent{T: "header", Model: "m"})
 		st.db.Exec(`UPDATE conversations SET last_turn_at = ? WHERE id = ?`, ago(lastTurnDaysAgo).Unix(), id)
 		return id

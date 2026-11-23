@@ -77,18 +77,76 @@ git only through its environment, never a command line or the mirror's config.
    (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
    own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
    fan out and merge; loops are refused for now. Templates use {tags}: built-in ones are a parent and
-   its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {repo:charter}),
-   so the Test box asks only for the parent; old names such as {pr_title} still work. A step's "Output to" tag is
+   its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {charter}),
+   so the Test box asks only for the parent; old names such as {pr_title}, {project_charter} and {repo:charter} still work. A step's "Output to" tag is
    kept per case (one PR or issue) and replaced by the next write. Shift-click tests one block with
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never
    opened is marked "(not opened)" where it is cited; the plan is the agent's own notes. Only an
    optional check model (Verify) can send it back, and that report is kept meanwhile. It is told
-   once, at 5 turns left, and on its last turn finish is its only tool, so a run always ends with a report. Conversations are append-only so the provider's cache hits (old tool output is
-   shortened in one batch past ~100k tokens), stored with test-run logs as gzip files in
-   /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open plus 30 days.
-   A block re-run on an item resumes its conversation (Re-run setting); a reference block
-   ("New reference", dashed) continues another block's. Built so far: PR and web tools, personas, and machine sessions: an agent whose
+   once, at 5 turns left, and on its last turn only finish may be called, so a run always ends with a report.
+   The tools array is the same on every turn (a changed one makes the provider start over on the whole
+   request): a turn that allows less (the last, the forced compact, the save turn) says which tools are
+   allowed in its message, and a call to any other is answered with an error and not run.
+   The context is the agent's to manage and nothing is ever trimmed automatically (Derek, 2026-11-23):
+   conversations are append-only so the provider's cache hits, and what is sent is rewritten only when
+   the agent prunes or compacts. Every tool result starts with its number, `[result N]`;
+   `prune_result` (only once the context line shows the context is past half its window: before that it costs a cache miss for nothing) replaces results by `[result N pruned: first line; n characters]` (recorded as a
+   `prune` event, so a replay rebuilds the same messages); once the previous request passed 50% of the
+   model's window, the last result of a turn ends with `[context: 412k of 1,000k tokens]` (appended,
+   never rewriting). `compact` replaces the whole conversation by the run's task and one message with
+   what the agent carries forward, its scratchpad index and its plan (a `compact` event holds those
+   messages). Past 85% of the window (the last request's tokens plus what was added at 3.5 characters a
+   token) the turn is told to save and compact and may call only scratchpad_write, update_plan and
+   compact; an agent that does not is compacted by the harness, which also compacts and retries once when
+   the provider refuses a request as too long. Each permitted model has a context window (tokens), set
+   in one box on the provider's page, prefilled from the provider's /models (vLLM's `max_model_len`,
+   or `context_length` or `context_window`); the Eidonix gateway reports `context_window`, and 128,000 is
+   assumed when none is known. The scratchpad holds the agent's notes outside its context: entries
+   (title, importance low/medium/high, one-line description, body, author "main" for now) are only ever
+   added, with tools scratchpad_write, scratchpad_index, scratchpad_read and scratchpad_search.
+   Every run is a new session, starting fresh, in its **thread**: (workspace, kind, the block that
+   started it, item). A thread has one scratchpad, shared by all its runs, and every run's final report
+   is also kept in it, as a high-importance entry "Report of <date>, run <id>". Re-run "resume" and a
+   reference block ("New reference", dashed, "Continue the conversation of") open a session with the
+   block's own Instruction and Done when, the thread's newest report, the scratchpad index and what is
+   new on the pull request since (the commits and comments after the head and time the previous run
+   saw); their model and tools are the block's own (a reference block starts with the other block's
+   model, an ordinary setting). With no earlier report the block skips or starts fresh; Re-run
+   "fresh" starts a new thread with an empty scratchpad. A thread takes one run at a time (the others
+   wait), and is kept, with its scratchpad, while its item is open plus 30 days. The closing step
+   "Write the report from the scratchpad" (Gather Information's; Custom may choose it) splits a run in
+   two: the research session ends as always, its finish report is saved as a high-importance entry
+   "Research summary", it gets one more turn that may only write to the scratchpad, and a new session
+   (its own conversation, the preamble, only read-only code and pull request tools, its own turns and
+   10 minutes) writes the report from the scratchpad and finishes with it. The research's finish asks
+   for a short summary only (the full report is written next). The run's report is the written one,
+   else the research's own, else the high and medium notes in order; its outcome stays the research's,
+   and "(not opened)" is judged against the files both sessions read. Conversations are stored with test-run
+   logs as gzip files in /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open
+   plus 30 days; conversations from before threads are shown on the run page but never continued. The run
+   page shows the scratchpad, the research transcript, the sub-agents and "Writing the report", all updating
+   in place. A run that crashes keeps its last good transcript (the written report if any, else the
+   research's, else the notes) and still saves it to the thread; a panic in a harness tool is an error
+   answer; a run cut off by a restart that wrote notes and no report gets a notes report, kept in the
+   thread. What the thread has seen of the item (head and time) moves only when a run came to a report.
+   A thread or conversation with a run in progress is never dropped by retention, and nothing is written
+   to a deleted thread.
+   Sub-agents: with "Max sub-agents at a time" above 0 the main agent has `spawn_agent` (title, task),
+   which waits for the sub-agent and returns its report, its outcome, an index (no bodies) of its notes
+   and the run's totals ("Sub-agents so far: 3 started, 112 turns used."); a call made while that many are
+   working is refused, and an optional per-run limit ("Limit sub-agents per run", off by default) refuses
+   past the total. A sub-agent is a fresh session on the same harness (same model, the block's turns,
+   numbered results, prune, compact, window, warnings) inside the parent's context and deadline, with the
+   read-only code and pull request tools (the web ones only if the block allows the internet), no shell,
+   no spawn_agent, and a private scratchpad (entries by s1, s2…, kept with the run and deleted with the
+   thread); the main agent reads them with scratchpad_index, scratchpad_read and scratchpad_search, agent
+   "s1", and copies nothing automatically. The main agent's compaction message and the writing session's
+   first message list the sub-agents. The run's totals include theirs; the run page shows each as
+   "Sub-agent s2: title". Time warning ("Warn before the time limit", 10% by default, 0 for none): when
+   that share of the time is left every session still working (the main one, each sub-agent, a late one
+   on its first turn, the writing session of its own 10 minutes) is told once, at its next turn,
+   "About N minutes left: finish with your report soon." Built so far: PR and web tools, personas, and machine sessions: an agent whose
    settings list machines gets a shell in a long-lived job container on the first free one (a test run
    with the session flag: same isolation, all the machine's GPUs, the PR head's code). The connector
    takes the agent's commands over a long poll (GET /connector/v1/runs/{id}/commands, answered at

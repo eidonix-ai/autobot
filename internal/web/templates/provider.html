@@ -77,6 +77,8 @@
     {{end}}
   </fieldset>
   <label>Other model IDs, one per line <textarea name="other" rows="4" class="code" spellcheck="false" autocomplete="off">{{.Form.Get "other"}}</textarea></label>
+  <label><span class="lbl">Context windows (tokens) <span class="info" tabindex="0" data-tip="One model and its window a line, such as deepseek-flash 1000000. An agent is told to save its work and compact at 85% of it; with none given, 128,000 is assumed.">ⓘ</span></span>
+    <textarea name="windows" rows="4" class="code" spellcheck="false" autocomplete="off">{{if .Form.Has "windows"}}{{.Form.Get "windows"}}{{else}}{{.Windows}}{{end}}</textarea></label>
   <button>Save models</button>
 </form>
 <p class="hint">Saving replaces the permitted models with the ticked ones plus the IDs typed above. Use the exact ID a request must name, such as anthropic/claude-sonnet-4.5 on OpenRouter. Not every provider can list its models; typing the IDs always works.</p>

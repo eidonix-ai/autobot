@@ -381,13 +381,25 @@
   // An agent's preset fills its Instruction and Done when, read-only; Custom unlocks them, starting
   // from the text that was there.
   modal.addEventListener('change', function (e) {
-    // Continuing another block's conversation: the model is that conversation's, shown read-only.
+    // Continuing another block's thread: the model starts as that block's.
     var cont = e.target.closest('select[data-continue]');
     if (cont) {
       var on = cont.value !== '', form = cont.form;
       form.querySelectorAll('[data-when-continuing]').forEach(function (el) { el.hidden = !on; });
-      form.querySelectorAll('[data-when-alone]').forEach(function (el) { el.hidden = on; });
-      form.querySelector('[data-source-model]').value = cont.options[cont.selectedIndex].dataset.model || '';
+      // The model starts as the other block's, and may be changed.
+      var model = cont.options[cont.selectedIndex].dataset.model;
+      if (on && model) { form.querySelector('select[data-model]').value = model; }
+      return;
+    }
+    var limit = e.target.closest('input[data-limit-subs]');
+    if (limit) {
+      limit.form.querySelectorAll('[data-when-limit]').forEach(function (el) { el.hidden = !limit.checked; });
+      return;
+    }
+    var closing = e.target.closest('select[data-closing]');
+    if (closing) {
+      var cform = closing.form;
+      cform.querySelectorAll("[data-when-report]").forEach(function (el) { el.hidden = closing.value !== "report"; });
       return;
     }
     var sel = e.target.closest('select[data-preset]');
@@ -398,6 +410,10 @@
       if (!custom) { box.value = opt.dataset[name]; }
       box.readOnly = !custom;
     });
+    var step = form.elements['closing'];
+    if (!custom) { step.value = opt.dataset.closing || ''; }
+    step.disabled = !custom;
+    form.querySelectorAll('[data-when-report]').forEach(function (el) { el.hidden = step.value !== 'report'; });
   });
   modal.addEventListener('submit', function (e) {
     var form = e.target, id = modal.dataset.node;

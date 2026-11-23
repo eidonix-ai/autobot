@@ -26,8 +26,9 @@ const (
 
 // Model is a model a provider offers.
 type Model struct {
-	ID   string // what a request names it
-	Name string // a friendlier name, or "" when the provider gives none
+	ID     string // what a request names it
+	Name   string // a friendlier name, or "" when the provider gives none
+	Window int    // its context window in tokens, when the provider says; else 0
 }
 
 // client does not follow redirects, so a key sent to the endpoint cannot be passed on to another site.
@@ -137,6 +138,22 @@ type item struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
 	CamelName   string `json:"displayName"` // System One
+
+	// The context window, as OpenAI-compatible servers report it: vLLM's max_model_len, and the
+	// context_length (OpenRouter and others) or context_window some servers use.
+	MaxModelLen   int `json:"max_model_len"`
+	ContextLength int `json:"context_length"`
+	ContextWindow int `json:"context_window"`
+}
+
+// window is the context window an entry reports, or 0.
+func (it item) window() int {
+	for _, n := range []int{it.MaxModelLen, it.ContextLength, it.ContextWindow} {
+		if n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // parse reads the shapes providers use: {"data": [...]}, a bare [...], and {"models": [...]}.
@@ -182,7 +199,7 @@ func parse(body []byte) (*page, error) {
 		if strings.TrimPrefix(name, "models/") == id {
 			name = ""
 		}
-		p.models = append(p.models, Model{ID: id, Name: name})
+		p.models = append(p.models, Model{ID: id, Name: name, Window: it.window()})
 	}
 	return &p, nil
 }
@@ -191,8 +208,15 @@ func parse(body []byte) (*page, error) {
 func tidy(models []Model) []Model {
 	byID := map[string]Model{}
 	for _, m := range models {
-		if cur, ok := byID[m.ID]; !ok || cur.Name == "" {
+		cur, ok := byID[m.ID]
+		if !ok || cur.Name == "" {
+			if cur.Window > 0 && m.Window == 0 {
+				m.Window = cur.Window
+			}
 			byID[m.ID] = m
+		} else if cur.Window == 0 {
+			cur.Window = m.Window
+			byID[m.ID] = cur
 		}
 	}
 	out := make([]Model, 0, len(byID))

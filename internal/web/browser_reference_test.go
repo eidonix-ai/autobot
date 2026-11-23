@@ -110,17 +110,28 @@ func TestBrowserReferenceBlock(t *testing.T) {
 		t.Fatalf("after reload: %q %q; plain block %q %q: %v", again, line, plain, plainLine, err)
 	}
 
-	// Its settings: the conversation's model, read-only, and what to do with no earlier conversation.
-	var model, readonly, nothing string
+	// Its settings: a model of its own that starts as the other block's, and what to do with no earlier
+	// report. Choosing the block it continues again puts the other block's model back; another model
+	// can be chosen and saved.
+	var model, disabled, nothing, back string
+	other := modelValue(workflow.ModelRef{Provider: c.prov.ID, Model: "m2"})
 	err = chromedp.Run(ctx,
 		chromedp.Click(`#node-2 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal form.node-form`),
-		chromedp.Evaluate(`document.querySelector('#wf-modal [data-source-model]').value`, &model),
-		chromedp.Evaluate(`String(document.querySelector('#wf-modal [data-source-model]').readOnly)`, &readonly),
+		chromedp.Evaluate(`document.querySelector('#wf-modal select[data-model]').selectedOptions[0].textContent`, &model),
+		chromedp.Evaluate(`String(document.querySelector('#wf-modal select[data-model]').disabled)`, &disabled),
 		chromedp.Evaluate(`document.querySelector('#wf-modal select[name=no_conversation]').value`, &nothing),
-		chromedp.Click(`#wf-modal .close`, chromedp.ByQuery),
+		chromedp.Evaluate(`(function(){var m=document.querySelector('#wf-modal select[data-model]'); m.value='`+other+`';
+			document.querySelector('#wf-modal select[data-continue]').dispatchEvent(new Event('change', {bubbles: true})); return m.selectedOptions[0].textContent})()`, &back),
 	)
-	if err != nil || model != "m · LLM" || readonly != "true" || nothing != "skip" {
-		t.Fatalf("the reference's form: model %q read-only %s, no conversation %q: %v", model, readonly, nothing, err)
+	if err != nil || model != "m · LLM" || disabled != "false" || nothing != "skip" || back != "m · LLM" {
+		t.Fatalf("the reference's form: model %q (disabled %s), no conversation %q, after choosing the block again %q: %v", model, disabled, nothing, back, err)
+	}
+	err = chromedp.Run(ctx,
+		chromedp.SetValue(`#wf-modal select[data-model]`, other),
+		chromedp.Click(`#wf-modal form.node-form button:not([type])`), waitSaved,
+	)
+	if ref, _ = workflow.AgentSettingsOf(stored().Nodes[1], workflow.PR); err != nil || ref.Model.Model != "m2" || ref.ContinueOf != "aa" {
+		t.Fatalf("a model of its own: %+v: %v", ref, err)
 	}
 
 	// Delete the block it continues: the save is not refused, and the reference says so, also after a reload.

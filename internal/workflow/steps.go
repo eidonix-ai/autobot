@@ -78,14 +78,21 @@ type AgentSettings struct {
 	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
 	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
 	Internet     bool     `json:"internet"`      // web search and fetching pages
-	SubAgents    int      `json:"sub_agents"`    // how many sub-agents it may run at once; 0 for none
-	Machines     []int64  `json:"machines"`      // the workspace machines it may use
-	Verify       ModelRef `json:"verify"`        // a decision model that checks a finish claiming the goal is met; unset for none
-	MaxTurns     int      `json:"max_turns"`     // model calls before it must have finished
-	MaxMinutes   int      `json:"max_minutes"`   // wall time before it is stopped
-	Rerun        string   `json:"rerun"`         // run again on the same item: "resume" its conversation, or start "fresh"
-	FollowUp     string   `json:"follow_up"`     // resume: a template sent as the next message; "" sends the instruction again
-	OutputTo     string   `json:"output_to,omitempty"`
+	SubAgents    int      `json:"sub_agents"`    // how many sub-agents it may have working at once; 0 for none
+	// SubAgentsPerRun, when above 0, is how many sub-agents one run may start in all.
+	SubAgentsPerRun int `json:"sub_agents_per_run,omitempty"`
+	// TimeWarnPercent is how much of the time limit is left when every session of the run still working
+	// is told so, once; 0 for no warning. A block saved before it was set (nil) has 10.
+	TimeWarnPercent *int     `json:"time_warn_percent,omitempty"`
+	Machines        []int64  `json:"machines"`               // the workspace machines it may use
+	Verify          ModelRef `json:"verify"`                 // a decision model that checks a finish claiming the goal is met; unset for none
+	MaxTurns        int      `json:"max_turns"`              // model calls before it must have finished
+	Closing         string   `json:"closing,omitempty"`      // Custom only: "" (finish delivers the output) or "report" (written from the scratchpad)
+	ReportTurns     int      `json:"report_turns,omitempty"` // with a written report: turns the writing session has; 0 is 15
+	MaxMinutes      int      `json:"max_minutes"`            // wall time before it is stopped
+	Rerun           string   `json:"rerun"`                  // run again on the same item: "resume" its conversation, or start "fresh"
+	FollowUp        string   `json:"follow_up"`              // resume: a template sent as the next message; "" sends the instruction again
+	OutputTo        string   `json:"output_to,omitempty"`
 
 	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
 	// the item this block continues: it sends its own Instruction and Done when as the next message of
@@ -134,6 +141,42 @@ func (s AgentSettings) EffectiveInstruction(kind string) string {
 		return p.InstructionFor(kind)
 	}
 	return s.Instruction
+}
+
+// Closing steps: what happens after the agent's research.
+const (
+	ClosingNone   = ""       // finish delivers the output
+	ClosingReport = "report" // the report is written from the scratchpad, in a fresh session
+)
+
+// DefaultTimeWarn is the share of the time limit, in percent, left when the sessions of a run are warned.
+const DefaultTimeWarn = 10
+
+// EffectiveTimeWarn is the time warning in percent of the time limit; 0 is none.
+func (s AgentSettings) EffectiveTimeWarn() int {
+	if s.TimeWarnPercent == nil {
+		return DefaultTimeWarn
+	}
+	return *s.TimeWarnPercent
+}
+
+// DefaultReportTurns is how many turns the session that writes a report has, when not set.
+const DefaultReportTurns = 15
+
+// EffectiveClosing is the closing step: its preset's, or its own when Custom.
+func (s AgentSettings) EffectiveClosing(kind string) string {
+	if p := PersonaOf(s.Persona); p != nil {
+		return p.Closing
+	}
+	return s.Closing
+}
+
+// EffectiveReportTurns is how many turns the writing session has.
+func (s AgentSettings) EffectiveReportTurns() int {
+	if s.ReportTurns <= 0 {
+		return DefaultReportTurns
+	}
+	return s.ReportTurns
 }
 
 // EffectiveGoal is the Done when the agent is held to: its preset's, or its own when Custom.
@@ -207,7 +250,7 @@ func (s AgentSettings) Check(kind string) error {
 	case !s.Model.Set() && !s.Continues():
 		return errors.New("choose a model")
 	case s.NoConversation != "" && s.NoConversation != "skip" && s.NoConversation != "fresh":
-		return errors.New("choose what to do when the item has no earlier conversation")
+		return errors.New("choose what to do when the item has no earlier report")
 	case PersonaOf(s.Persona) == nil && s.Persona != "custom":
 		return errors.New("choose a preset, or Custom")
 	case strings.TrimSpace(s.EffectiveInstruction(kind)) == "":
@@ -217,11 +260,19 @@ func (s AgentSettings) Check(kind string) error {
 	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate:
 		return fmt.Errorf("prompts are limited to %d characters", maxTemplate)
 	case s.SubAgents < 0 || s.SubAgents > 16:
-		return errors.New("sub-agents are 0 to 16")
+		return errors.New("sub-agents at a time are 0 to 16")
+	case s.SubAgentsPerRun < 0 || s.SubAgentsPerRun > 500:
+		return errors.New("the limit of sub-agents per run is 1 to 500")
+	case s.TimeWarnPercent != nil && (*s.TimeWarnPercent < 0 || *s.TimeWarnPercent > 50):
+		return errors.New("the time warning is 0 to 50 percent of the time limit")
 	case s.MaxTurns < 1 || s.MaxTurns > 500:
 		return errors.New("the turn limit is 1 to 500")
 	case s.MaxMinutes < 1 || s.MaxMinutes > 240:
 		return errors.New("the time limit is 1 to 240 minutes")
+	case s.Closing != ClosingNone && s.Closing != ClosingReport:
+		return errors.New("choose a closing step")
+	case s.ReportTurns < 0 || s.ReportTurns > 200:
+		return errors.New("the report's turn limit is 1 to 200")
 	case s.Rerun != "resume" && s.Rerun != "fresh":
 		return errors.New("choose what a re-run does")
 	}
@@ -288,6 +339,7 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 		Goal:         strings.TrimSpace(get("goal")),
 		Internet:     get("internet") == "on",
 		Rerun:        get("rerun"),
+		Closing:      get("closing"),
 		FollowUp:     strings.TrimSpace(get("follow_up")),
 		OutputTo:     strings.TrimSpace(get("output_to")),
 		Machines:     []int64{},
@@ -303,6 +355,21 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 	s.SubAgents, _ = strconv.Atoi(get("sub_agents"))
 	s.MaxTurns, _ = strconv.Atoi(get("max_turns"))
 	s.MaxMinutes, _ = strconv.Atoi(get("max_minutes"))
+	s.ReportTurns, _ = strconv.Atoi(get("report_turns"))
+	if get("limit_sub_agents") == "on" { // the checkbox: unchecked, whatever the number says, is no limit
+		if n, err := strconv.Atoi(get("sub_agents_per_run")); err == nil && n >= 1 {
+			s.SubAgentsPerRun = n
+		} else {
+			s.SubAgentsPerRun = -1 // refused by Check
+		}
+	}
+	if v := strings.TrimSpace(get("time_warn_percent")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			n = -1 // refused by Check
+		}
+		s.TimeWarnPercent = &n
+	}
 	return s
 }
 
@@ -328,7 +395,7 @@ func DecisionFromForm(get func(string) string) DecisionSettings {
 // Tag is a placeholder a template may use.
 //
 // Built-in tags are parents and their fields (Derek, 2026-11-23): {pr} is the pull request's link,
-// and {pr:title}, {pr:diff}… are filled from it by Autobot; {repo} and {repo:charter} likewise from
+// and {pr:title}, {pr:diff}… are filled from it by Autobot; {repo} and {charter} likewise from
 // the workspace. A tag without a colon that is not a parent is another step's output. So only a
 // parent is ever asked for, and a field is visibly not something to fill in.
 type Tag struct {
@@ -341,7 +408,7 @@ func (t Tag) Field() bool { return strings.Contains(t.Name, ":") }
 
 var commonTags = []Tag{
 	{"repo", "the repository, owner/name", true},
-	{"repo:charter", "the project charter", true},
+	{"charter", "the project charter (kept in Autobot)", true},
 	{"previous_output", "the output of the step this one follows", false},
 }
 
@@ -373,7 +440,7 @@ var oldTags = map[string]string{
 	"pr_link": "pr", "pr_number": "pr:number", "pr_title": "pr:title", "pr_body": "pr:body", "pr_author": "pr:author",
 	"pr_diff": "pr:diff", "pr_files": "pr:files", "pr_new_commits": "pr:new_commits", "pr_new_comments": "pr:new_comments",
 	"issue_link": "issue", "issue_number": "issue:number", "issue_title": "issue:title", "issue_body": "issue:body",
-	"issue_author": "issue:author", "project_charter": "repo:charter",
+	"issue_author": "issue:author", "project_charter": "charter", "repo:charter": "charter",
 }
 
 // Tags lists the built-in tags of a workflow kind.

@@ -8,6 +8,7 @@ type Persona struct {
 	Key, Label              string
 	Instruction, Goal       string // for pull requests
 	IssueInstruction, Issue string // for issues: the instruction and the goal
+	Closing                 string // the closing step: ClosingReport writes the report from the scratchpad; "" none
 }
 
 // InstructionFor is the preset's instruction for a workflow of kind.
@@ -61,7 +62,8 @@ Keep what you verified apart from what is claimed.
 End with a report that summarizes all relevant findings, each with its citations: file names and
 lines, issue and pull request numbers, links. Close it with the open questions and what you could not
 find.`,
-		Issue: "Every point above has been looked into, and the report summarizes all relevant findings with their citations, then the open questions and what could not be found."},
+		Issue:   "Every point above has been looked into, and the report summarizes all relevant findings with their citations, then the open questions and what could not be found.",
+		Closing: ClosingReport},
 	{Key: "code_quality", Label: "Code Quality",
 		Instruction: prHead + `Review the change for correctness first, then for clarity and maintainability.
 Read each changed function in its surrounding code, not only the diff, and follow its callers when the change alters behaviour.

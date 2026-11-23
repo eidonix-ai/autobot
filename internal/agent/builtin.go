@@ -21,7 +21,8 @@ type Pad interface {
 }
 
 var pruneSpec = ToolSpec{Name: "prune_result", Description: "Drop tool results you have finished with from your context. Every tool result starts with its number, " +
-	"[result N]; each one named here is replaced by its number, its first line and its length. Save what matters to your scratchpad first, " +
+	"[result N]; each one named here is replaced by its number, its first line and its length. Prune only once the context line shows your context is past half its window: " +
+	"before that, pruning only costs a cache miss and throws detail away. Save what matters to your scratchpad first, " +
 	"and prune several results at once: each prune makes the next request slower to start.",
 	Parameters: json.RawMessage(`{"type":"object","properties":{"results":{"type":"array","items":{"type":"integer"},"description":"The numbers of the results to prune."}},"required":["results"]}`)}
 

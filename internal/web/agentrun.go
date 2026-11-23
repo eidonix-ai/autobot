@@ -28,7 +28,7 @@ The report you give finish is your final answer and the only part people read, s
 
 Your context has a limit, and managing it is part of the work:
 - Scratchpad. As you go, save each finding worth keeping with scratchpad_write, with its citation (file and lines, pull request or issue numbers, links) and an honest importance: high only for what the final report cannot do without. The scratchpad is kept outside your context, so nothing in it is lost when you prune or compact. Read it back with scratchpad_index, scratchpad_read and scratchpad_search.
-- Numbered results. Every tool result starts with its number, [result N]. When you have finished with some results, and saved what matters from them, drop them with prune_result, several at once: each prune makes the next request slower to start, so prune in batches, not after every call.
+- Numbered results. Every tool result starts with its number, [result N]. Do not prune while there is no context line: until your context is past half its window, pruning only costs a cache miss and throws detail away. Past half, drop results you have finished with, once you have saved what matters from them, using prune_result, several at once: each prune makes the next request slower to start, so prune in batches, not after every call.
 - The context line. Once your context is past half its window, tool results end with a line such as [context: 412k of 1,000k tokens].
 - Compact. When your context passes about 70%% of its window, save what you still need to the scratchpad and call compact: your earlier messages are replaced by the task, what you carry forward, your scratchpad index and your plan. Past 85%% Autobot asks for it at once.
 - The plan. Make a plan with update_plan and keep it current; it survives compacting.

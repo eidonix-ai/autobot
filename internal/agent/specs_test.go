@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/eidonix-ai/autobot/internal/search"
@@ -49,5 +50,13 @@ func TestEveryToolDefinitionIsValid(t *testing.T) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(map[string]any{"tools": ts}); err != nil {
 		t.Fatalf("the request cannot be written: %v", err)
+	}
+}
+
+// prune_result is described as something to do only once the context is past half its window: before
+// that it costs a cache miss for nothing.
+func TestPruneIsForAFullContext(t *testing.T) {
+	if d := pruneSpec.Description; !strings.Contains(d, "Prune only once the context line shows your context is past half its window") || !strings.Contains(d, "cache miss") {
+		t.Fatal(d)
 	}
 }

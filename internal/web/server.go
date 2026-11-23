@@ -71,6 +71,7 @@ type GitHub interface {
 	Comment(ctx context.Context, token, name string, number int, body string) (int64, string, error)
 	EditComment(ctx context.Context, token, name string, id int64, body string) (string, error)
 	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
+	Compare(ctx context.Context, token, name, base, head string) ([]github.Commit, []github.ChangedFile, error)
 	// What the poller reads to see what changed.
 	ListPulls(ctx context.Context, token, name, state string, page int) ([]github.Listed, error)
 	ListIssues(ctx context.Context, token, name, state string, since time.Time, page int) ([]github.Listed, error)

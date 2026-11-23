@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -178,7 +179,13 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		}
 		data["Answer"] = answer
 	case workflow.AgentSettings:
-		id, err := s.startAgent(ws, kind, n, st, values, me(r), true)
+		// A test is a conversation of its own, never a continuation; a block that continues another's
+		// has that block's model.
+		st, err := withSourceModel(g, kind, st)
+		var id int64
+		if err == nil {
+			id, err = s.startAgent(ws, kind, n, st, values, me(r), true, itemNumber(values))
+		}
 		if err != nil {
 			data["Error"] = err.Error()
 			s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, values, data)
@@ -442,11 +449,21 @@ func verifier(p *store.Provider, key, model string) func(context.Context, string
 	}
 }
 
-// runEntry is one message of a transcript, as the run page shows it.
+// runEntry is one message of a run, as its page shows it.
 type runEntry struct {
 	Role, Label, Text string
 	Collapsed         bool
 	Calls             []struct{ Name, Args string }
+	Usage             string // an agent message: what the model call that made it cost
+}
+
+// usageLine says what a model call cost: its input, how much of it the provider reused, its output.
+func usageLine(t agent.Turn) string {
+	line := fmt.Sprintf("%d in", t.In)
+	if t.In > 0 {
+		line += fmt.Sprintf(" (%d%% reused)", 100*t.Cached/t.In)
+	}
+	return line + fmt.Sprintf(", %d out", t.Out)
 }
 
 // agentRun is an agent run's page: live while it runs (the page refreshes itself), then its record.
@@ -467,53 +484,50 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	var tr agent.Transcript
 	json.Unmarshal([]byte(run.Summary), &tr)
+	// The run's own part of its conversation: the messages it added, from the conversation's file.
+	var entries []runEntry
 	evs, err := s.st.ReadConv(run.Conversation)
-	if err != nil {
+	gone := errors.Is(err, store.ErrNotFound)
+	if err != nil && !gone {
 		s.fail(w, err)
 		return
 	}
-	for _, e := range evs {
-		var m agent.Message
-		switch {
-		case e.T == "header":
-			m = agent.Message{Role: "system", Content: e.System}
-		case e.T == "msg":
-			json.Unmarshal(e.M, &m)
-		default:
-			continue
-		}
-		tr.Messages = append(tr.Messages, m)
-	}
-	names := map[string]string{} // tool call id -> tool name, to label results
-	var entries []runEntry
-	for i, m := range tr.Messages {
-		e := runEntry{Role: m.Role, Text: m.Content}
-		switch m.Role {
-		case "system":
-			e.Label, e.Collapsed = "System prompt", true
-		case "user":
-			e.Label = "Autobot"
-			if i == 1 {
-				e.Label = "Task"
-			}
-		case "assistant":
-			e.Label = "Agent"
-			for _, c := range m.ToolCalls {
-				names[c.ID] = c.Function.Name
-				args := c.Function.Arguments
-				if len(args) > 400 {
-					args = args[:400] + "…"
+	if !gone {
+		conv := agent.Show(evs)
+		names := map[string]string{} // tool call id -> tool name, to label results
+		entries = append(entries, runEntry{Role: "system", Label: "System prompt", Text: conv.System, Collapsed: true})
+		for i, m := range conv.Messages {
+			e := runEntry{Role: m.Role, Text: m.Content}
+			switch m.Role {
+			case "user":
+				e.Label = "Autobot"
+				if i == run.MsgsFrom {
+					e.Label = "Task"
 				}
-				e.Calls = append(e.Calls, struct{ Name, Args string }{c.Function.Name, args})
+			case "assistant":
+				e.Label = "Agent"
+				for _, c := range m.ToolCalls {
+					names[c.ID] = c.Function.Name
+					args := c.Function.Arguments
+					if len(args) > 400 {
+						args = args[:400] + "…"
+					}
+					e.Calls = append(e.Calls, struct{ Name, Args string }{c.Function.Name, args})
+				}
+				if t, ok := conv.Usage[i]; ok {
+					e.Usage = usageLine(t)
+				}
+			case "tool":
+				first, _, _ := strings.Cut(m.Content, "\n")
+				if len(first) > 120 {
+					first = first[:120] + "…"
+				}
+				e.Label, e.Collapsed = names[m.ToolCallID]+": "+first, true
 			}
-		case "tool":
-			first, _, _ := strings.Cut(m.Content, "\n")
-			if len(first) > 120 {
-				first = first[:120] + "…"
+			if i >= run.MsgsFrom && (i < run.MsgsTo || run.Status == "running") {
+				entries = append(entries, e)
 			}
-			e.Label, e.Collapsed = names[m.ToolCallID]+": "+first, true
 		}
-		entries = append(entries, e)
 	}
 	var report strings.Builder
 	if tr.Report != "" {
@@ -529,10 +543,20 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 		tr.Error = "Autobot restarted while it ran."
 	}
 	tr.Report = ""
+	cache := ""
+	if tr.In > 0 {
+		cache = fmt.Sprintf("cache: %d%% of input reused", 100*tr.Cached/tr.In)
+	}
 	data := map[string]any{"Title": run.NodeName + " · " + ws.Name, "WS": ws, "Run": run, "T": tr, "Entries": entries,
-		"Outcome": outcome, "Dot": dot, "Report": template.HTML(report.String()),
+		"Outcome": outcome, "Dot": dot, "Report": template.HTML(report.String()), "Cache": cache, "Gone": gone,
 		"Took": run.FinishedAt.Sub(run.StartedAt).Round(time.Second).String()}
 	s.render(w, r, http.StatusOK, "agent_run.html", data)
+}
+
+// itemNumber is the pull request or issue a set of tag values is about, or 0.
+func itemNumber(values map[string]string) int {
+	n, _ := strconv.Atoi(cmp.Or(values["pr_number"], values["issue_number"]))
+	return n
 }
 
 // fillFromItem fills a test's tags the way a workflow run does: from the pull request or issue its

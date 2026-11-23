@@ -30,6 +30,47 @@ type pollFake struct {
 	ci       map[string]string
 	err      error // every poller call fails with it
 	calls    int   // poller calls made
+
+	// What a continued conversation asks of GitHub: the discussion of every item, and the comparison.
+	records []github.CommentRecord
+	compare func(base, head string) ([]github.Commit, []github.ChangedFile, error)
+}
+
+func (g *pollFake) discussion(kind string, number int) []github.CommentRecord {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []github.CommentRecord
+	for _, r := range g.records {
+		if r.Kind == kind && r.Number == number {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (g *pollFake) ItemComments(_ context.Context, _, _ string, number, p int) ([]github.CommentRecord, error) {
+	if p > 1 {
+		return nil, nil
+	}
+	return g.discussion("comment", number), nil
+}
+
+func (g *pollFake) ReviewRecords(_ context.Context, _, _ string, number int) ([]github.CommentRecord, error) {
+	return g.discussion("review", number), nil
+}
+
+func (g *pollFake) PullComments(_ context.Context, _, _ string, number, p int) ([]github.CommentRecord, error) {
+	if p > 1 {
+		return nil, nil
+	}
+	return g.discussion("review_comment", number), nil
+}
+
+func (g *pollFake) Compare(_ context.Context, _, _, base, head string) ([]github.Commit, []github.ChangedFile, error) {
+	if g.compare == nil {
+		return nil, nil, errors.New("no comparison in this fake")
+	}
+	return g.compare(base, head)
 }
 
 func (g *pollFake) enter() error {

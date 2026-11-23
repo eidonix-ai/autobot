@@ -25,6 +25,12 @@ import (
 //   - a test from the canvas is a conversation of its own, never continued.
 // A conversation takes one run at a time: a run that would continue one in progress waits for it.
 
+// agentPoll is how often a step looks to see whether its agent run has ended.
+var agentPoll = 2 * time.Second
+
+// convWait is how often a run that wants a conversation with a run in progress looks again.
+var convWait = 3 * time.Second
+
 // errNoConversation is what a continuation answers when the item has no conversation of the block
 // it continues, and it is set to skip.
 var errNoConversation = errors.New("no earlier conversation")

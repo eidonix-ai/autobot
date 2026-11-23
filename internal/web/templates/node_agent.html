@@ -6,8 +6,8 @@
   <input type="hidden" name="version" value="">
   <div class="row">
     <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
-    <label>Model
-      <select name="model" required>
+    <label data-when-alone{{if .S.ContinueOf}} hidden{{end}}>Model
+      <select name="model">
         {{if not .Models}}<option value="">No text models are assigned</option>{{end}}
         {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
@@ -15,6 +15,19 @@
       <select name="persona" data-preset>
         {{range .Presets}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
         <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
+      </select></label>
+  </div>
+  <div class="row">
+    <label>Continue the conversation of
+      <select name="continue_of" data-continue>
+        <option value="">None</option>
+        {{range .Sources}}<option value="{{.ID}}" data-model="{{.Model}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select></label>
+    <label data-when-continuing{{if not .S.ContinueOf}} hidden{{end}}>Model <input value="{{.SourceModel}}" readonly data-source-model></label>
+    <label data-when-continuing{{if not .S.ContinueOf}} hidden{{end}}>If this item has no earlier conversation
+      <select name="no_conversation">
+        <option value="skip"{{if ne .S.NoConversation "fresh"}} selected{{end}}>Skip</option>
+        <option value="fresh"{{if eq .S.NoConversation "fresh"}} selected{{end}}>Start fresh</option>
       </select></label>
   </div>
   <label><span class="lbl">Instruction <span class="info" tabindex="0" data-tip="The preset's, read-only. Choose Custom to write your own, starting from it.">ⓘ</span></span>

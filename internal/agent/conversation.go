@@ -64,6 +64,26 @@ func (c *Conversation) add(m Message) {
 	c.pending = append(c.pending, store.ConvEvent{T: "msg", M: b})
 }
 
+// repair answers the calls of an assistant message that has no result, which a run cut off in the
+// middle of a turn (Autobot restarted) leaves behind: a provider refuses a conversation that has them.
+func (c *Conversation) repair() {
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		if c.Messages[i].Role != "assistant" {
+			continue
+		}
+		answered := map[string]bool{}
+		for _, r := range c.Messages[i+1:] {
+			answered[r.ToolCallID] = r.Role == "tool"
+		}
+		for _, tc := range c.Messages[i].ToolCalls {
+			if !answered[tc.ID] {
+				c.add(Message{Role: "tool", ToolCallID: tc.ID, Content: "error: the run was interrupted before this tool ran"})
+			}
+		}
+		return
+	}
+}
+
 // Take returns the events not yet written, and forgets them.
 func (c *Conversation) Take() []store.ConvEvent {
 	out := c.pending
@@ -108,35 +128,6 @@ func LoadConversation(events []store.ConvEvent) (*Conversation, error) {
 		}
 	}
 	return c, nil
-}
-
-// Turn is what one model call cost, as the conversation's file records it.
-type Turn struct{ In, Out, Cached int }
-
-// Shown is a conversation's file read for display: the messages, and what the turn that produced
-// each assistant message cost.
-type Shown struct {
-	*Conversation
-	Usage map[int]Turn // by the index of the assistant message
-}
-
-// Show reads a conversation's file for display, with each message as it was last sent.
-func Show(events []store.ConvEvent) (*Shown, error) {
-	c, err := LoadConversation(events)
-	if err != nil {
-		return nil, err
-	}
-	s := &Shown{Conversation: c, Usage: map[int]Turn{}}
-	n := 0
-	for _, e := range events[1:] {
-		switch e.T {
-		case "msg":
-			n++
-		case "turn":
-			s.Usage[n-1] = Turn{e.In, e.Out, e.Cached}
-		}
-	}
-	return s, nil
 }
 
 // maxStub is how long a tool result may be before shortening cuts it.

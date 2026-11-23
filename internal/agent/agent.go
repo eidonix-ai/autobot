@@ -129,6 +129,7 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		conv = NewConversation("", 0, cfg.System, cfg.Tools)
 	}
 	tr := &Transcript{Read: slices.Clone(conv.Read)}
+	conv.repair()
 	conv.add(Message{Role: "user", Content: cfg.Task})
 	tools := map[string]Tool{}
 	for _, t := range cfg.Tools {

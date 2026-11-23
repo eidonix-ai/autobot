@@ -409,3 +409,23 @@ func TestSubAgentReadsCountForTheReport(t *testing.T) {
 		t.Fatalf("%q", tr.Report)
 	}
 }
+
+// spawn_agent calls are tool calls like any other: past the sixteen of a turn they are refused, to be
+// made in the next, and the sixteen that run do so together.
+func TestSpawnCallsKeepTheCallsPerTurnCap(t *testing.T) {
+	e := newSubEnv(t)
+	subs := e.subs(quick("r"), 20, 0)
+	var many []Message
+	for i := 0; i < maxCalls+1; i++ {
+		many = append(many, spawnCall(fmt.Sprint("c", i), "t", "t"))
+	}
+	main := &script{replies: []Message{calls(many...), finishCall("done")}}
+	Run(context.Background(), Config{Model: main, Tools: []Tool{subs.Tool()}, MaxTurns: 9, Task: "go"}, nil)
+	got := answersTo(main.seen[1])
+	if len(got) != maxCalls+1 || !strings.HasPrefix(got[fmt.Sprint("c", maxCalls)], "error: at most 16 tool calls run in one turn") || !strings.Contains(got["c0"], "finished (met)") {
+		t.Fatalf("%d answers; the last: %q", len(got), got[fmt.Sprint("c", maxCalls)])
+	}
+	if rows, _ := e.st.Subs(e.run); len(rows) != maxCalls {
+		t.Fatalf("%d sub-agents started", len(rows))
+	}
+}

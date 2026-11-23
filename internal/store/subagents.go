@@ -208,4 +208,3 @@ func (s *Store) dropSubs(tx *sql.Tx, thread int64) error {
 	}
 	return nil
 }
-

@@ -67,8 +67,15 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, refuses "met" with open plan steps or with files cited but never read, warns
    near its turn budget, and trims old tool output when sending; transcripts are stored per
-   message, gzipped. Built so far: PR and web tools, personas. Next: machine sessions in the
-   connector (bash on donated hardware), sub-agents, long tests that resume the agent, the engine.
+   message, gzipped. Built so far: PR and web tools, personas, and machine sessions: an agent whose
+   settings list machines gets a shell in a long-lived job container on the first free one (a test run
+   with the session flag: same isolation, all the machine's GPUs, the PR head's code). The connector
+   takes the agent's commands over a long poll (GET /connector/v1/runs/{id}/commands, answered at
+   .../commands/{cid}/result) and runs each with Docker exec; files go in through a read-only inbox
+   folder the connector writes itself. Queues live in memory in the web Server, so a restart ends
+   sessions (StopOrphanRuns); a session idle for 10 minutes, or whose agent ended, is closed. Tools:
+   bash (background with bash_output/bash_kill), read_file, write_file, edit_file, grep, glob.
+   Next: sub-agents, long tests that resume the agent, the engine.
 6. Discord (decided by Derek, 2026-11-23; not built yet): one bot for the instance (discordgo, one
    outbound Gateway connection, no public endpoint), on the PUBLIC project server. A public forum
    (the flare-autobot channel) with one post per case, created by the bot (people may reply, not

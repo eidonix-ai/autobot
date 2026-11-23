@@ -52,6 +52,21 @@
 
 
 {{if .Me.IsAdmin}}
+<section class="panel" id="discord">
+<h2>Discord</h2>
+{{with .DiscordError}}<p class="error">{{.}}</p>{{end}}
+{{if .Bot}}
+<form method="post" action="{{.WS.Path}}/settings/discord" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <select name="forum" aria-label="Forum">
+    <option value="">Not posted to Discord</option>
+    {{range .Forums}}<option value="{{.ID}}"{{if eq .ID $.ForumID}} selected{{end}}>#{{.Name}} · {{.Server}}</option>{{end}}
+  </select>
+  <button>Save</button>
+</form>
+{{else}}<p class="muted">{{with .ForumName}}#{{.}}: {{end}}No Discord bot is set up{{if .Me.IsAdmin}}: <a href="/admin/discord">set one up</a>{{end}}.</p>{{end}}
+</section>
+
 <section class="panel">
 <h2>Members</h2>
 <form method="post" action="{{.WS.Path}}/settings/members" class="stack">

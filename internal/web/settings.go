@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
@@ -143,6 +144,17 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	data["Title"], data["WS"], data["Users"], data["Assigned"] = "Settings · "+ws.Name, ws, users, assigned
 	data["GH"], data["GHLogin"] = gh, login
 	data["SecretPath"], data["NewSecret"] = SecretPath, newSecret()
+	data["ForumID"], data["ForumName"] = s.st.DiscordForum(ws.ID)
+	if b, _ := s.bot(); b != nil {
+		data["Bot"] = true
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if forums, err := b.Forums(ctx); err == nil {
+			data["Forums"] = forums
+		} else if _, ok := data["DiscordError"]; !ok {
+			data["DiscordError"] = "Could not ask Discord for its forums: " + err.Error() + "."
+		}
+	}
 	s.render(w, r, status, "settings.html", data)
 }
 

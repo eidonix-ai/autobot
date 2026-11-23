@@ -337,7 +337,15 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			s.fail(w, err)
 			return
 		}
-		data["Personas"], data["Machines"], data["Verifiers"] = workflow.Personas, machines, verify
+		type preset struct{ Key, Label, Instruction, Goal string }
+		var presets []preset
+		for _, p := range workflow.Personas {
+			presets = append(presets, preset{p.Key, p.Label, p.InstructionFor(kind), p.GoalFor(kind)})
+		}
+		data["Presets"], data["Machines"], data["Verifiers"] = presets, machines, verify
+		data["Instruction"], data["Goal"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind)
+		data["Locked"] = workflow.PersonaOf(st.Persona) != nil
+		data["Preamble"] = fmt.Sprintf(preamble, ws.Name)
 	case workflow.DecisionSettings:
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
@@ -402,7 +410,10 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		a.Model = parseModel(f.Get("model"))
 		a.Verify = parseModel(f.Get("verify"))
 		if err = a.Check(kind); err == nil {
-			if err = workflow.CheckTemplates(kind, outputs, a.Templates()...); err == nil {
+			if workflow.PersonaOf(a.Persona) != nil { // a preset's own text is not stored on the block
+				a.Instruction, a.Goal = "", ""
+			}
+			if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil {
 				err = s.checkModel(ws, a.Model, false)
 			}
 		}

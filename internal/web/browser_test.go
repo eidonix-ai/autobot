@@ -233,6 +233,24 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	if err != nil || !strings.Contains(problem, "{nope} is not a tag") {
 		t.Fatalf("tags: %q, %v", problem, err)
 	}
+	// A preset's Instruction is shown read-only; Custom unlocks it with the same text; another preset swaps it.
+	var locked, unlocked bool
+	var keptText, swapped string
+	err = chromedp.Run(ctx,
+		chromedp.Click(`#node-5 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal select[name=persona]`),
+		chromedp.Evaluate(`document.querySelector('#wf-modal textarea[name=instruction]').readOnly`, &locked),
+		chromedp.SetValue(`#wf-modal select[name=persona]`, "custom"),
+		chromedp.Evaluate(`(function(){var s=document.querySelector('#wf-modal select[name=persona]');s.dispatchEvent(new Event('change',{bubbles:true}));return true})()`, nil),
+		chromedp.Evaluate(`document.querySelector('#wf-modal textarea[name=instruction]').readOnly`, &unlocked),
+		chromedp.Evaluate(`document.querySelector('#wf-modal textarea[name=instruction]').value`, &keptText),
+		chromedp.SetValue(`#wf-modal select[name=persona]`, "code_quality"),
+		chromedp.Evaluate(`(function(){var s=document.querySelector('#wf-modal select[name=persona]');s.dispatchEvent(new Event('change',{bubbles:true}));return true})()`, nil),
+		chromedp.Evaluate(`document.querySelector('#wf-modal textarea[name=instruction]').value`, &swapped),
+		chromedp.Click(`#wf-modal .close`, chromedp.ByQuery),
+	)
+	if err != nil || !locked || unlocked || !strings.Contains(keptText, "gather the facts") || !strings.Contains(swapped, "correctness first") {
+		t.Fatalf("presets in the form: locked %v, unlocked %v, kept %q, swapped %q, %v", locked, !unlocked, keptText[:min(40, len(keptText))], swapped[:min(40, len(swapped))], err)
+	}
 	if a, _ := workflow.AgentSettingsOf(nodeOf(workflow.Agent), workflow.PR); a.OutputTo != "value_summary" || !a.Model.Set() {
 		t.Fatalf("agent settings %+v", a)
 	}

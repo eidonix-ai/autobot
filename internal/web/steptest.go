@@ -42,7 +42,7 @@ func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 		if err == nil {
 			err = s.Check(kind)
 		}
-		return s, s.Templates(), err
+		return s, s.Templates(kind), err
 	case workflow.Decision:
 		s, err := workflow.DecisionSettingsOf(n, kind)
 		if err == nil {
@@ -252,16 +252,15 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		return 0, errors.New("agents run on OpenAI-compatible providers for now; Anthropic's API comes next")
 	}
 	model := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: a.Model.Model}
+	// The system prompt is only the harness's own preamble; everything about this task is in the
+	// first message, where it can be read on the block: Instruction, Additional instructions, Done when.
 	system := fmt.Sprintf(preamble, ws.Name)
-	if per := workflow.PersonaOf(a.Persona); per != nil {
-		system += "\n\n" + per.Prompt
-	}
+	task := strings.TrimSpace(workflow.Render(a.EffectiveInstruction(kind), values))
 	if extra := strings.TrimSpace(workflow.Render(a.SystemPrompt, values)); extra != "" {
-		system += "\n\n" + extra
+		task += "\n\n" + extra
 	}
-	goal := workflow.Render(a.Goal, values)
-	cfg := agent.Config{Model: model, System: system, Goal: goal, MaxTurns: a.MaxTurns,
-		Task: workflow.Render(a.Instruction, values) + "\n\nDone when: " + goal}
+	goal := workflow.Render(a.EffectiveGoal(kind), values)
+	cfg := agent.Config{Model: model, System: system, Goal: goal, MaxTurns: a.MaxTurns, Task: task + "\n\nDone when: " + goal}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

@@ -357,6 +357,18 @@
   }
 
   modal.addEventListener('click', function (e) { if (e.target.closest('[data-close]')) { modal.hidePopover(); } });
+  // An agent's preset fills its Instruction and Done when, read-only; Custom unlocks them, starting
+  // from the text that was there.
+  modal.addEventListener('change', function (e) {
+    var sel = e.target.closest('select[data-preset]');
+    if (!sel) { return; }
+    var form = sel.form, opt = sel.options[sel.selectedIndex], custom = sel.value === 'custom';
+    ['instruction', 'goal'].forEach(function (name) {
+      var box = form.elements[name];
+      if (!custom) { box.value = opt.dataset[name]; }
+      box.readOnly = !custom;
+    });
+  });
   modal.addEventListener('submit', function (e) {
     var form = e.target, id = modal.dataset.node;
     if (form.hasAttribute('data-native')) { return; }   // an agent's run opens its own page, in a new tab

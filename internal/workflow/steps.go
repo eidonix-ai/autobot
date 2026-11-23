@@ -73,8 +73,8 @@ func (m ModelRef) Set() bool { return m.Provider != 0 && m.Model != "" }
 // AgentSettings are an agent node's settings.
 type AgentSettings struct {
 	Model        ModelRef `json:"model"`
-	Persona      string   `json:"persona"`       // a Personas key, or "custom"
-	SystemPrompt string   `json:"system_prompt"` // a template: custom, the whole system prompt; otherwise added to the persona's
+	Persona      string   `json:"persona"`       // a preset's key (its Instruction and Done when are used), or "custom"
+	SystemPrompt string   `json:"system_prompt"` // a template: Additional instructions, added after the Instruction
 	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
 	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
 	Internet     bool     `json:"internet"`      // web search and fetching pages
@@ -109,16 +109,24 @@ type DecisionSettings struct {
 
 // DefaultAgent is a new agent node's settings, for a workflow of kind.
 func DefaultAgent(kind string) AgentSettings {
-	s := AgentSettings{Persona: "code_quality", Internet: false, SubAgents: 5, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
-	if kind == Issue {
-		s.Instruction = "Look into this issue: {issue_link}\n\n{issue_title}\n\n{issue_body}"
-		s.Goal = "The issue is understood: the report says what is wrong or asked for, where in the code it lies, and what should be done."
-	} else {
-		s.Instruction = "Review this pull request: {pr_link}\n\n{pr_title}\n\n{pr_body}"
-		s.Goal = "Every change in the pull request has been read in context, and the report lists each problem found with its file, " +
-			"line and a suggested fix, or says plainly that there are none."
+	// A preset's Instruction and Done when are its own: the block stores only which preset.
+	return AgentSettings{Persona: Personas[0].Key, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
+}
+
+// EffectiveInstruction is the instruction the agent is given: its preset's, or its own when Custom.
+func (s AgentSettings) EffectiveInstruction(kind string) string {
+	if p := PersonaOf(s.Persona); p != nil {
+		return p.InstructionFor(kind)
 	}
-	return s
+	return s.Instruction
+}
+
+// EffectiveGoal is the Done when the agent is held to: its preset's, or its own when Custom.
+func (s AgentSettings) EffectiveGoal(kind string) string {
+	if p := PersonaOf(s.Persona); p != nil {
+		return p.GoalFor(kind)
+	}
+	return s.Goal
 }
 
 // DefaultDecision is a new decision node's settings, for a workflow of kind.
@@ -184,12 +192,10 @@ func (s AgentSettings) Check(kind string) error {
 	case !s.Model.Set():
 		return errors.New("choose a model")
 	case PersonaOf(s.Persona) == nil && s.Persona != "custom":
-		return errors.New("choose a persona")
-	case s.Persona == "custom" && strings.TrimSpace(s.SystemPrompt) == "":
-		return errors.New("a custom persona needs its system prompt")
-	case strings.TrimSpace(s.Instruction) == "":
+		return errors.New("choose a preset, or Custom")
+	case strings.TrimSpace(s.EffectiveInstruction(kind)) == "":
 		return errors.New("write the instruction")
-	case strings.TrimSpace(s.Goal) == "":
+	case strings.TrimSpace(s.EffectiveGoal(kind)) == "":
 		return errors.New("say when the work is done")
 	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate:
 		return fmt.Errorf("prompts are limited to %d characters", maxTemplate)
@@ -206,8 +212,8 @@ func (s AgentSettings) Check(kind string) error {
 }
 
 // Templates are the agent's templates, for checking and filling their tags.
-func (s AgentSettings) Templates() []string {
-	return []string{s.SystemPrompt, s.Instruction, s.Goal, s.FollowUp}
+func (s AgentSettings) Templates(kind string) []string {
+	return []string{s.EffectiveInstruction(kind), s.SystemPrompt, s.EffectiveGoal(kind), s.FollowUp}
 }
 
 // Templates are the decision's templates.

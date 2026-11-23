@@ -100,7 +100,7 @@ func TestBlockTests(t *testing.T) {
 		t.Fatalf("run page:\n%s", body)
 	}
 	all := strings.Join(seen(), "\n")
-	if !strings.Contains(all, `retry()`) || !strings.Contains(all, "Done when:") || !strings.Contains(all, "correctness first") {
+	if !strings.Contains(all, `retry()`) || !strings.Contains(all, "Done when:") || !strings.Contains(all, "to gather the facts that will start its case file") {
 		t.Fatal("the model did not get the diff, the goal or the persona")
 	}
 	// A run belongs to its workspace.

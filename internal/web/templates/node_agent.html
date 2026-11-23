@@ -11,17 +11,19 @@
         {{if not .Models}}<option value="">No text models are assigned</option>{{end}}
         {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
-    <label>Persona
-      <select name="persona">
-        {{range .Personas}}<option value="{{.Key}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
+    <label>Preset
+      <select name="persona" data-preset>
+        {{range .Presets}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
         <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
       </select></label>
   </div>
-  <label><span class="lbl">Additional instructions <span class="info" tabindex="0" data-tip="Added to the persona's system prompt. With the Custom persona this is the whole system prompt.">ⓘ</span></span>
+  <label><span class="lbl">Instruction <span class="info" tabindex="0" data-tip="The preset's, read-only. Choose Custom to write your own, starting from it.">ⓘ</span></span>
+    <textarea name="instruction" rows="9" class="code" spellcheck="false" required{{if .Locked}} readonly{{end}}>{{.Instruction}}</textarea></label>
+  <label><span class="lbl">Additional instructions <span class="info" tabindex="0" data-tip="Your own, added after the Instruction.">ⓘ</span></span>
     <textarea name="system_prompt" rows="3" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
-  <label>Instruction <textarea name="instruction" rows="5" class="code" spellcheck="false" required>{{.S.Instruction}}</textarea></label>
   <label><span class="lbl">Done when <span class="info" tabindex="0" data-tip="The goal. The agent can only finish once it is met, or by saying why it cannot be.">ⓘ</span></span>
-    <textarea name="goal" rows="2" class="code" spellcheck="false" required>{{.S.Goal}}</textarea></label>
+    <textarea name="goal" rows="2" class="code" spellcheck="false" required{{if .Locked}} readonly{{end}}>{{.Goal}}</textarea></label>
+  <details class="tags"><summary>What every agent is told first</summary><pre class="entry">{{.Preamble}}</pre></details>
   {{template "tags" .}}
   <div class="row">
     <label class="check"><input type="checkbox" name="internet"{{if .S.Internet}} checked{{end}}> Allow internet <span class="info" tabindex="0" data-tip="Web search and fetching pages. A machine's sandbox has no internet unless its donor allows it.">ⓘ</span></label>

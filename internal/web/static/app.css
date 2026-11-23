@@ -300,3 +300,4 @@ fieldset.rules .rule label.check { min-width: 15rem; }
 fieldset.rules .rule input:not([type=checkbox]), fieldset.rules .rule select { flex: 1 1 10rem; width: auto; }
 blockquote.request { margin: 0.4rem 0; padding: 0.4rem 0.8rem; border-left: 3px solid #d29922; white-space: pre-wrap; }
 ol.steps li.waiting { border-color: #d29922; }
+textarea[readonly] { opacity: 0.75; cursor: default; }

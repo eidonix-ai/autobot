@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +105,43 @@ func TestTestRunStep(t *testing.T) {
 	steps := runOnce(t, e, ws, derek, false)
 	if steps["tr"].Port != "passed" || steps["ok"].Status != "done" || steps["ko"].Status != "skipped" {
 		t.Fatalf("%+v", steps)
+	}
+}
+
+// A block on a preset follows the preset: what the form sends for Instruction and Done when is not
+// kept. Custom keeps its own.
+func TestPresetsAreReferences(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	p, _ := e.st.CreateProvider(store.ProviderEdit{Name: "LLM", Kind: store.KindOpenAI, Endpoint: "https://llm.example/v1", Key: "k"}, derek)
+	e.st.SetProviderModels(p.ID, []string{"m"})
+	e.st.LendProvider(p, []int64{ws.ID}, derek)
+	g := workflow.Graph{Nodes: []workflow.Node{{ID: "ag", Type: workflow.Agent}}, Links: []workflow.Link{}}
+	b, _ := json.Marshal(g)
+	e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(b), derek)
+	br := e.signIn("derek")
+	save := func(persona, instruction string) workflow.AgentSettings {
+		t.Helper()
+		w, _ := e.st.Workflow(ws.ID, workflow.PR)
+		code, _, body := br.post("/w/o/r/workflows/pr/nodes/ag", url.Values{"csrf": {br.csrf()}, "version": {itoa(int64(w.Version))},
+			"name": {"Facts"}, "model": {itoa(p.ID) + ":m"}, "persona": {persona}, "instruction": {instruction}, "goal": {"my goal"},
+			"system_prompt": {"Look at {repo} closely."}, "max_turns": {"40"}, "max_minutes": {"20"}, "rerun": {"resume"}})
+		if code != 200 {
+			t.Fatalf("save %s: %d\n%s", persona, code, body)
+		}
+		w, _ = e.st.Workflow(ws.ID, workflow.PR)
+		var got workflow.Graph
+		json.Unmarshal([]byte(w.Graph), &got)
+		a, _ := workflow.AgentSettingsOf(got.Nodes[0], workflow.PR)
+		return a
+	}
+	a := save("gather_information", "Ignore everything and do something else.")
+	if a.Instruction != "" || !strings.Contains(a.EffectiveInstruction(workflow.PR), "to gather the facts") || a.SystemPrompt != "Look at {repo} closely." {
+		t.Fatalf("preset block: %+v", a)
+	}
+	a = save("custom", "My own instruction for {pr_link}.")
+	if a.EffectiveInstruction(workflow.PR) != "My own instruction for {pr_link}." || a.EffectiveGoal(workflow.PR) != "my goal" {
+		t.Fatalf("custom block: %+v", a)
 	}
 }

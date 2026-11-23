@@ -52,6 +52,7 @@ type Server struct {
 	mux       *http.ServeMux
 	ready     atomic.Bool // set once a user exists; users are never deleted, so it never goes back
 	fails     loginFails  // failed sign-ins by account
+	poll      *poller     // what the poller remembers in memory
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -65,6 +66,15 @@ type GitHub interface {
 	PullRequest(ctx context.Context, token, name string, number int) (*github.PullRequest, error)
 	Item(ctx context.Context, token, name string, number int) (*github.Item, error)
 	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
+	// What the poller reads to see what changed.
+	ListPulls(ctx context.Context, token, name, state string, page int) ([]github.Listed, error)
+	ListIssues(ctx context.Context, token, name, state string, since time.Time, page int) ([]github.Listed, error)
+	RepoComments(ctx context.Context, token, name string, since time.Time, page int) ([]github.RepoComment, error)
+	LatestComment(ctx context.Context, token, name string) (*github.RepoComment, error)
+	Reviews(ctx context.Context, token, name string, number int) ([]github.Review, error)
+	CIState(ctx context.Context, token, name, sha string) (string, error)
+	Role(ctx context.Context, token, name, user string) (string, error)
+	DefaultBranch(ctx context.Context, token, name string) (string, error)
 	agent.Reader
 }
 
@@ -98,6 +108,7 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		idleLimit: idleLimit,
 		live:      &live{started: time.Now(), byID: map[int64]liveStatus{}},
 		access:    &repoAccess{byWS: map[int64]repoFacts{}},
+		poll:      newPoller(),
 		pages:     map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
 		md:  goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID())),
@@ -166,6 +177,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows", s.auth(s.workflowsIndex))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}", s.auth(s.workflowPage))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/layout", s.auth(s.saveLayout))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/live", s.auth(s.setLive))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.nodeSettings))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.saveNodeSettings))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.testForm))

@@ -135,6 +135,7 @@ func serve(args []string) error {
 	defer stop()
 	go ui.Watch(ctx)
 	go ui.CheckRoutes(ctx)
+	go ui.Poll(ctx)
 	done := make(chan error, 1)
 	go func() {
 		<-ctx.Done()

@@ -10,7 +10,8 @@ import (
 // package workflow before it is saved.
 type StoredWorkflow struct {
 	Graph     string
-	Version   int // 0 when the workflow has never been saved
+	Version   int  // 0 when the workflow has never been saved
+	Live      bool // the poller starts runs from it by itself
 	UpdatedBy string
 	UpdatedAt time.Time
 }
@@ -22,9 +23,9 @@ var ErrStaleWorkflow = errors.New("the workflow changed since it was loaded")
 func (s *Store) Workflow(workspaceID int64, kind string) (*StoredWorkflow, error) {
 	var w StoredWorkflow
 	var at int64
-	err := s.db.QueryRow(`SELECT w.graph, w.version, `+authorName+`, w.updated_at FROM workflows w
+	err := s.db.QueryRow(`SELECT w.graph, w.version, w.live, `+authorName+`, w.updated_at FROM workflows w
 		LEFT JOIN users u ON u.id = w.updated_by WHERE w.workspace_id = ? AND w.kind = ?`, workspaceID, kind).
-		Scan(&w.Graph, &w.Version, &w.UpdatedBy, &at)
+		Scan(&w.Graph, &w.Version, &w.Live, &w.UpdatedBy, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &StoredWorkflow{Graph: `{"nodes":[],"links":[]}`}, nil
 	}

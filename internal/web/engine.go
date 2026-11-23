@@ -140,35 +140,12 @@ func verdict(n workflow.Node, it *item, caseExists bool) (bool, []string) {
 	if it.kind != workflow.PR {
 		return ok, lines
 	}
-	if b := strings.TrimSpace(ev.Branches); b != "" {
-		var want []string
-		for _, x := range strings.Split(b, ",") {
-			want = append(want, strings.TrimSpace(x))
-		}
-		check(slices.Contains(want, it.pr.Base), "it targets "+it.pr.Base, "it targets "+it.pr.Base+", not "+b)
+	lines0 := 0
+	for _, f := range it.files {
+		lines0 += f.Additions + f.Deletions
 	}
-	bot := strings.HasSuffix(it.author, "[bot]")
-	switch ev.Authors {
-	case "skip_bots":
-		check(!bot, "its author is not a bot", "its author "+it.author+" is a bot")
-	case "only_bots":
-		check(bot, "its author is a bot", "its author "+it.author+" is not a bot")
-	}
-	if ev.MaxLines > 0 {
-		lines0 := 0
-		for _, f := range it.files {
-			lines0 += f.Additions + f.Deletions
-		}
-		over := lines0 > ev.MaxLines
-		switch {
-		case !over:
-			check(true, fmt.Sprintf("%d changed lines, within %d", lines0, ev.MaxLines), "")
-		case ev.OverLimit == "summoned":
-			check(summoned, fmt.Sprintf("%d changed lines, over %d, but summoned", lines0, ev.MaxLines),
-				fmt.Sprintf("%d changed lines, over %d, and not summoned", lines0, ev.MaxLines))
-		default:
-			check(false, "", fmt.Sprintf("%d changed lines, over the limit of %d", lines0, ev.MaxLines))
-		}
+	for _, c := range workflow.PRFilters(ev, workflow.PRFacts{Author: it.author, Base: it.pr.Base, Lines: lines0, Summoned: summoned}) {
+		check(c.Pass, c.Text, c.Text)
 	}
 	if ev.WaitCI != "no" {
 		note("waiting for CI is not checked in a manual run")

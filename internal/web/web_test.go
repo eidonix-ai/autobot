@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
@@ -96,6 +97,35 @@ func (fakeGitHub) Tree(context.Context, string, string, string) ([]string, error
 	return []string{"go.mod", "upload.go"}, nil
 }
 
+// The poller's reads: this fake knows no changes. The poller's tests bring their own.
+func (fakeGitHub) ListPulls(context.Context, string, string, string, int) ([]github.Listed, error) {
+	return nil, nil
+}
+
+func (fakeGitHub) ListIssues(context.Context, string, string, string, time.Time, int) ([]github.Listed, error) {
+	return nil, nil
+}
+
+func (fakeGitHub) RepoComments(context.Context, string, string, time.Time, int) ([]github.RepoComment, error) {
+	return nil, nil
+}
+
+func (fakeGitHub) LatestComment(context.Context, string, string) (*github.RepoComment, error) {
+	return nil, nil
+}
+
+func (fakeGitHub) Reviews(context.Context, string, string, int) ([]github.Review, error) {
+	return nil, nil
+}
+
+func (fakeGitHub) CIState(context.Context, string, string, string) (string, error) {
+	return "none", nil
+}
+
+func (fakeGitHub) Role(context.Context, string, string, string) (string, error) { return "none", nil }
+
+func (fakeGitHub) DefaultBranch(context.Context, string, string) (string, error) { return "main", nil }
+
 func (fakeGitHub) Private(_ context.Context, token, name string) (bool, error) {
 	_, private := fakePrivate[strings.ToLower(name)]
 	return private, nil
@@ -131,7 +161,10 @@ type env struct {
 	ui  *Server
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, fakeGitHub{}) }
+
+// newEnvWith is newEnv with another stand-in for GitHub.
+func newEnvWith(t *testing.T, gh GitHub) *env {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
@@ -140,7 +173,7 @@ func newEnv(t *testing.T) *env {
 	if err := st.UseKey(make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	ui, err := New(st, fakeGitHub{})
+	ui, err := New(st, gh)
 	if err != nil {
 		t.Fatal(err)
 	}

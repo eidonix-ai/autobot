@@ -56,6 +56,11 @@ func (l *live) lastSeen(id int64) time.Time {
 
 // connectorAPI admits requests carrying a machine's token.
 func (s *Server) connectorAPI(next func(http.ResponseWriter, *http.Request, *store.Machine)) http.Handler {
+	return s.connectorAPIMax(protocol.OutputChunk+4096, next)
+}
+
+// connectorAPIMax is connectorAPI for a request that may carry up to max bytes.
+func (s *Server) connectorAPIMax(max int64, next func(http.ResponseWriter, *http.Request, *store.Machine)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var m *store.Machine
@@ -71,7 +76,7 @@ func (s *Server) connectorAPI(next func(http.ResponseWriter, *http.Request, *sto
 			s.fail(w, err)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, protocol.OutputChunk+4096)
+		r.Body = http.MaxBytesReader(w, r.Body, max)
 		next(w, r, m)
 	})
 }
@@ -129,7 +134,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, m *store.Mach
 }
 
 func (s *Server) job(run *store.TestRun) (*protocol.Job, error) {
-	j := &protocol.Job{Run: run.ID, Commit: run.Commit, Private: run.Private, Script: run.Script, GPUs: run.GPUs, TimeoutSec: int(run.Timeout / time.Second)}
+	j := &protocol.Job{Run: run.ID, Commit: run.Commit, Private: run.Private, Script: run.Script, Session: run.Session, GPUs: run.GPUs, TimeoutSec: int(run.Timeout / time.Second)}
 	if run.Commit != "" {
 		ws, err := s.st.WorkspaceByID(run.WorkspaceID)
 		if err != nil {
@@ -222,6 +227,13 @@ func (s *Server) runResult(w http.ResponseWriter, r *http.Request, m *store.Mach
 		return
 	}
 	state, summary := judge(res, len(run.Output) >= protocol.MaxOutput, run.Timeout)
+	if run.Session && res.Error == "" && (res.Cancelled || res.TimedOut) {
+		// A session has no script to pass or fail: closing it, or reaching its time limit, is how it ends.
+		state, summary = "passed", "Session closed."
+		if res.TimedOut {
+			summary = fmt.Sprintf("Session ended at its time limit of %s.", run.Timeout)
+		}
+	}
 	if err := s.st.FinishRun(run.ID, state, summary); err != nil {
 		s.fail(w, err)
 		return

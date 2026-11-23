@@ -345,11 +345,17 @@ func (c *Connector) report(run int64, res protocol.Result) {
 // points Cargo at the fetched crates (keeping the image's git dependencies), installs the fetched
 // Python wheels ahead of the image's packages, then runs the script with -e (stop at the first
 // failure) and -x (show each command), its commands and output in one stream so they stay in order.
+//
+// Every variable it sets up is also written, as exports, to /work/.autobot/env, which appears only
+// when the set-up is done. A session's commands run in new processes, so each sources that file to
+// see what a script would; the connector waits for it before taking the first command.
 const prelude = `set -e
-mkdir -p "$TMPDIR"
+mkdir -p "$TMPDIR" /work/.autobot
+: > /work/.autobot/env.tmp
+setenv() { export "$1=$2"; printf 'export %s=%q\n' "$1" "$2" >> /work/.autobot/env.tmp; }
 if [ -d /deps/crates ]; then
   image_cargo="${CARGO_HOME:-$HOME/.cargo}"
-  export CARGO_HOME=/work/cargo
+  setenv CARGO_HOME /work/cargo
   mkdir -p "$CARGO_HOME"
   if [ -d "$image_cargo/git" ]; then cp -a "$image_cargo/git" "$CARGO_HOME/"; fi
   printf '[source.crates-io]\nreplace-with = "autobot-deps"\n\n[source.autobot-deps]\ndirectory = "/deps/crates"\n\n[net]\noffline = true\n' > "$CARGO_HOME/config.toml"
@@ -357,11 +363,15 @@ fi
 if [ -s /deps/wheels/requirements.txt ]; then
   echo "Installing $(wc -l < /deps/wheels/requirements.txt) Python packages the work image lacks"
   uv pip install --quiet --offline --no-index --find-links /deps/wheels --no-deps --target /work/python -r /deps/wheels/requirements.txt
-  export PYTHONPATH="/work/python${PYTHONPATH:+:$PYTHONPATH}"
+  setenv PYTHONPATH "/work/python${PYTHONPATH:+:$PYTHONPATH}"
 fi
 if [ -d /input/source ]; then cp -a /input/source /work/source; cd /work/source; fi
+mv /work/.autobot/env.tmp /work/.autobot/env
 printf '%s\n' "$1" > "$TMPDIR/run.sh"
 exec bash -ex "$TMPDIR/run.sh" 2>&1`
+
+// sessionScript is what a session's container runs after the prelude: nothing, until it is killed.
+const sessionScript = `exec sleep infinity`
 
 func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun) protocol.Result {
 	res := protocol.Result{ExitCode: -1}
@@ -374,10 +384,22 @@ func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun)
 		return res
 	}
 
-	s := spec{Name: fmt.Sprintf("autobot-run-%d", job.Run), Image: c.imageID, Cmd: []string{"bash", "-c", prelude, "bash", job.Script},
+	script := job.Script
+	if job.Session {
+		script = sessionScript
+	}
+	s := spec{Name: fmt.Sprintf("autobot-run-%d", job.Run), Image: c.imageID, Cmd: []string{"bash", "-c", prelude, "bash", script},
 		Run: job.Run, CPUs: c.cfg.CPUs, MemoryGiB: c.cfg.MemoryGiB, ScratchGB: c.cfg.ScratchGiB}
 	if c.cfg.ModelsDir != "" {
 		s.Binds = append(s.Binds, c.cfg.ModelsDir+":/models:ro")
+	}
+	if job.Session {
+		// Files for the agent arrive here, written by this connector, and are copied in by a command.
+		if err := os.MkdirAll(inboxDir(dir), 0o755); err != nil {
+			res.Error = err.Error()
+			return res
+		}
+		s.Binds = append(s.Binds, inboxDir(dir)+":/inbox:ro")
 	}
 	gpus, _ := readGPUs(ctx)
 	if job.GPUs > len(gpus) {
@@ -432,6 +454,12 @@ func (c *Connector) execute(ctx context.Context, job protocol.Job, r *activeRun)
 		}
 		exited <- code
 	}()
+	if job.Session {
+		// The commands stop with the container: when it exits, or when the run is over.
+		sctx, stopSession := context.WithCancel(ctx)
+		defer stopSession()
+		go c.serveSession(sctx, job.Run, id, dir, out)
+	}
 	select {
 	case res.ExitCode = <-exited:
 	case <-ctx.Done():

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -234,13 +235,13 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	item := 0
+	item, commit, token := 0, "", ""
+	if id, err := s.st.GitHub(ws.ID); err == nil {
+		token = id.Token
+	}
+	prTools := false
 	if m := prLinkRE.FindStringSubmatch(values["pr_link"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])
-		token := ""
-		if id, err := s.st.GitHub(ws.ID); err == nil {
-			token = id.Token
-		}
 		info, err := s.gh.PullRequest(ctx, token, ws.Name, num)
 		if err != nil {
 			return 0, fmt.Errorf("reading pull request #%d: %v", num, err)
@@ -249,8 +250,27 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		if err != nil {
 			return 0, fmt.Errorf("reading pull request #%d's files: %v", num, err)
 		}
-		item = num
+		item, commit, prTools = num, info.HeadSHA, true
 		cfg.Tools = append(cfg.Tools, agent.PRTools(&agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files})...)
+	}
+	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
+	// request's head, or the default branch's) instead of through GitHub.
+	sess, note, err := s.openSandbox(ctx, ws, a, token, commit, by)
+	if err != nil {
+		return 0, err
+	}
+	started := false
+	if sess != nil {
+		defer func() {
+			if !started {
+				sess.Close()
+			}
+		}()
+		cfg.System += "\n\n" + note
+		if prTools {
+			cfg.Tools = slices.DeleteFunc(cfg.Tools, func(t agent.Tool) bool { return t.Spec.Name == "read_file" || t.Spec.Name == "list_files" })
+		}
+		cfg.Tools = append(cfg.Tools, agent.SandboxTools(sess)...)
 	}
 	if a.Internet {
 		searcher, err := s.searcher(ws)
@@ -288,7 +308,19 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		saved = len(tr.Messages)
 	}
 	cfg.Save = func(tr *agent.Transcript) { save(tr, "running") }
+	started = true
 	go func() {
+		if sess != nil {
+			defer sess.Close()
+			// The agent's time starts once its sandbox has the code and takes commands.
+			rctx, cancel := context.WithTimeout(context.Background(), sandboxSetup)
+			err := sess.Ready(rctx)
+			cancel()
+			if err != nil {
+				save(&agent.Transcript{Outcome: agent.Failed, Error: "the sandbox did not start: " + err.Error()}, agent.Failed)
+				return
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.MaxMinutes)*time.Minute)
 		defer cancel()
 		tr := agent.Run(ctx, cfg, nil)

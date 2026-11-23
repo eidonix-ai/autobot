@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 // docker talks to the Docker Engine API over its Unix socket.
@@ -181,8 +183,13 @@ func (d *docker) logs(ctx context.Context, id string, w io.Writer) error {
 		return err
 	}
 	defer resp.Body.Close()
-	// Without a TTY, Docker frames each write: one byte of stream, three of padding, four of length.
-	r := bufio.NewReader(resp.Body)
+	return demux(resp.Body, w)
+}
+
+// demux copies a multiplexed stream (a container's logs, or a command's output) to w. Without a
+// TTY, Docker frames each write: one byte of stream, three of padding, four of length.
+func demux(src io.Reader, w io.Writer) error {
+	r := bufio.NewReader(src)
 	var head [8]byte
 	for {
 		if _, err := io.ReadFull(r, head[:]); err != nil {
@@ -195,4 +202,54 @@ func (d *docker) logs(ctx context.Context, id string, w io.Writer) error {
 			return err
 		}
 	}
+}
+
+// exec runs a command in a running container as the container's own user, copying its output
+// (stdout and stderr, in order) to w, and returns its exit code. The command gets no input.
+func (d *docker) exec(ctx context.Context, id string, cmd []string, w io.Writer) (int, error) {
+	var created struct{ Id string }
+	err := d.call(ctx, "POST", "/containers/"+id+"/exec", map[string]any{
+		"AttachStdout": true, "AttachStderr": true, "Tty": false, "WorkingDir": "/work", "Cmd": cmd,
+		// Said outright, though Docker would inherit them: the job's own user, and no privileges.
+		"User": "1000:1000", "Privileged": false}, &created)
+	if err != nil {
+		return -1, err
+	}
+	b, _ := json.Marshal(map[string]any{"Detach": false, "Tty": false})
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://docker/exec/"+created.Id+"/start", bytes.NewReader(b))
+	if err != nil {
+		return -1, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := d.http.Do(req)
+	if err != nil {
+		return -1, fmt.Errorf("docker: %w", err)
+	}
+	streamErr := demux(resp.Body, w)
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return -1, fmt.Errorf("docker: starting the command: %s", resp.Status)
+	}
+	if streamErr != nil {
+		return -1, streamErr
+	}
+	// The stream ends when the command does, but Docker may take a moment to record the exit.
+	for range 50 {
+		var st struct {
+			Running  bool
+			ExitCode int
+		}
+		if err := d.call(ctx, "GET", "/exec/"+created.Id+"/json", nil, &st); err != nil {
+			return -1, err
+		}
+		if !st.Running {
+			return st.ExitCode, nil
+		}
+		select {
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return -1, errors.New("docker did not report the command's exit")
 }

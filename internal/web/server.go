@@ -38,14 +38,16 @@ const (
 
 // Server is the web interface over a store.
 type Server struct {
-	st     *store.Store
-	gh     GitHub
-	live   *live
-	access *repoAccess
-	pages  map[string]*template.Template
-	md     goldmark.Markdown
-	mux    *http.ServeMux
-	ready  atomic.Bool // set once a user exists; users are never deleted, so it never goes back
+	st        *store.Store
+	gh        GitHub
+	live      *live
+	sessions  sessionQueues // the command queues of agents' sessions
+	idleLimit time.Duration // how long a session may sit without a command
+	access    *repoAccess
+	pages     map[string]*template.Template
+	md        goldmark.Markdown
+	mux       *http.ServeMux
+	ready     atomic.Bool // set once a user exists; users are never deleted, so it never goes back
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -87,11 +89,12 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		"tsShort": func(t time.Time) string { return t.In(eastern).Format("Jan 2, 3:04 PM") },
 	}
 	s := &Server{
-		st:     st,
-		gh:     gh,
-		live:   &live{started: time.Now(), byID: map[int64]liveStatus{}},
-		access: &repoAccess{byWS: map[int64]repoFacts{}},
-		pages:  map[string]*template.Template{},
+		st:        st,
+		gh:        gh,
+		idleLimit: idleLimit,
+		live:      &live{started: time.Now(), byID: map[int64]liveStatus{}},
+		access:    &repoAccess{byWS: map[int64]repoFacts{}},
+		pages:     map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
 		md:  goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID())),
 		mux: http.NewServeMux(),
@@ -153,6 +156,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /connector/v1/runs/{id}/source", s.connectorAPI(s.runSource))
 	s.mux.Handle("POST /connector/v1/runs/{id}/output", s.connectorAPI(s.runOutput))
 	s.mux.Handle("POST /connector/v1/runs/{id}/result", s.connectorAPI(s.runResult))
+	s.mux.Handle("GET /connector/v1/runs/{id}/commands", s.connectorAPI(s.sessionCommands))
+	s.mux.Handle("POST /connector/v1/runs/{id}/commands/{cid}/result", s.connectorAPIMax(8<<20, s.sessionResult))
 
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows", s.auth(s.workflowsIndex))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}", s.auth(s.workflowPage))

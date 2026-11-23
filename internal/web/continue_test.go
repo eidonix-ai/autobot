@@ -28,6 +28,9 @@ type chatLog struct {
 	bodies []string
 	// reply, when set, makes the answer: it is given the messages and the names of the tools offered.
 	reply func(msgs []agent.Message, tools []string) agent.Message
+	// status, when set, may make a request fail: it is given the request's number (from 1) and answers
+	// an HTTP status, or 0 to let it through.
+	status func(n int) int
 }
 
 func newChatLog(t *testing.T, hold chan struct{}) *chatLog {
@@ -40,6 +43,12 @@ func newChatLog(t *testing.T, hold chan struct{}) *chatLog {
 		c.mu.Unlock()
 		if n == 1 && hold != nil {
 			<-hold
+		}
+		if c.status != nil {
+			if code := c.status(n); code != 0 {
+				http.Error(w, "refused on purpose", code)
+				return
+			}
 		}
 		cached := 0
 		if n > 1 {

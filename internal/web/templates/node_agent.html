@@ -46,7 +46,10 @@
   {{template "tags" .}}
   <div class="row">
     <label class="check"><input type="checkbox" name="internet"{{if .S.Internet}} checked{{end}}> Allow internet <span class="info" tabindex="0" data-tip="Web search and fetching pages. A machine's sandbox has no internet unless its donor allows it.">ⓘ</span></label>
-    <label>Max sub-agents <input type="number" name="sub_agents" min="0" max="16" value="{{.S.SubAgents}}"></label>
+    <label><span class="lbl">Max sub-agents at a time <span class="info" tabindex="0" data-tip="With more than 0 the agent can hand separate pieces of work to sub-agents, which have read-only tools and notes of their own.">ⓘ</span></span>
+      <input type="number" name="sub_agents" min="0" max="16" value="{{.S.SubAgents}}"></label>
+    <label class="check"><input type="checkbox" name="limit_sub_agents" data-limit-subs{{if .S.SubAgentsPerRun}} checked{{end}}> Limit sub-agents per run</label>
+    <label data-when-limit{{if not .S.SubAgentsPerRun}} hidden{{end}}>Sub-agents in a run <input type="number" name="sub_agents_per_run" min="1" max="500" value="{{if .S.SubAgentsPerRun}}{{.S.SubAgentsPerRun}}{{else}}8{{end}}"></label>
   </div>
   {{if .Machines}}
   <fieldset>
@@ -67,6 +70,8 @@
     <label>Turn limit <input type="number" name="max_turns" min="1" max="500" value="{{.S.MaxTurns}}"></label>
     <label data-when-report{{if ne .Closing "report"}} hidden{{end}}>Turns to write the report <input type="number" name="report_turns" min="1" max="200" value="{{.ReportTurns}}"></label>
     <label>Time limit (minutes) <input type="number" name="max_minutes" min="1" max="240" value="{{.S.MaxMinutes}}"></label>
+    <label><span class="lbl">Warn before the time limit (%) <span class="info" tabindex="0" data-tip="When this share of the time is left, every session still working is told once to finish soon. 0 for no warning.">ⓘ</span></span>
+      <input type="number" name="time_warn_percent" min="0" max="50" value="{{.TimeWarn}}"></label>
   </div>
   <fieldset>
     <legend>When it runs again on the same item</legend>

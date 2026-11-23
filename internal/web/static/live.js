@@ -17,6 +17,14 @@
     return copy.outerHTML;
   }
 
+  // Replaces an item with its new version, the details a person had opened still open.
+  function replaceKeepingOpen(list, fresh, current) {
+    var opened = Array.prototype.map.call(current.querySelectorAll('details'), function (d) { return d.open; });
+    var node = document.importNode(fresh, true);
+    node.querySelectorAll('details').forEach(function (d, i) { if (opened[i]) d.open = true; });
+    list.replaceChild(node, current);
+  }
+
   function sync(old, next) {
     if (!old.hasAttribute('data-live-list')) {
       if (old.innerHTML !== next.innerHTML) old.innerHTML = next.innerHTML;
@@ -25,7 +33,7 @@
     var have = old.children, want = next.children;
     for (var i = 0; i < want.length; i++) {
       if (i >= have.length) old.appendChild(document.importNode(want[i], true));
-      else if (markup(have[i]) !== markup(want[i])) old.replaceChild(document.importNode(want[i], true), have[i]);
+      else if (markup(have[i]) !== markup(want[i])) replaceKeepingOpen(old, want[i], have[i]);
     }
     while (have.length > want.length) old.removeChild(old.lastElementChild);
   }

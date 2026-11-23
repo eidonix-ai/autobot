@@ -284,6 +284,7 @@ ol.transcript li.user { border-color: #d29922; }
 ol.transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.2rem 0; font-size: 0.85rem; max-height: 24rem; overflow: auto; }
 ol.transcript .who { font-size: 0.8rem; color: var(--muted); }
 ol.transcript summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+ol.subs { list-style: none; padding: 0; margin: 0; }
 ol.pad { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
 ol.pad li { border-left: 3px solid var(--line); padding: 0.2rem 0 0.2rem 0.7rem; }
 ol.pad li.high { border-color: var(--accent); }

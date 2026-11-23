@@ -349,6 +349,13 @@ type padView struct {
 	Report                                       bool
 }
 
+// subView is one sub-agent, as the run's page shows it.
+type subView struct {
+	Name, Title, Status, Line string
+	Entries                   []runEntry
+	Pad                       []padView
+}
+
 // agentRun is an agent run's page: live while it runs (the page refreshes itself), then its record.
 func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 	ws, ok := s.openWorkspace(w, r)
@@ -397,6 +404,34 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 			pad = append(pad, padView{e.N, e.Importance, e.Title, e.Description, e.Author, e.Body, e.Report})
 		}
 	}
+	// Its sub-agents, each with a transcript and notes of its own; their turns and tokens are the run's too.
+	subRows, err := s.st.Subs(run.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	var subs []subView
+	mainLine := ""
+	if len(subRows) > 0 {
+		mainLine = fmt.Sprintf("The main agent: %d turn%s · %d tokens in%s, %d out", tr.Turns, plural(tr.Turns), tr.In, cacheSuffix(tr.In, tr.Cached), tr.Out)
+	}
+	for _, row := range subRows {
+		v := subView{Name: row.Name, Title: row.Title, Status: map[string]string{"running": "Running", agent.Met: "Finished (met)", agent.Blocked: "Finished (blocked)",
+			agent.Budget: "Out of budget", agent.Unfinished: "Stopped without finishing", agent.Failed: "Failed"}[row.Status]}
+		var st agent.Transcript
+		json.Unmarshal([]byte(row.Summary), &st)
+		v.Line = fmt.Sprintf("%d turn%s · %d tokens in%s, %d out", st.Turns, plural(st.Turns), st.In, cacheSuffix(st.In, st.Cached), st.Out)
+		tr.Turns, tr.In, tr.Out, tr.Cached = tr.Turns+st.Turns, tr.In+st.In, tr.Out+st.Out, tr.Cached+st.Cached
+		if evs, err := s.st.ReadConv(row.Conversation); err == nil {
+			v.Entries = transcript(evs, 0, 1<<30, true)
+		}
+		if notes, err := s.st.SubNotes(run.ID, row.Name); err == nil {
+			for _, e := range notes {
+				v.Pad = append(v.Pad, padView{e.N, e.Importance, e.Title, e.Description, e.Author, e.Body, false})
+			}
+		}
+		subs = append(subs, v)
+	}
 	var report strings.Builder
 	if tr.Report != "" {
 		s.md.Convert([]byte(tr.Report), &report)
@@ -414,7 +449,7 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 	cache := cacheLine(tr.In, tr.Cached)
 	data := map[string]any{"Title": run.NodeName + " · " + ws.Name, "WS": ws, "Run": run, "T": tr, "Entries": entries,
 		"Outcome": outcome, "Dot": dot, "Report": template.HTML(report.String()), "Cache": cache, "Gone": gone,
-		"Writing": writing, "HasPad": run.Thread != 0, "Pad": pad,
+		"Writing": writing, "HasPad": run.Thread != 0, "Pad": pad, "Subs": subs, "MainLine": mainLine,
 		"Took": run.FinishedAt.Sub(run.StartedAt).Round(time.Second).String()}
 	if w := tr.Writing; w != nil {
 		data["WriterLine"] = fmt.Sprintf("Writing the report: %d turn%s · %d tokens in%s, %d out", w.Turns, plural(w.Turns), w.In, cacheSuffix(w.In, w.Cached), w.Out)

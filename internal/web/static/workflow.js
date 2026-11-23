@@ -391,6 +391,11 @@
       if (on && model) { form.querySelector('select[data-model]').value = model; }
       return;
     }
+    var limit = e.target.closest('input[data-limit-subs]');
+    if (limit) {
+      limit.form.querySelectorAll('[data-when-limit]').forEach(function (el) { el.hidden = !limit.checked; });
+      return;
+    }
     var closing = e.target.closest('select[data-closing]');
     if (closing) {
       var cform = closing.form;

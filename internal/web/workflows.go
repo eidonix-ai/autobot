@@ -405,7 +405,7 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		}
 		data["Presets"], data["Machines"], data["Verifiers"] = presets, machines, verify
 		data["Instruction"], data["Goal"], data["Closing"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind), st.EffectiveClosing(kind)
-		data["ReportTurns"] = st.EffectiveReportTurns()
+		data["ReportTurns"], data["TimeWarn"] = st.EffectiveReportTurns(), st.EffectiveTimeWarn()
 		data["Locked"] = workflow.PersonaOf(st.Persona) != nil
 		data["Preamble"] = preambleText(ws.Name, st.EffectiveClosing(kind) == workflow.ClosingReport)
 		// The blocks whose conversation this one may continue: the others that start their own.

@@ -73,21 +73,26 @@ func (m ModelRef) Set() bool { return m.Provider != 0 && m.Model != "" }
 // AgentSettings are an agent node's settings.
 type AgentSettings struct {
 	Model        ModelRef `json:"model"`
-	Persona      string   `json:"persona"`                // a preset's key (its Instruction and Done when are used), or "custom"
-	SystemPrompt string   `json:"system_prompt"`          // a template: Additional instructions, added after the Instruction
-	Instruction  string   `json:"instruction"`            // a template: the task, sent as the first message
-	Goal         string   `json:"goal"`                   // a template: when the work is done; the agent may finish only then
-	Internet     bool     `json:"internet"`               // web search and fetching pages
-	SubAgents    int      `json:"sub_agents"`             // how many sub-agents it may run at once; 0 for none
-	Machines     []int64  `json:"machines"`               // the workspace machines it may use
-	Verify       ModelRef `json:"verify"`                 // a decision model that checks a finish claiming the goal is met; unset for none
-	MaxTurns     int      `json:"max_turns"`              // model calls before it must have finished
-	Closing      string   `json:"closing,omitempty"`      // Custom only: "" (finish delivers the output) or "report" (written from the scratchpad)
-	ReportTurns  int      `json:"report_turns,omitempty"` // with a written report: turns the writing session has; 0 is 15
-	MaxMinutes   int      `json:"max_minutes"`            // wall time before it is stopped
-	Rerun        string   `json:"rerun"`                  // run again on the same item: "resume" its conversation, or start "fresh"
-	FollowUp     string   `json:"follow_up"`              // resume: a template sent as the next message; "" sends the instruction again
-	OutputTo     string   `json:"output_to,omitempty"`
+	Persona      string   `json:"persona"`       // a preset's key (its Instruction and Done when are used), or "custom"
+	SystemPrompt string   `json:"system_prompt"` // a template: Additional instructions, added after the Instruction
+	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
+	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
+	Internet     bool     `json:"internet"`      // web search and fetching pages
+	SubAgents    int      `json:"sub_agents"`    // how many sub-agents it may have working at once; 0 for none
+	// SubAgentsPerRun, when above 0, is how many sub-agents one run may start in all.
+	SubAgentsPerRun int `json:"sub_agents_per_run,omitempty"`
+	// TimeWarnPercent is how much of the time limit is left when every session of the run still working
+	// is told so, once; 0 for no warning. A block saved before it was set (nil) has 10.
+	TimeWarnPercent *int     `json:"time_warn_percent,omitempty"`
+	Machines        []int64  `json:"machines"`               // the workspace machines it may use
+	Verify          ModelRef `json:"verify"`                 // a decision model that checks a finish claiming the goal is met; unset for none
+	MaxTurns        int      `json:"max_turns"`              // model calls before it must have finished
+	Closing         string   `json:"closing,omitempty"`      // Custom only: "" (finish delivers the output) or "report" (written from the scratchpad)
+	ReportTurns     int      `json:"report_turns,omitempty"` // with a written report: turns the writing session has; 0 is 15
+	MaxMinutes      int      `json:"max_minutes"`            // wall time before it is stopped
+	Rerun           string   `json:"rerun"`                  // run again on the same item: "resume" its conversation, or start "fresh"
+	FollowUp        string   `json:"follow_up"`              // resume: a template sent as the next message; "" sends the instruction again
+	OutputTo        string   `json:"output_to,omitempty"`
 
 	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
 	// the item this block continues: it sends its own Instruction and Done when as the next message of
@@ -143,6 +148,17 @@ const (
 	ClosingNone   = ""       // finish delivers the output
 	ClosingReport = "report" // the report is written from the scratchpad, in a fresh session
 )
+
+// DefaultTimeWarn is the share of the time limit, in percent, left when the sessions of a run are warned.
+const DefaultTimeWarn = 10
+
+// EffectiveTimeWarn is the time warning in percent of the time limit; 0 is none.
+func (s AgentSettings) EffectiveTimeWarn() int {
+	if s.TimeWarnPercent == nil {
+		return DefaultTimeWarn
+	}
+	return *s.TimeWarnPercent
+}
 
 // DefaultReportTurns is how many turns the session that writes a report has, when not set.
 const DefaultReportTurns = 15
@@ -244,7 +260,11 @@ func (s AgentSettings) Check(kind string) error {
 	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate:
 		return fmt.Errorf("prompts are limited to %d characters", maxTemplate)
 	case s.SubAgents < 0 || s.SubAgents > 16:
-		return errors.New("sub-agents are 0 to 16")
+		return errors.New("sub-agents at a time are 0 to 16")
+	case s.SubAgentsPerRun < 0 || s.SubAgentsPerRun > 500:
+		return errors.New("the limit of sub-agents per run is 1 to 500")
+	case s.TimeWarnPercent != nil && (*s.TimeWarnPercent < 0 || *s.TimeWarnPercent > 50):
+		return errors.New("the time warning is 0 to 50 percent of the time limit")
 	case s.MaxTurns < 1 || s.MaxTurns > 500:
 		return errors.New("the turn limit is 1 to 500")
 	case s.MaxMinutes < 1 || s.MaxMinutes > 240:
@@ -336,6 +356,20 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 	s.MaxTurns, _ = strconv.Atoi(get("max_turns"))
 	s.MaxMinutes, _ = strconv.Atoi(get("max_minutes"))
 	s.ReportTurns, _ = strconv.Atoi(get("report_turns"))
+	if get("limit_sub_agents") == "on" { // the checkbox: unchecked, whatever the number says, is no limit
+		if n, err := strconv.Atoi(get("sub_agents_per_run")); err == nil && n >= 1 {
+			s.SubAgentsPerRun = n
+		} else {
+			s.SubAgentsPerRun = -1 // refused by Check
+		}
+	}
+	if v := strings.TrimSpace(get("time_warn_percent")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			n = -1 // refused by Check
+		}
+		s.TimeWarnPercent = &n
+	}
 	return s
 }
 

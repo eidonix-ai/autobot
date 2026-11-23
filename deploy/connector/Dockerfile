@@ -2,7 +2,7 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 -f deploy/connector/Dockerfile .
 # The Go program is cross-compiled on the build machine, and the final stage runs nothing, so one
 # machine builds both architectures without emulation.
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm AS build
 ARG TARGETOS TARGETARCH VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./

@@ -2,6 +2,8 @@ module github.com/eidonix-ai/autobot
 
 go 1.27.1
 
+toolchain go1.27.4
+
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/chromedp/cdproto v0.0.0-20241022234722-4d5d5faf59fb

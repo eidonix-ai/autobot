@@ -59,7 +59,7 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    uuid alone; private repos also need the secret in .github/autobot-secret.txt (committed by the
    repo's people, read live by Autobot), and a request without it gets instructions to set it up.
 5. Workflows (in progress): a canvas per kind (pull requests, issues), polling only, no webhooks.
-   Event blocks (PR Ready, PR Draft, PR Activity, Issue Opened) with summon phrase and stop tag
+   Event blocks (PR First Ready, PR Draft, PR Activity, Issue Opened) with summon phrase and stop tag
    (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
    own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
    fan out and merge; loops are refused for now. Templates use {tags}; a step's "Output to" tag is

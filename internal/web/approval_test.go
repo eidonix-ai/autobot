@@ -112,7 +112,7 @@ func TestApprovalOnPageAndResume(t *testing.T) {
 	// The state Autobot leaves when it stops while a request waits.
 	w, _ := e.st.Workflow(ws.ID, workflow.PR)
 	id, _ := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: 7, Graph: w.Graph}, []string{"ev", "ap", "ya", "no"}, derek)
-	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ev", Status: "done", Port: "out", Output: "PR Ready #7"})
+	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ev", Status: "done", Port: "out", Output: "PR First Ready #7"})
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: "waiting", StartedAt: time.Now()})
 	ap, _ := e.st.OpenApproval(id, "ap", "Run Retry uploads on cn7?", time.Now().Add(time.Hour))
 	e.st.StopOrphanWorkflows()

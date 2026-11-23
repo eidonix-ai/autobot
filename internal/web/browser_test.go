@@ -104,10 +104,10 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		chromedp.SendKeys(`input[name=password]`, "password-1234"),
 		chromedp.Submit(`input[name=password]`),
 		chromedp.WaitVisible(`#wf .drawflow`),
-		place("PR Ready", 400, 300),
+		place("PR First Ready", 400, 300),
 	)
 	if err != nil {
-		t.Fatalf("placing PR Ready on %s: %v", page, err)
+		t.Fatalf("placing PR First Ready on %s: %v", page, err)
 	}
 	g := stored()
 	if len(g.Nodes) != 1 || g.Nodes[0].Type != "pr_ready" {

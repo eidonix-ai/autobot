@@ -59,7 +59,7 @@ func (s *Server) goLive(ctx context.Context, ws *store.Workspace, kind string, s
 		}
 	}
 	if len(events) == 0 {
-		return "Add an event block, such as PR Ready, before switching it live."
+		return "Add an event block, such as PR First Ready, before switching it live."
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()

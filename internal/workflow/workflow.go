@@ -44,7 +44,7 @@ type NodeType struct {
 
 // Types are every node type, in menu order.
 var Types = []NodeType{
-	{Type: "pr_ready", Kind: PR, Label: "PR Ready", Event: true},
+	{Type: "pr_ready", Kind: PR, Label: "PR First Ready", Event: true},
 	{Type: "pr_draft", Kind: PR, Label: "PR Draft", Event: true},
 	{Type: "pr_activity", Kind: PR, Label: "PR Activity", Event: true},
 	{Type: "issue_opened", Kind: Issue, Label: "Issue Opened", Event: true},

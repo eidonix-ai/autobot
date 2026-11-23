@@ -77,18 +77,51 @@ git only through its environment, never a command line or the mirror's config.
    (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
    own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
    fan out and merge; loops are refused for now. Templates use {tags}: built-in ones are a parent and
-   its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {repo:charter}),
-   so the Test box asks only for the parent; old names such as {pr_title} still work. A step's "Output to" tag is
+   its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {charter}),
+   so the Test box asks only for the parent; old names such as {pr_title}, {project_charter} and {repo:charter} still work. A step's "Output to" tag is
    kept per case (one PR or issue) and replaced by the next write. Shift-click tests one block with
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never
    opened is marked "(not opened)" where it is cited; the plan is the agent's own notes. Only an
    optional check model (Verify) can send it back, and that report is kept meanwhile. It is told
-   once, at 5 turns left, and on its last turn finish is its only tool, so a run always ends with a report. Conversations are append-only so the provider's cache hits (old tool output is
-   shortened in one batch past ~100k tokens), stored with test-run logs as gzip files in
-   /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open plus 30 days.
-   A block re-run on an item resumes its conversation (Re-run setting); a reference block
-   ("New reference", dashed) continues another block's. Built so far: PR and web tools, personas, and machine sessions: an agent whose
+   once, at 5 turns left, and on its last turn finish is its only tool, so a run always ends with a report.
+   The context is the agent's to manage and nothing is ever trimmed automatically (Derek, 2026-11-23):
+   conversations are append-only so the provider's cache hits, and what is sent is rewritten only when
+   the agent prunes or compacts. Every tool result starts with its number, `[result N]`;
+   `prune_result` replaces results by `[result N pruned: first line; n characters]` (recorded as a
+   `prune` event, so a replay rebuilds the same messages); once the previous request passed 50% of the
+   model's window, the last result of a turn ends with `[context: 412k of 1,000k tokens]` (appended,
+   never rewriting). `compact` replaces the whole conversation by the run's task and one message with
+   what the agent carries forward, its scratchpad index and its plan (a `compact` event holds those
+   messages). Past 85% of the window (the last request's tokens plus what was added at 3.5 characters a
+   token) the turn is told to save and compact and offered only scratchpad_write, update_plan and
+   compact; an agent that does not is compacted by the harness, which also compacts and retries once when
+   the provider refuses a request as too long. Each permitted model has a context window (tokens), set
+   in one box on the provider's page, prefilled from the provider's /models (vLLM's `max_model_len`,
+   or `context_length` or `context_window`); the Eidonix gateway reports `context_window`, and 128,000 is
+   assumed when none is known. The scratchpad holds the agent's notes outside its context: entries
+   (title, importance low/medium/high, one-line description, body, author "main" for now) are only ever
+   added, with tools scratchpad_write, scratchpad_index, scratchpad_read and scratchpad_search.
+   Every run is a new session, starting fresh, in its **thread**: (workspace, kind, the block that
+   started it, item). A thread has one scratchpad, shared by all its runs, and every run's final report
+   is also kept in it, as a high-importance entry "Report of <date>, run <id>". Re-run "resume" and a
+   reference block ("New reference", dashed, "Continue the conversation of") open a session with the
+   block's own Instruction and Done when, the thread's newest report, the scratchpad index and what is
+   new on the pull request since (the commits and comments after the head and time the previous run
+   saw); their model and tools are the block's own (a reference block starts with the other block's
+   model, an ordinary setting). With no earlier report the block skips or starts fresh; Re-run
+   "fresh" starts a new thread with an empty scratchpad. A thread takes one run at a time (the others
+   wait), and is kept, with its scratchpad, while its item is open plus 30 days. The closing step
+   "Write the report from the scratchpad" (Gather Information's; Custom may choose it) splits a run in
+   two: the research session ends as always, its finish report is saved as a high-importance entry
+   "Research summary", it gets one more turn with only scratchpad_write, and a new session (its own
+   conversation, the same preamble, only read-only code and pull request tools, its own turns and
+   10 minutes) writes the report from the scratchpad and finishes with it; the run's report is that
+   one (or, if none was written, the high and medium notes in order), its outcome stays the research's,
+   and "(not opened)" is judged against the files both sessions read. Conversations are stored with test-run
+   logs as gzip files in /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open
+   plus 30 days; conversations from before threads are shown on the run page but never continued. The run
+   page shows the scratchpad, the research transcript and "Writing the report", all updating in place. Built so far: PR and web tools, personas, and machine sessions: an agent whose
    settings list machines gets a shell in a long-lived job container on the first free one (a test run
    with the session flag: same isolation, all the machine's GPUs, the PR head's code). The connector
    takes the agent's commands over a long poll (GET /connector/v1/runs/{id}/commands, answered at

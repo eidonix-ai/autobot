@@ -47,7 +47,9 @@ func TestBrowserRunPageShowsTheScratchpadLive(t *testing.T) {
 	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	wait := func(js string) chromedp.Action { return chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second)) }
+	wait := func(js string) chromedp.Action {
+		return chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second))
+	}
 	err = chromedp.Run(ctx,
 		chromedp.EmulateViewport(1200, 900),
 		chromedp.Navigate(e.srv.URL+"/login?next="+url.QueryEscape(fmt.Sprintf("/w/o/r/agent-runs/%d", run))),

@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <div class="row">
+    <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+    <label>Machine
+      <select name="machine" required>
+        {{if not .Machines}}<option value="">No machines: add one in Resources</option>{{end}}
+        {{range .Machines}}<option value="{{.ID}}"{{if eq $.S.Machine .ID}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select></label>
+  </div>
+  <label><span class="lbl">Script <span class="info" tabindex="0" data-tip="Bash, run with -e and -x in the pull request's code, with no network. Cargo.lock and uv.lock dependencies are fetched first. It passes when it exits 0.">ⓘ</span></span>
+    <textarea name="script" rows="6" class="code" spellcheck="false" required>{{.S.Script}}</textarea></label>
+  {{template "tags" .}}
+  <div class="row">
+    <label>GPUs <input type="number" name="gpus" min="0" max="8" value="{{.S.GPUs}}"></label>
+    <label>Time limit (minutes) <input type="number" name="minutes" min="1" max="120" value="{{.S.Minutes}}"></label>
+  </div>
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

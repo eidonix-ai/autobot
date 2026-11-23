@@ -1,0 +1,33 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <div class="row">
+    <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+    <label>Yes when
+      <select name="match">
+        <option value="all"{{if eq .S.Match "all"}} selected{{end}}>all of these hold</option>
+        <option value="any"{{if eq .S.Match "any"}} selected{{end}}>any of these holds</option>
+      </select></label>
+  </div>
+  <fieldset class="rules">
+    {{if eq .Kind "pr"}}
+    <div class="rule"><label class="check"><input type="checkbox" name="on_files"{{if .S.Files}} checked{{end}}> A changed file matches</label><input name="files" value="{{.S.Files}}" placeholder="kernels/* or *.cu" autocomplete="off"></div>
+    <div class="rule"><label class="check"><input type="checkbox" name="on_lines"{{if .S.MoreLines}} checked{{end}}> Changed lines, more than</label><input type="number" name="more_lines" min="0" value="{{if .S.MoreLines}}{{.S.MoreLines}}{{else}}500{{end}}"></div>
+    {{end}}
+    <div class="rule"><label class="check"><input type="checkbox" name="on_author"{{if .S.Author}} checked{{end}}> The author is</label>
+      <select name="author">
+        <option value="first_time"{{if eq .S.Author "first_time"}} selected{{end}}>a first-time contributor</option>
+        <option value="outside"{{if eq .S.Author "outside"}} selected{{end}}>from outside the project</option>
+        <option value="member"{{if eq .S.Author "member"}} selected{{end}}>a member of the project</option>
+        <option value="bot"{{if eq .S.Author "bot"}} selected{{end}}>a bot</option>
+      </select></div>
+    <div class="rule"><label class="check"><input type="checkbox" name="on_label"{{if .S.Label}} checked{{end}}> It has the label</label><input name="label" value="{{.S.Label}}" autocomplete="off"></div>
+    <div class="rule"><label class="check"><input type="checkbox" name="on_contains"{{if .S.Contains}} checked{{end}}> Title or description contains</label><input name="contains" value="{{.S.Contains}}" autocomplete="off"></div>
+    <div class="rule"><label class="check"><input type="checkbox" name="on_tag"{{if .S.Tag}} checked{{end}}> The tag</label><input name="tag" value="{{.S.Tag}}" placeholder="value_decision" autocomplete="off" spellcheck="false"><span class="muted">contains</span><input name="tag_has" value="{{.S.TagHas}}" autocomplete="off"></div>
+  </fieldset>
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

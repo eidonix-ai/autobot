@@ -55,6 +55,14 @@ func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 			err = s.Check()
 		}
 		return s, []string{s.Entry}, err
+	case workflow.GitHubComment:
+		s, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+		if err == nil {
+			err = s.Check()
+		}
+		return s, []string{s.Message}, err
+	case workflow.Condition, workflow.TestRun:
+		return nil, nil, errors.New("this block needs a real pull request or issue: shift-click the event block to run the workflow, perhaps as a dry run")
 	}
 	return nil, nil, errors.New("an event block is tested once the workflow engine runs workflows")
 }
@@ -133,6 +141,8 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
+	case workflow.GitHubCommentSettings:
+		data["Comment"] = workflow.Render(st.Message, values)
 	case workflow.DecisionSettings:
 		answer, err := s.decide(r.Context(), ws, st, values)
 		if err != nil {

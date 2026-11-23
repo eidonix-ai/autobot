@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
@@ -294,6 +295,12 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		settings, err = workflow.DecisionSettingsOf(n, kind)
 	case workflow.CaseEntry:
 		settings, err = workflow.CaseEntrySettingsOf(n)
+	case workflow.GitHubComment:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+	case workflow.Condition:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultCondition())
+	case workflow.TestRun:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultTestRun())
 	default:
 		settings, err = workflow.EventSettingsOf(n)
 	}
@@ -329,6 +336,18 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
 		page = "node_case.html"
+	case workflow.GitHubCommentSettings:
+		page = "node_github.html"
+	case workflow.ConditionSettings:
+		page = "node_condition.html"
+	case workflow.TestRunSettings:
+		page = "node_testrun.html"
+		machines, err := s.st.Machines(ws.ID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		data["Machines"] = machines
 	default:
 		data["Activities"] = workflow.Activities
 	}
@@ -399,6 +418,26 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			err = workflow.CheckTemplates(kind, outputs, c.Entry)
 		}
 		settings = c
+	case workflow.GitHubComment:
+		c := workflow.GitHubCommentFromForm(f.Get)
+		if err = c.Check(); err == nil {
+			err = workflow.CheckTemplates(kind, outputs, c.Message)
+		}
+		settings = c
+	case workflow.Condition:
+		c := workflow.ConditionFromForm(f.Get)
+		if err = c.Check(kind); err == nil && c.Tag != "" && !outputs[c.Tag] {
+			err = fmt.Errorf("{%s} is no step's output tag in this workflow", c.Tag)
+		}
+		settings = c
+	case workflow.TestRun:
+		t := workflow.TestRunFromForm(f.Get)
+		if err = t.Check(); err == nil {
+			if err = workflow.CheckTemplates(kind, outputs, t.Script); err == nil {
+				err = s.checkMachines(ws, []int64{t.Machine})
+			}
+		}
+		settings = t
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)

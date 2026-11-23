@@ -51,6 +51,9 @@ var Types = []NodeType{
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
 	{Type: CaseEntry, Label: "Case Entry"},
+	{Type: GitHubComment, Label: "GitHub Comment"},
+	{Type: Condition, Label: "Condition"},
+	{Type: TestRun, Label: "Test Run"},
 }
 
 // TypesFor lists the node types a kind's canvas offers.
@@ -110,6 +113,12 @@ func Outputs(n Node) []string {
 			}
 			return out
 		}
+	}
+	switch n.Type {
+	case Condition:
+		return []string{"yes", "no"}
+	case TestRun:
+		return []string{"passed", "failed"}
 	}
 	return []string{"out"}
 }
@@ -190,6 +199,12 @@ func (g Graph) Check(kind string) error {
 			_, err = DecisionSettingsOf(n, kind)
 		case CaseEntry:
 			_, err = CaseEntrySettingsOf(n)
+		case GitHubComment:
+			_, err = SettingsOf(n, DefaultGitHubComment())
+		case Condition:
+			_, err = SettingsOf(n, DefaultCondition())
+		case TestRun:
+			_, err = SettingsOf(n, DefaultTestRun())
 		}
 		if err != nil {
 			return err

@@ -2,6 +2,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -237,23 +238,29 @@ func (c *Client) Tarball(ctx context.Context, token, name, commit string) (io.Re
 
 // Item is an issue or pull request, as GitHub numbers both in one sequence.
 type Item struct {
-	Number int
-	Kind   string // "pr" or "issue"
-	Title  string
-	State  string // "open" or "closed"
-	Body   string
-	Author string
-	URL    string // its page on GitHub
+	Number      int
+	Kind        string // "pr" or "issue"
+	Title       string
+	State       string // "open" or "closed"
+	Body        string
+	Author      string
+	URL         string // its page on GitHub
+	Association string
+	Labels      []string
 }
 
 // Item reads issue or pull request number of owner/repo.
 func (c *Client) Item(ctx context.Context, token, name string, number int) (*Item, error) {
 	var it struct {
-		Number      int       `json:"number"`
-		Title       string    `json:"title"`
-		State       string    `json:"state"`
-		Body        string    `json:"body"`
-		HTMLURL     string    `json:"html_url"`
+		Number      int    `json:"number"`
+		Title       string `json:"title"`
+		State       string `json:"state"`
+		Body        string `json:"body"`
+		HTMLURL     string `json:"html_url"`
+		Association string `json:"author_association"`
+		Labels      []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 		PullRequest *struct{} `json:"pull_request"`
 		User        struct {
 			Login string `json:"login"`
@@ -269,7 +276,8 @@ func (c *Client) Item(ctx context.Context, token, name string, number int) (*Ite
 	if it.PullRequest != nil {
 		kind = "pr"
 	}
-	return &Item{Number: it.Number, Kind: kind, Title: it.Title, State: it.State, Body: it.Body, Author: it.User.Login, URL: it.HTMLURL}, nil
+	return &Item{Number: it.Number, Kind: kind, Title: it.Title, State: it.State, Body: it.Body, Author: it.User.Login, URL: it.HTMLURL,
+		Association: it.Association, Labels: names(it.Labels)}, nil
 }
 
 // File reads a file from owner/repo's default branch, up to 64 KB. A missing file is ErrNoRepo.
@@ -291,27 +299,35 @@ func (c *Client) File(ctx context.Context, token, name, path string) (string, er
 
 // PullRequest is what an agent is told about a pull request.
 type PullRequest struct {
-	Number  int
-	URL     string // its page on GitHub
-	Title   string
-	Body    string
-	Author  string
-	Draft   bool
-	State   string // "open" or "closed"
-	HeadSHA string
-	Base    string // the branch it merges into
+	Number int
+	URL    string // its page on GitHub
+	Title  string
+	Body   string
+	Author string
+	Draft  bool
+	State  string // "open" or "closed"
+	// Association is GitHub's word for the author's standing: OWNER, MEMBER, COLLABORATOR,
+	// CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER or NONE.
+	Association string
+	Labels      []string
+	HeadSHA     string
+	Base        string // the branch it merges into
 }
 
 // PullRequest reads pull request number of owner/repo.
 func (c *Client) PullRequest(ctx context.Context, token, name string, number int) (*PullRequest, error) {
 	var pr struct {
-		Number  int    `json:"number"`
-		HTMLURL string `json:"html_url"`
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		Draft   bool   `json:"draft"`
-		State   string `json:"state"`
-		User    struct {
+		Number      int    `json:"number"`
+		HTMLURL     string `json:"html_url"`
+		Title       string `json:"title"`
+		Body        string `json:"body"`
+		Draft       bool   `json:"draft"`
+		State       string `json:"state"`
+		Association string `json:"author_association"`
+		Labels      []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		User struct {
 			Login string `json:"login"`
 		} `json:"user"`
 		Head struct {
@@ -328,7 +344,17 @@ func (c *Client) PullRequest(ctx context.Context, token, name string, number int
 		return nil, err
 	}
 	return &PullRequest{Number: pr.Number, URL: pr.HTMLURL, Title: pr.Title, Body: pr.Body, Author: pr.User.Login,
-		Draft: pr.Draft, State: pr.State, HeadSHA: pr.Head.SHA, Base: pr.Base.Ref}, nil
+		Draft: pr.Draft, State: pr.State, Association: pr.Association, Labels: names(pr.Labels), HeadSHA: pr.Head.SHA, Base: pr.Base.Ref}, nil
+}
+
+func names(labels []struct {
+	Name string `json:"name"`
+}) []string {
+	var out []string
+	for _, l := range labels {
+		out = append(out, l.Name)
+	}
+	return out
 }
 
 // ChangedFile is one file a pull request changes.
@@ -475,4 +501,66 @@ func (c *Client) Tree(ctx context.Context, token, name, ref string) ([]string, e
 		}
 	}
 	return out, nil
+}
+
+// send calls the API with a JSON body (a POST or a PATCH) as token, and decodes a 2xx answer into out.
+func (c *Client) send(ctx context.Context, method, token, path string, body, out any) error {
+	base, hc := c.BaseURL, c.HTTP
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	if hc == nil {
+		hc = defaultHTTP
+	}
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "autobot")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode/100 == 2:
+		if out != nil {
+			return json.Unmarshal(data, out)
+		}
+		return nil
+	case resp.StatusCode == http.StatusNotFound:
+		return ErrNoRepo
+	case resp.StatusCode == http.StatusUnauthorized:
+		return ErrBadToken
+	case resp.StatusCode == http.StatusForbidden:
+		return errors.New("GitHub refused: the token may not write comments on this repository (it needs Issues and Pull requests: read and write)")
+	}
+	var msg struct{ Message string }
+	json.Unmarshal(data, &msg)
+	return fmt.Errorf("GitHub answered %s: %s", resp.Status, msg.Message)
+}
+
+// Comment adds a comment to an issue or pull request and returns its id and address.
+func (c *Client) Comment(ctx context.Context, token, name string, number int, body string) (int64, string, error) {
+	var out struct {
+		ID      int64  `json:"id"`
+		HTMLURL string `json:"html_url"`
+	}
+	err := c.send(ctx, http.MethodPost, token, fmt.Sprintf("/repos/%s/issues/%d/comments", name, number), map[string]string{"body": body}, &out)
+	return out.ID, out.HTMLURL, err
+}
+
+// EditComment replaces one of the identity's comments; ErrNoRepo when it is gone.
+func (c *Client) EditComment(ctx context.Context, token, name string, id int64, body string) (string, error) {
+	var out struct {
+		HTMLURL string `json:"html_url"`
+	}
+	err := c.send(ctx, http.MethodPatch, token, fmt.Sprintf("/repos/%s/issues/comments/%d", name, id), map[string]string{"body": body}, &out)
+	return out.HTMLURL, err
 }

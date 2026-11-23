@@ -40,6 +40,8 @@ type item struct {
 	url      string
 	pr       *github.PullRequest // pull requests only
 	files    []github.ChangedFile
+	assoc    string // the author's standing in the project, as GitHub says it
+	labels   []string
 	comments []github.Comment
 }
 
@@ -59,6 +61,7 @@ func (s *Server) loadItem(ctx context.Context, ws *store.Workspace, kind string,
 			return nil, err
 		}
 		it.pr, it.title, it.state, it.body, it.author, it.url = pr, pr.Title, pr.State, pr.Body, pr.Author, pr.URL
+		it.assoc, it.labels = pr.Association, pr.Labels
 	} else {
 		gi, err := s.gh.Item(ctx, token, ws.Name, number)
 		if err != nil {
@@ -68,6 +71,7 @@ func (s *Server) loadItem(ctx context.Context, ws *store.Workspace, kind string,
 			return nil, fmt.Errorf("#%d is a pull request; run the pull request workflow on it", number)
 		}
 		it.title, it.state, it.body, it.author, it.url = gi.Title, gi.State, gi.Body, gi.Author, gi.URL
+		it.assoc, it.labels = gi.Association, gi.Labels
 	}
 	if it.comments, err = s.gh.Comments(ctx, token, ws.Name, number); err != nil {
 		return nil, err
@@ -496,8 +500,155 @@ func (s *Server) runStep(rs *runState, n workflow.Node, prev string) stepOutcome
 			return stepOutcome{err: err}
 		}
 		return s.agentStep(ctx, rs, n, a, values)
+	case workflow.GitHubComment:
+		c, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+		if err == nil {
+			err = c.Check()
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		return s.commentStep(ctx, rs, n, c, strings.TrimSpace(workflow.Render(c.Message, values)))
+	case workflow.Condition:
+		c, err := workflow.SettingsOf(n, workflow.DefaultCondition())
+		if err == nil {
+			err = c.Check(kind)
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		f := workflow.Facts{Author: rs.it.author, Association: rs.it.assoc, Labels: rs.it.labels, Title: rs.it.title, Body: rs.it.body, Tags: rs.tags}
+		for _, cf := range rs.it.files {
+			f.Files, f.Lines = append(f.Files, cf.Path), f.Lines+cf.Additions+cf.Deletions
+		}
+		ok, notes := c.Holds(f)
+		port := "no"
+		if ok {
+			port = "yes"
+		}
+		return stepOutcome{port: port, output: strings.Join(notes, "\n")}
+	case workflow.TestRun:
+		t, err := workflow.SettingsOf(n, workflow.DefaultTestRun())
+		if err == nil {
+			err = t.Check()
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		return s.testStep(ctx, rs, t, workflow.Render(t.Script, values))
 	}
 	return stepOutcome{err: fmt.Errorf("a %s block cannot run yet", n.Type)}
+}
+
+// commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
+// file. Keeping one comment, a later run edits the node's earlier comment.
+func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, c workflow.GitHubCommentSettings, text string) stepOutcome {
+	if text == "" {
+		return stepOutcome{err: errors.New("the comment came out empty")}
+	}
+	if rs.run.DryRun {
+		return stepOutcome{port: "out", output: text, note: "dry run: not posted"}
+	}
+	if c.Trial {
+		if err := s.writeEntry(rs, n, "**Would post on GitHub:**\n\n"+text, true); err != nil {
+			return stepOutcome{err: err}
+		}
+		return stepOutcome{port: "out", output: text, note: "trial run: written to the case file, not posted"}
+	}
+	token, err := s.token(rs.ws)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	if token == "" {
+		return stepOutcome{err: errors.New("posting needs the workspace's GitHub identity: set it in the workspace's Settings")}
+	}
+	cs, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
+	if errors.Is(err, store.ErrNotFound) {
+		cs, err = s.caseForRun(rs)
+	}
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	if c.KeepOne {
+		if id, _ := s.st.GitHubComment(cs.UUID, n.ID); id != 0 {
+			url, err := s.gh.EditComment(ctx, token, rs.ws.Name, id, text)
+			if err == nil {
+				s.st.SetGitHubComment(cs.UUID, n.ID, id, url)
+				return stepOutcome{port: "out", output: text, note: "edited " + url}
+			}
+			if !errors.Is(err, github.ErrNoRepo) { // deleted on GitHub: post a new one
+				return stepOutcome{err: fmt.Errorf("editing the earlier comment: %v", err)}
+			}
+		}
+	}
+	id, url, err := s.gh.Comment(ctx, token, rs.ws.Name, rs.it.number, text)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	if err := s.st.SetGitHubComment(cs.UUID, n.ID, id, url); err != nil {
+		log.Printf("workflow run %d: %v", rs.run.ID, err)
+	}
+	return stepOutcome{port: "out", output: text, note: "posted " + url}
+}
+
+// testStep runs a script on one of the workspace's machines, with the item's code, and waits.
+func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunSettings, script string) stepOutcome {
+	m, err := s.st.Machine(t.Machine)
+	if err != nil || m.WorkspaceID != rs.ws.ID || m.Revoked {
+		return stepOutcome{err: errors.New("the machine is no longer one of this workspace's; choose another")}
+	}
+	if !m.Enabled {
+		return stepOutcome{err: fmt.Errorf("%s is offline", m.Name)}
+	}
+	token, err := s.token(rs.ws)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	commit, ref := "", ""
+	if rs.it.pr != nil {
+		commit, ref = rs.it.pr.HeadSHA, rs.it.pr.HeadSHA
+	} else if commit, err = s.gh.CommitSHA(ctx, token, rs.ws.Name, "HEAD"); err != nil {
+		return stepOutcome{err: fmt.Errorf("finding the repository's latest commit: %v", err)}
+	}
+	private := false
+	if token != "" {
+		if private, err = s.gh.Private(ctx, token, rs.ws.Name); err != nil {
+			return stepOutcome{err: err}
+		}
+	}
+	run, err := s.st.QueueRun(m, script, ref, commit, private, t.GPUs, time.Duration(t.Minutes)*time.Minute, rs.by)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	deadline := time.After(time.Duration(t.Minutes)*time.Minute + 30*time.Minute) // waiting for the machine counts too
+	for {
+		select {
+		case <-ctx.Done():
+			return stepOutcome{err: errors.New("stopped waiting for the test run")}
+		case <-deadline:
+			s.st.RequestCancel(run.ID)
+			return stepOutcome{err: fmt.Errorf("test run %d did not finish in time", run.ID)}
+		case <-time.After(3 * time.Second):
+		}
+		state, _, summary, err := s.st.RunState(run.ID)
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		switch state {
+		case "passed", "failed":
+			out := summary
+			if r, err := s.st.Run(run.ID); err == nil {
+				tail := strings.TrimSpace(r.Output)
+				if len(tail) > 4000 {
+					tail = "…" + strings.ToValidUTF8(tail[len(tail)-4000:], "")
+				}
+				out += "\n\n" + tail
+			}
+			return stepOutcome{port: state, output: out, note: fmt.Sprintf("test run %d on %s", run.ID, m.Name)}
+		case "error":
+			return stepOutcome{err: fmt.Errorf("test run %d could not run: %s", run.ID, summary)}
+		}
+	}
 }
 
 // writeEntry writes a case entry under the node's name: it revises the node's open draft, or

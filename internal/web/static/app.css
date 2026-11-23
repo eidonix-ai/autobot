@@ -290,3 +290,7 @@ ol.steps .step-head { display: flex; gap: 0.5rem; align-items: baseline; flex-wr
 ol.steps .step-head .dot { margin: 0; }
 ol.steps pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; max-height: 24rem; overflow: auto; margin: 0.3rem 0 0; }
 ol.steps summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+fieldset.rules { display: grid; gap: 0.45rem; }
+fieldset.rules .rule { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+fieldset.rules .rule label.check { min-width: 15rem; }
+fieldset.rules .rule input:not([type=checkbox]), fieldset.rules .rule select { flex: 1 1 10rem; width: auto; }

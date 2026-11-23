@@ -64,6 +64,8 @@ type GitHub interface {
 	Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error)
 	PullRequest(ctx context.Context, token, name string, number int) (*github.PullRequest, error)
 	Item(ctx context.Context, token, name string, number int) (*github.Item, error)
+	Comment(ctx context.Context, token, name string, number int, body string) (int64, string, error)
+	EditComment(ctx context.Context, token, name string, id int64, body string) (string, error)
 	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
 	agent.Reader
 }

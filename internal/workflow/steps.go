@@ -431,6 +431,36 @@ func stepSummary(n Node, kind string, models func(ModelRef) string) string {
 			q = string([]rune(q)[:59]) + "…"
 		}
 		return q
+	case GitHubComment:
+		s, err := SettingsOf(n, DefaultGitHubComment())
+		switch {
+		case err != nil:
+			return ""
+		case s.Trial:
+			return "Trial: writes what it would post"
+		case s.KeepOne:
+			return "Posts, keeping one comment"
+		}
+		return "Posts a comment"
+	case Condition:
+		s, err := SettingsOf(n, DefaultCondition())
+		if err != nil || s.rules() == 0 {
+			return "Turn on a rule"
+		}
+		if s.rules() == 1 {
+			return "1 rule"
+		}
+		return fmt.Sprintf("%d rules, %s of them", s.rules(), s.Match)
+	case TestRun:
+		s, err := SettingsOf(n, DefaultTestRun())
+		if err != nil || s.Machine == 0 {
+			return "Choose a machine"
+		}
+		first, _, _ := strings.Cut(strings.TrimSpace(s.Script), "\n")
+		if utf8.RuneCountInString(first) > 50 {
+			first = string([]rune(first)[:49]) + "…"
+		}
+		return first
 	case CaseEntry:
 		s, err := CaseEntrySettingsOf(n)
 		if err != nil {

@@ -6,7 +6,7 @@ import (
 )
 
 func TestConditionHolds(t *testing.T) {
-	f := Facts{Files: []string{"internal/web/server.go", "docs/README.md"}, Lines: 120, Author: "alice", Association: "FIRST_TIME_CONTRIBUTOR",
+	f := ItemFacts{Files: []string{"internal/web/server.go", "docs/README.md"}, Lines: 120, Author: "alice", Association: "FIRST_TIME_CONTRIBUTOR",
 		Labels: []string{"Kernels"}, Title: "Faster attention", Body: "Uses the new CUDA path.", Tags: map[string]string{"value_decision": "deep review"}}
 	cases := []struct {
 		s    ConditionSettings

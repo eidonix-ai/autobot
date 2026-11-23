@@ -84,9 +84,11 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	for _, k := range workflow.Kinds {
 		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
 	}
-	s.render(w, r, http.StatusOK, "workflows.html", map[string]any{"Title": workflow.KindLabel(kind) + " workflow · " + ws.Name,
+	data := map[string]any{"Title": workflow.KindLabel(kind) + " workflow · " + ws.Name,
 		"WS": ws, "Kind": kind, "Tabs": tabs, "State": string(state), "Wide": true,
-		"Base": ws.Path() + "/workflows/" + kind})
+		"Base": ws.Path() + "/workflows/" + kind}
+	s.pollView(data, ws, kind, stored, g)
+	s.render(w, r, http.StatusOK, "workflows.html", data)
 }
 
 // saveLayout stores the canvas's nodes (type and position) and links. Settings are not sent: each

@@ -122,8 +122,8 @@ func ConditionFromForm(get func(string) string) ConditionSettings {
 	return s
 }
 
-// Facts are what a Condition knows of the item.
-type Facts struct {
+// ItemFacts are what a Condition knows of the item.
+type ItemFacts struct {
 	Files       []string // the changed files' paths
 	Lines       int      // lines added and removed
 	Author      string
@@ -134,7 +134,7 @@ type Facts struct {
 }
 
 // Holds reports whether the condition holds for the item, with what each rule found.
-func (s ConditionSettings) Holds(f Facts) (bool, []string) {
+func (s ConditionSettings) Holds(f ItemFacts) (bool, []string) {
 	var results []bool
 	var notes []string
 	rule := func(ok bool, what string) {

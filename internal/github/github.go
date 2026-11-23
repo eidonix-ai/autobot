@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,12 +28,21 @@ var ErrBadToken = errors.New("GitHub did not accept the token (wrong, revoked or
 type Client struct {
 	BaseURL string       // default https://api.github.com
 	HTTP    *http.Client // default: a client with a 10-second timeout
+
+	mu    sync.Mutex
+	etags map[string]etagged // answers to getCached, by token and path
 }
 
 var defaultHTTP = &http.Client{Timeout: 10 * time.Second}
 
 // get calls the API, with the token when there is one, and decodes a 200 answer into out.
 func (c *Client) get(ctx context.Context, token, path string, out any) (http.Header, error) {
+	return c.fetch(ctx, token, path, out, false)
+}
+
+// fetch is get; with cache it asks GitHub whether the answer changed since last time (If-None-Match),
+// and a "not modified" answer, which GitHub does not count against the rate limit, is served from memory.
+func (c *Client) fetch(ctx context.Context, token, path string, out any, cache bool) (http.Header, error) {
 	base, hc := c.BaseURL, c.HTTP
 	if base == "" {
 		base = "https://api.github.com"
@@ -50,12 +60,31 @@ func (c *Client) get(ctx context.Context, token, path string, out any) (http.Hea
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	key := etagKey(token, path)
+	if cache {
+		if e, ok := c.cached(key); ok {
+			req.Header.Set("If-None-Match", e.etag)
+		}
+	}
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("could not reach GitHub: %w", err)
 	}
 	defer resp.Body.Close()
 	switch {
+	case resp.StatusCode == http.StatusNotModified && cache:
+		e, ok := c.cached(key)
+		if !ok || json.Unmarshal(e.body, out) != nil {
+			return nil, errors.New("GitHub sent an unreadable answer")
+		}
+		return resp.Header, nil
+	case resp.StatusCode == http.StatusOK && cache:
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+		if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(out) != nil {
+			return nil, errors.New("GitHub sent an unreadable answer")
+		}
+		c.keep(key, etagged{resp.Header.Get("ETag"), body})
+		return resp.Header, nil
 	case resp.StatusCode == http.StatusOK:
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			return nil, errors.New("GitHub sent an unreadable answer")
@@ -168,6 +197,8 @@ func tokenKind(token string) string {
 		return "token"
 	}
 }
+
+var loginRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9\[\]-]{0,99}$`)
 
 var refRE = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)
 
@@ -312,6 +343,8 @@ type PullRequest struct {
 	Labels      []string
 	HeadSHA     string
 	Base        string // the branch it merges into
+
+	Additions, Deletions int // changed lines
 }
 
 // PullRequest reads pull request number of owner/repo.
@@ -336,6 +369,8 @@ func (c *Client) PullRequest(ctx context.Context, token, name string, number int
 		Base struct {
 			Ref string `json:"ref"`
 		} `json:"base"`
+		Additions int `json:"additions"`
+		Deletions int `json:"deletions"`
 	}
 	if _, err := c.get(ctx, token, fmt.Sprintf("/repos/%s/pulls/%d", name, number), &pr); err != nil {
 		if errors.Is(err, ErrNoRepo) {
@@ -344,7 +379,8 @@ func (c *Client) PullRequest(ctx context.Context, token, name string, number int
 		return nil, err
 	}
 	return &PullRequest{Number: pr.Number, URL: pr.HTMLURL, Title: pr.Title, Body: pr.Body, Author: pr.User.Login,
-		Draft: pr.Draft, State: pr.State, Association: pr.Association, Labels: names(pr.Labels), HeadSHA: pr.Head.SHA, Base: pr.Base.Ref}, nil
+		Draft: pr.Draft, State: pr.State, Association: pr.Association, Labels: names(pr.Labels), HeadSHA: pr.Head.SHA, Base: pr.Base.Ref,
+		Additions: pr.Additions, Deletions: pr.Deletions}, nil
 }
 
 func names(labels []struct {

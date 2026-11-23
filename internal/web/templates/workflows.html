@@ -4,7 +4,14 @@
   <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
   <nav class="tabs">{{range .Tabs}}<a href="{{$.WS.Path}}/workflows/{{.Kind}}"{{if eq .Kind $.Kind}} class="on" aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
   <span class="wf-status" id="wf-status" role="status"></span>
+  <form method="post" action="{{.Base}}/live" class="wf-live">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="live" value="{{if .Live}}off{{else}}on{{end}}">
+    <span{{if .Live}} class="wf-on"{{end}}>Live: {{if .Live}}on{{else}}off{{end}}</span>
+    <button class="secondary">{{if .Live}}Turn off{{else}}Turn on{{end}}</button>
+  </form>
 </div>
+{{with .LiveProblem}}<p class="error">{{.}}</p>{{end}}
 <div class="wf-wrap">
   <div id="wf" class="parent-drawflow wf-canvas" data-state="{{.State}}" data-base="{{.Base}}" data-csrf="{{.CSRF}}"></div>
   <button type="button" id="wf-fit" class="secondary wf-fit">Fit</button>
@@ -13,6 +20,9 @@
 <div id="wf-ghost" class="wf-ghost" hidden></div>
 <div id="wf-modal" class="modal" popover></div>
 <p class="hint wf-hint">Right-click the canvas to add a node. Click a node to set it up, shift-click to test it; drag to move it; drag from its dot to link it to the next step.</p>
+{{if .Recent}}<details class="more"><summary>Recent ({{len .Recent}})</summary>
+<ul class="wf-recent">{{range .Recent}}<li>{{ts .At}} · #{{.Number}} · {{.Node}}: {{if .Run}}<a href="{{$.WS.Path}}/workflow-runs/{{.Run}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}</li>{{end}}</ul>
+</details>{{end}}
 <script src="/static/vendor/drawflow-0.0.60/drawflow.min.js"></script>
 <script src="/static/workflow.js"></script>
 {{end}}

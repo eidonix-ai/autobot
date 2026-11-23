@@ -136,6 +136,7 @@ func serve(args []string) error {
 	go ui.Watch(ctx)
 	go ui.CheckRoutes(ctx)
 	go ui.ResumeWorkflows(ctx) // runs that were waiting for a person when Autobot stopped
+	go ui.Poll(ctx)
 	done := make(chan error, 1)
 	go func() {
 		<-ctx.Done()

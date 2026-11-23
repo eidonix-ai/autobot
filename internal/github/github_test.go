@@ -135,3 +135,93 @@ func TestRepoPath(t *testing.T) {
 		t.Errorf("%q %v", p, err)
 	}
 }
+
+// The lists are asked for again with the ETag GitHub gave, and an unchanged answer (304) is served
+// from memory; a changed one replaces it. Another token never sees the first one's answer.
+func TestListsUseETags(t *testing.T) {
+	var asked, notModified int
+	body := `[{"number":7,"state":"open","title":"T","draft":true,"updated_at":"2026-11-23T15:00:00Z","user":{"login":"alice"},
+		"head":{"sha":"abc"},"base":{"ref":"main"},"labels":[{"name":"bug"}],"requested_reviewers":[{"login":"bot"}]}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		if r.Header.Get("Authorization") == "Bearer other" && r.Header.Get("If-None-Match") != "" {
+			t.Error("sent one token's ETag with another")
+		}
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			notModified++
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL}
+	for i := 0; i < 3; i++ {
+		ps, err := c.ListPulls(context.Background(), "tok", "o/r", "all", 1)
+		if err != nil || len(ps) != 1 || ps[0].Number != 7 || !ps[0].Draft || ps[0].HeadSHA != "abc" || ps[0].Base != "main" ||
+			ps[0].Labels[0] != "bug" || ps[0].Reviewers[0] != "bot" || !ps[0].Open || ps[0].Updated.Year() != 2026 {
+			t.Fatalf("round %d: %+v %v", i, ps, err)
+		}
+	}
+	if asked != 3 || notModified != 2 {
+		t.Fatalf("asked %d times, %d answered not modified", asked, notModified)
+	}
+	if _, err := c.ListPulls(context.Background(), "other", "o/r", "all", 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListIssuesMarksPullRequests(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.RawQuery, "since=2026-11-23T15%3A00%3A00Z") {
+			t.Errorf("no since: %s", r.URL.RawQuery)
+		}
+		w.Write([]byte(`[{"number":1,"state":"open","title":"issue","user":{"login":"a"}},{"number":2,"state":"closed","pull_request":{},"user":{"login":"b"}}]`))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL}
+	is, err := c.ListIssues(context.Background(), "", "o/r", "all", time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC), 1)
+	if err != nil || len(is) != 2 || is[0].Kind != "issue" || is[1].Kind != "pr" || is[1].Open {
+		t.Fatalf("%+v %v", is, err)
+	}
+}
+
+func TestCIStateAndComments(t *testing.T) {
+	runs := map[string]string{
+		"pending": `[{"status":"completed","conclusion":"success"},{"status":"in_progress"}]`,
+		"failed":  `[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"failure"}]`,
+		"passed":  `[{"status":"completed","conclusion":"success"},{"status":"completed","conclusion":"skipped"}]`,
+		"none":    `[]`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/check-runs"):
+			sha := strings.Split(r.URL.Path, "/")[5]
+			w.Write([]byte(`{"check_runs":` + runs[sha] + `}`))
+		case strings.HasSuffix(r.URL.Path, "/issues/comments"):
+			w.Write([]byte(`[{"id":9,"body":"hi","issue_url":"https://api.github.com/repos/o/r/issues/42","updated_at":"2026-11-23T15:00:00Z","user":{"login":"carol"}}]`))
+		case strings.HasSuffix(r.URL.Path, "/permission"):
+			w.Write([]byte(`{"permission":"write","role_name":"maintain"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c, ctx := &Client{BaseURL: srv.URL}, context.Background()
+	for want := range runs {
+		if got, err := c.CIState(ctx, "", "o/r", want); err != nil || got != want {
+			t.Errorf("checks of %s: %q %v", want, got, err)
+		}
+	}
+	cs, err := c.RepoComments(ctx, "", "o/r", time.Time{}, 1)
+	if err != nil || len(cs) != 1 || cs[0].Number != 42 || cs[0].ID != 9 || cs[0].Author != "carol" {
+		t.Fatalf("%+v %v", cs, err)
+	}
+	if role, err := c.Role(ctx, "", "o/r", "carol"); err != nil || role != "maintain" {
+		t.Fatalf("role %q %v", role, err)
+	}
+	if role, err := c.Role(ctx, "", "o/r", "../etc"); err != nil || role != "none" {
+		t.Fatalf("role of a bad name %q %v", role, err)
+	}
+}

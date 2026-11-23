@@ -339,7 +339,12 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 
 // builtin runs one of the harness's own tools, other than finish and the plan. A compact call
 // only notes what the agent carries forward: the compaction itself is after the turn's other calls.
-func (s *session) builtin(name, args string, carry **string) string {
+func (s *session) builtin(name, args string, carry **string) (out string) {
+	defer func() { // a panic in the scratchpad or the like is an error answer, as in runTool, not a dead run
+		if r := recover(); r != nil {
+			out = fmt.Sprintf("error: the tool failed: %v", r)
+		}
+	}()
 	switch name {
 	case "prune_result":
 		return s.prune(args)

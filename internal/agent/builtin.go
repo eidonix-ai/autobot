@@ -282,6 +282,7 @@ const carriedByAutobot = "(compacted by Autobot: your notes are in the scratchpa
 // compact replaces the conversation by the task and what the agent carries forward, with its
 // scratchpad index and its plan.
 func (s *session) compact(carry string) {
+	defer func() { recover() }() // a failing scratchpad must not end the run: the conversation is left as it was
 	var b strings.Builder
 	b.WriteString("Your earlier work was compacted. What you carried forward:\n")
 	b.WriteString(strings.TrimSpace(carry))

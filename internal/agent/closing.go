@@ -65,7 +65,7 @@ func SaveTurn(ctx context.Context, cfg Config, conv *Conversation, tr *Transcrip
 	for _, call := range reply.ToolCalls {
 		out := "error: only " + availableOn([]string{"scratchpad_write"})
 		if call.Function.Name == "scratchpad_write" {
-			out = s.padWrite(call.Function.Arguments)
+			out = s.builtin("scratchpad_write", call.Function.Arguments, nil)
 		}
 		conv.addResult(call.ID, out)
 	}

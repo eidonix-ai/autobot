@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -68,18 +69,25 @@ func (s *Server) chooseConversation(ws *store.Workspace, kind string, n workflow
 		return nil, nil, store.ErrConversationBusy
 	}
 	evs, err := s.st.ReadConv(c.ID)
+	var conv *agent.Conversation
 	if err == nil {
-		var conv *agent.Conversation
-		if conv, err = agent.LoadConversation(evs); err == nil {
-			// A new model cannot take over a conversation it did not have; a block that is not a
-			// continuation starts a new one with its new model.
-			if !a.Continues() && (conv.Model != a.Model.Model || conv.Provider != a.Model.Provider) {
-				return nil, nil, nil
-			}
-			return c, conv, nil
-		}
+		conv, err = agent.LoadConversation(evs)
 	}
-	return nil, nil, fmt.Errorf("the earlier conversation (number %d) could not be read: %v", c.ID, err)
+	if err != nil {
+		// Its file is missing (Autobot stopped before the first turn was written) or cannot be read:
+		// it is set aside, so that it never blocks the block, and the item is as if it had none.
+		log.Printf("conversation %d could not be read and is set aside: %v", c.ID, err)
+		if err := s.st.ForgetConversation(c.ID); err != nil {
+			return nil, nil, err
+		}
+		return s.chooseConversation(ws, kind, n, a, item, test)
+	}
+	// A new model cannot take over a conversation it did not have; a block that is not a
+	// continuation starts a new one with its new model.
+	if !a.Continues() && (conv.Model != a.Model.Model || conv.Provider != a.Model.Provider) {
+		return nil, nil, nil
+	}
+	return c, conv, nil
 }
 
 // continuedBlock is the Agent block a continuation continues, from its canvas; the error says

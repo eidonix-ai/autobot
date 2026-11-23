@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"github.com/eidonix-ai/autobot/internal/index"
 	"log"
 	"time"
 )
@@ -14,7 +15,7 @@ func (s *Server) Retain(ctx context.Context) {
 	for {
 		func() {
 			defer survive("run retention", nil)
-			p, err := s.st.PruneRuns(time.Now())
+			p, err := s.st.PruneRuns(time.Now(), func(ws int64) bool { return index.Ready(s.st, ws) })
 			if err != nil {
 				log.Printf("run retention: %v", err)
 			} else if p.TestLogs+p.StepOutputs+p.Conversations > 0 {

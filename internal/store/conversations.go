@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -109,6 +111,13 @@ func (s *Store) LatestConversation(ws int64, kind, node string, item int) (*Conv
 	}
 	c.CreatedAt, c.LastTurnAt = time.Unix(created, 0), time.Unix(last, 0)
 	return &c, nil
+}
+
+// ForgetConversation sets a conversation aside so that it is never continued: its file is missing or
+// cannot be read.
+func (s *Store) ForgetConversation(id int64) error {
+	_, err := s.db.Exec(`UPDATE conversations SET deleted = 1 WHERE id = ?`, id)
+	return err
 }
 
 // ConversationRunning reports whether a run of the conversation is in progress.
@@ -247,9 +256,9 @@ func (s *Store) moveAgentRun(id int64) error {
 			return err
 		}
 		m, err := gunzip(z)
-		if err != nil {
-			zs.Close()
-			return err
+		if err != nil { // one bad row is left out; it must not stop Autobot from starting
+			log.Printf("agent run %d: a message could not be read and was left out: %v", id, err)
+			continue
 		}
 		msgs = append(msgs, m)
 	}
@@ -326,7 +335,7 @@ func slimSummary(summary string) string {
 
 // RunsPruned counts what PruneRuns removed.
 type RunsPruned struct {
-	TestLogs, Conversations, StepOutputs int
+	TestLogs, Conversations, StepOutputs, Orphans int
 }
 
 // Retention of run details, by age.
@@ -342,7 +351,10 @@ const (
 //     closed (by the local copy of items); when the item is not known there, 30 days after the
 //     conversation's last turn. Its runs stay with outcome, turns, tokens, model, times and the
 //     report cut to 2 KB.
-func (s *Store) PruneRuns(at time.Time) (RunsPruned, error) {
+//
+// complete says whether a workspace's local copy of items is complete (its backfill done); until it
+// is, a conversation whose item it does not have is kept, since the item may still be open.
+func (s *Store) PruneRuns(at time.Time, complete func(ws int64) bool) (RunsPruned, error) {
 	var p RunsPruned
 	cutoff := at.Add(-KeepTestLogs).Unix()
 
@@ -399,7 +411,7 @@ func (s *Store) PruneRuns(at time.Time) (RunsPruned, error) {
 	}
 
 	// A conversation's end is when its item closed, if the local copy of items knows it; else its last turn.
-	rows, err = s.db.Query(`SELECT c.id, c.last_turn_at, COALESCE(i.state, ''), COALESCE(MAX(i.closed_at, i.merged_at), 0)
+	rows, err = s.db.Query(`SELECT c.id, c.workspace_id, c.item, c.last_turn_at, COALESCE(i.state, ''), COALESCE(MAX(i.closed_at, i.merged_at), 0)
 		FROM conversations c LEFT JOIN items i ON i.workspace_id = c.workspace_id AND i.number = c.item AND c.item != 0
 		WHERE c.deleted = 0`)
 	if err != nil {
@@ -407,18 +419,20 @@ func (s *Store) PruneRuns(at time.Time) (RunsPruned, error) {
 	}
 	var gone []int64
 	for rows.Next() {
-		var id, last, closed int64
+		var id, ws, item, last, closed int64
 		var state string
-		if err := rows.Scan(&id, &last, &state, &closed); err != nil {
+		if err := rows.Scan(&id, &ws, &item, &last, &state, &closed); err != nil {
 			rows.Close()
 			return p, err
 		}
-		end := last
+		end := last // a conversation continued after its item closed is kept from its last turn
 		switch {
 		case state == "open":
 			continue
-		case state != "" && closed > 0:
-			end = closed
+		case state == "" && item != 0 && !complete(ws):
+			continue
+		case state != "":
+			end = max(last, closed)
 		}
 		if end < cutoff {
 			gone = append(gone, id)
@@ -431,7 +445,51 @@ func (s *Store) PruneRuns(at time.Time) (RunsPruned, error) {
 		}
 		p.Conversations++
 	}
-	return p, nil
+	n, err := s.removeOrphans()
+	p.Orphans = n
+	return p, err
+}
+
+// removeOrphans deletes the files of runs and conversations whose rows are gone (their workspace or
+// machine was deleted).
+func (s *Store) removeOrphans() (int, error) {
+	names, err := os.ReadDir(s.RunsDir())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range names {
+		var id int64
+		var table string
+		switch name := e.Name(); {
+		case fmtScan(name, "conv-%d.jsonl.gz", &id):
+			table = "conversations"
+		case fmtScan(name, "test-%d.log.gz", &id):
+			table = "test_runs"
+		default:
+			continue
+		}
+		var found int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE id = ?`, id).Scan(&found); err != nil {
+			return n, err
+		}
+		if found == 0 {
+			if err := removeFile(filepath.Join(s.RunsDir(), e.Name())); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
+	return n, nil
+}
+
+// fmtScan reports whether name is exactly format with one number, which it sets.
+func fmtScan(name, format string, id *int64) bool {
+	_, err := fmt.Sscanf(name, format, id)
+	return err == nil && fmt.Sprintf(format, *id) == name
 }
 
 // dropConversation removes a conversation's file and cuts its runs' summaries to what is kept.

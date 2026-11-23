@@ -91,6 +91,16 @@ func (c *Conversation) Take() []store.ConvEvent {
 	return out
 }
 
+// Write writes the events not yet written with write, and forgets them only once it succeeds: after
+// a failed write they are tried again with the next.
+func (c *Conversation) Write(write func(...store.ConvEvent) error) error {
+	if err := write(c.pending...); err != nil {
+		return err
+	}
+	c.pending = nil
+	return nil
+}
+
 // request is the conversation as sent: the system prompt, then the messages.
 func (c *Conversation) request() []Message {
 	return append([]Message{{Role: "system", Content: c.System}}, c.Messages...)

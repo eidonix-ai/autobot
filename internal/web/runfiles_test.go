@@ -33,7 +33,7 @@ func TestRunPageReadsTheFile(t *testing.T) {
 	if got, _ := e.st.Run(run.ID); len(got.Output) > 4096 {
 		t.Fatalf("the row holds %d bytes", len(got.Output))
 	}
-	e.st.PruneRuns(time.Now().Add(31 * 24 * time.Hour))
+	e.st.PruneRuns(time.Now().Add(31*24*time.Hour), func(int64) bool { return true })
 	if _, body := b.get(path); strings.Contains(body, "line 0599") || !strings.Contains(body, "deleted after 30 days") {
 		t.Fatalf("after 30 days:\n%s", body)
 	}

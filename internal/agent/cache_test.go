@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -235,5 +236,23 @@ func TestUsageCachedTokens(t *testing.T) {
 	}
 	if tr.Cached != 120 || tr.In != 200 || turns != 2 {
 		t.Fatalf("cached %d of %d, %d turns recorded", tr.Cached, tr.In, turns)
+	}
+}
+
+// Events stay pending until a write succeeds: a failed write loses nothing.
+func TestFailedWriteKeepsEvents(t *testing.T) {
+	conv := NewConversation("m", 1, "sys", nil)
+	conv.add(Message{Role: "user", Content: "one"})
+	if err := conv.Write(func(...store.ConvEvent) error { return errors.New("disk full") }); err == nil {
+		t.Fatal("no error")
+	}
+	conv.add(Message{Role: "user", Content: "two"})
+	var got []store.ConvEvent
+	conv.Write(func(evs ...store.ConvEvent) error { got = append(got, evs...); return nil })
+	if len(got) != 3 || got[0].T != "header" || !strings.Contains(string(got[2].M), "two") {
+		t.Fatalf("%+v", got)
+	}
+	if conv.Write(func(evs ...store.ConvEvent) error { got = evs; return nil }); len(got) != 0 {
+		t.Fatalf("written twice: %+v", got)
 	}
 }

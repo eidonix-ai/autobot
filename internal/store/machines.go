@@ -244,6 +244,10 @@ func (s *Store) queue(m *Machine, script, ref, commit string, private, session b
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	// The id may be a deleted run's (SQLite reuses the highest one): never add to its log.
+	if err := removeFile(s.testLog(id)); err != nil {
+		return nil, err
+	}
 	what := "started test run"
 	if session {
 		what = "opened a session, run"

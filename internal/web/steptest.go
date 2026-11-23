@@ -380,9 +380,8 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}
 	cfg.RunID = id
 	save := func(tr *agent.Transcript, status string) {
-		if err := s.st.AppendConv(convID, conv.Take()...); err != nil {
-			log.Printf("agent run %d: %v", id, err)
-			return
+		if err := conv.Write(func(evs ...store.ConvEvent) error { return s.st.AppendConv(convID, evs...) }); err != nil {
+			log.Printf("agent run %d: %v", id, err) // kept, and tried again with the next save; the run's row is still saved
 		}
 		b, _ := json.Marshal(tr)
 		if err := s.st.SaveAgentRun(id, status, string(b), len(conv.Messages)); err != nil {

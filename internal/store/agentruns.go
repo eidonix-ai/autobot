@@ -63,6 +63,10 @@ func (s *Store) StartAgentRun(r AgentRun, by *User) (run, conv int64, err error)
 			return 0, 0, err
 		}
 		conv, _ = res.LastInsertId()
+		// The id may be a deleted conversation's (SQLite reuses the highest one): never add to its file.
+		if err := removeFile(s.convFile(conv)); err != nil {
+			return 0, 0, err
+		}
 	}
 	res, err := tx.Exec(`INSERT INTO agent_runs (workspace_id, kind, node_id, node_name, item, test, model, status, started_by, started_at,
 		conversation, msgs_from, msgs_to, turns_from) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,

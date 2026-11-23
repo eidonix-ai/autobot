@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -438,4 +440,19 @@ func (c *contEnv) eventNode(id, typ string, change func(*workflow.EventSettings)
 	}
 	b, _ := json.Marshal(s)
 	return workflow.Node{ID: id, Type: typ, Settings: b}
+}
+
+// A conversation whose file is missing (Autobot stopped before its first turn was written) is set
+// aside: the next run of the block starts a new one instead of failing on every run.
+func TestMissingConversationFileIsSetAside(t *testing.T) {
+	c := newContEnv(t, nil)
+	a := c.agentNode("A", "Reviewer", func(s *workflow.AgentSettings) { s.Rerun = "resume" })
+	c.saveGraph(append(append([]workflow.Node{}, events...), a), [2]string{"ev1", "A"})
+	first := c.agentRun(c.run("ev1"), "A")
+	os.Remove(filepath.Join(c.st.RunsDir(), fmt.Sprintf("conv-%d.jsonl.gz", first.Conversation)))
+	steps := c.run("ev1")
+	second := c.agentRun(steps, "A")
+	if steps["A"].Status != "done" || second.Conversation == first.Conversation || second.Status != "met" {
+		t.Fatalf("step %+v, run %+v", steps["A"], second)
+	}
 }

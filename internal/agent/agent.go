@@ -107,10 +107,9 @@ var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it wh
 		"status":{"type":"string","enum":["met","blocked"],"description":"met: the goal is met. blocked: it cannot be met, and the report says why."},
 		"report":{"type":"string","description":"The final answer."}},"required":["status","report"]}`)}
 
-var planSpec = ToolSpec{Name: "update_plan", Description: "Set your plan: the steps to meet the goal, each pending, in_progress, done or dropped " +
-	"(with a note saying why). Replaces the previous plan. Keep it current; finish with met is refused while any step is pending or in progress.",
+var planSpec = ToolSpec{Name: "update_plan", Description: "Set your plan: the steps to meet the goal, each with its status and an optional note. Replaces the previous plan.",
 	Parameters: json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{
-		"step":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","done","dropped"]},"note":{"type":"string"}},
+		"step":{"type":"string"},"status":{"type":"string"},"note":{"type":"string"}},
 		"required":["step","status"]}}},"required":["steps"]}`)}
 
 const nudge = "Keep working toward the goal with your tools. When the goal is met, call finish with status met and your report; " +
@@ -253,16 +252,6 @@ func (tr *Transcript) finish(ctx context.Context, cfg Config, args string, rejec
 		return "error: finish needs a status (met or blocked) and a report", false
 	}
 	if a.Status == Met {
-		var open []string
-		for _, p := range tr.Plan {
-			if p.Status == "pending" || p.Status == "in_progress" {
-				open = append(open, p.Step)
-			}
-		}
-		if len(open) > 0 {
-			return "Not finished: your plan still has open steps: " + strings.Join(open, "; ") +
-				". Do them, or mark them dropped with a note saying why, then finish again.", false
-		}
 		if unread := tr.unread(a.Report); len(unread) > 0 && *rejected < maxRejected {
 			*rejected++
 			return "Not finished: your report cites " + strings.Join(unread, ", ") + ", which you have not read in this run. " +
@@ -287,13 +276,6 @@ func (tr *Transcript) setPlan(args string) string {
 	}
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "error: the plan must be {\"steps\": [{\"step\": …, \"status\": …}]}"
-	}
-	for _, p := range a.Steps {
-		switch p.Status {
-		case "pending", "in_progress", "done", "dropped":
-		default:
-			return "error: a step's status is pending, in_progress, done or dropped"
-		}
 	}
 	tr.Plan = a.Steps
 	return "Plan updated."

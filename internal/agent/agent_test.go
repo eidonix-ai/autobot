@@ -58,24 +58,15 @@ func TestNudge(t *testing.T) {
 	}
 }
 
-// "met" is refused while the agent's plan has open steps, and accepted once they are done.
-func TestPlanHoldsFinish(t *testing.T) {
+// The plan is the agent's own notes: any status word is taken, and finish takes the report whatever
+// the plan says (Derek, 2026-11-23: a run lost a finished report to a plan marked "completed").
+func TestPlanNeverHoldsFinish(t *testing.T) {
 	m := &script{replies: []Message{
-		call("p", "update_plan", `{"steps":[{"step":"read the diff","status":"done"},{"step":"run the tests","status":"pending"}]}`),
-		call("f1", "finish", `{"status":"met","report":"done"}`),
-		call("p2", "update_plan", `{"steps":[{"step":"read the diff","status":"done"},{"step":"run the tests","status":"dropped","note":"no machine"}]}`),
-		call("f2", "finish", `{"status":"met","report":"done"}`),
+		call("p", "update_plan", `{"steps":[{"step":"read the diff","status":"completed"},{"step":"run the tests","status":"pending"}]}`),
+		call("f", "finish", `{"status":"met","report":"the report"}`),
 	}}
 	tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil)
-	if tr.Outcome != Met || !strings.Contains(last(m.seen[2]), "run the tests") {
-		t.Fatalf("%+v\n%s", tr, last(m.seen[2]))
-	}
-	// Blocked is always accepted: the agent says it cannot go on.
-	m = &script{replies: []Message{
-		call("p", "update_plan", `{"steps":[{"step":"x","status":"pending"}]}`),
-		call("f", "finish", `{"status":"blocked","report":"cn7 has no free GPU"}`),
-	}}
-	if tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil); tr.Outcome != Blocked {
+	if tr.Outcome != Met || tr.Report != "the report" || len(tr.Plan) != 2 || tr.Plan[0].Status != "completed" {
 		t.Fatalf("%+v", tr)
 	}
 }

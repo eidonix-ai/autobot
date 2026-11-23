@@ -141,7 +141,7 @@ func TestRetention(t *testing.T) {
 	_, unknownNew := conv(5, 29)
 	_, noItem := conv(0, 45)
 
-	p, err := st.PruneRuns(at)
+	p, err := st.PruneRuns(at, func(int64) bool { return true })
 	if err != nil || p.Conversations != 3 {
 		t.Fatalf("pruned %+v %v", p, err)
 	}
@@ -182,7 +182,7 @@ func TestRetention(t *testing.T) {
 	st.SetWorkflowStep(wr, WorkflowStep{NodeID: "a", Status: "done", Port: "out", Output: "Summary line\n" + long, StartedAt: ago(40), FinishedAt: ago(40)})
 	st.SetWorkflowStep(wr, WorkflowStep{NodeID: "b", Status: "done", Port: "out", Output: "recent\nmultiline", StartedAt: ago(5), FinishedAt: ago(5)})
 
-	p, err = st.PruneRuns(at)
+	p, err = st.PruneRuns(at, func(int64) bool { return true })
 	if err != nil || p.TestLogs != 1 || p.StepOutputs != 1 {
 		t.Fatalf("pruned %+v %v", p, err)
 	}
@@ -200,7 +200,7 @@ func TestRetention(t *testing.T) {
 		t.Fatalf("a recent step was shortened: %q", steps["b"].Output)
 	}
 	// Doing it again changes nothing.
-	if p, err := st.PruneRuns(at); err != nil || p != (RunsPruned{}) {
+	if p, err := st.PruneRuns(at, func(int64) bool { return true }); err != nil || p != (RunsPruned{}) {
 		t.Fatalf("second pass %+v %v", p, err)
 	}
 }
@@ -285,4 +285,94 @@ func TestOneRunPerConversation(t *testing.T) {
 		t.Fatalf("a test's conversation %d can be continued", c.ID)
 	}
 	_ = testConv
+}
+
+// SQLite gives a new row the id of a deleted one when that was the highest: a new conversation or
+// test run must start empty, never on the deleted one's file (another workspace's, perhaps).
+func TestReusedIDsStartEmpty(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	a, _ := st.CreateWorkspace("o/a", admin, "", "")
+	b, _ := st.CreateWorkspace("o/b", admin, "", "")
+	_, conv := startConv(t, st, a, "ag", 1, false)
+	st.AppendConv(conv, ConvEvent{T: "header", Model: "m", System: "secret of o/a"})
+	r := newTestRun(t, st, a, admin)
+	st.AppendOutput(r.ID, "output of o/a\n", 1<<20)
+	if err := st.DeleteWorkspace(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The daily pass removes the files of rows that are gone.
+	if p, err := st.PruneRuns(time.Now(), func(int64) bool { return true }); err != nil || p.Orphans != 2 {
+		t.Fatalf("%+v %v", p, err)
+	}
+	// Even if they were left, a new row with a reused id starts empty.
+	st.writeGz(st.convFile(conv), []byte(`{"t":"header","system":"secret of o/a"}`+"\n"))
+	st.writeGz(st.testLog(r.ID), []byte("output of o/a\n"))
+	_, conv2 := startConv(t, st, b, "ag", 1, false)
+	r2 := newTestRun(t, st, b, admin)
+	if conv2 != conv || r2.ID != r.ID {
+		t.Skipf("ids were not reused (%d %d, %d %d): nothing to check", conv, conv2, r.ID, r2.ID)
+	}
+	st.AppendConv(conv2, ConvEvent{T: "header", Model: "m", System: "o/b"})
+	evs, err := st.ReadConv(conv2)
+	if err != nil || len(evs) != 1 || evs[0].System != "o/b" {
+		t.Fatalf("the new conversation holds the deleted one's: %+v %v", evs, err)
+	}
+	st.AppendOutput(r2.ID, "output of o/b\n", 1<<20)
+	got, _ := st.Run(r2.ID)
+	if text, _, _ := st.RunOutput(got); text != "output of o/b\n" {
+		t.Fatalf("the new test run's output holds the deleted one's: %q", text)
+	}
+}
+
+// Until a workspace's local copy of items is complete, a conversation on an item it does not have is
+// kept; and one continued after its item closed is kept from its last turn.
+func TestRetentionWaitsForTheLocalCopy(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
+	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	ago := func(days int) time.Time { return at.Add(-time.Duration(days) * 24 * time.Hour) }
+	st.SaveItem(ws.ID, Item{Number: 2, Kind: "pr", Title: "closed", State: "closed", Created: ago(90), Updated: ago(40), Closed: ago(40)}, nil)
+	conv := func(item, lastTurnDaysAgo int) int64 {
+		_, id := startConv(t, st, ws, "ag", item, false)
+		st.AppendConv(id, ConvEvent{T: "header", Model: "m"})
+		st.db.Exec(`UPDATE conversations SET last_turn_at = ? WHERE id = ?`, ago(lastTurnDaysAgo).Unix(), id)
+		return id
+	}
+	unknown, continued := conv(9, 60), conv(2, 3)
+	if p, err := st.PruneRuns(at, func(int64) bool { return false }); err != nil || p.Conversations != 0 {
+		t.Fatalf("pruned before the local copy was complete: %+v %v", p, err)
+	}
+	if p, err := st.PruneRuns(at, func(int64) bool { return true }); err != nil || p.Conversations != 1 {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if _, err := os.Stat(st.convFile(continued)); err != nil {
+		t.Fatal("a conversation continued 3 days ago was deleted because its item closed 40 days ago")
+	}
+	if _, err := os.Stat(st.convFile(unknown)); err == nil {
+		t.Fatal("an old conversation on an unknown item was kept once the copy was complete")
+	}
+}
+
+// A message row that cannot be read is left out of the move; it does not stop Autobot from starting.
+func TestMoveSkipsABadMessage(t *testing.T) {
+	st := open(t)
+	admin := mustUser(t, st, "admin", true)
+	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
+	res, _ := st.db.Exec(`INSERT INTO agent_runs (workspace_id, kind, node_id, node_name, item, test, model, status, summary, started_at, finished_at)
+		VALUES (?, 'pr', 'ag', 'Reviewer', 7, 0, 'm', 'met', '{}', 100, 200)`, ws.ID)
+	run, _ := res.LastInsertId()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write([]byte(`{"role":"user","content":"Review it."}`))
+	zw.Close()
+	st.db.Exec(`INSERT INTO agent_messages (run_id, seq, body) VALUES (?, 0, ?), (?, 1, ?)`, run, buf.Bytes(), run, []byte("not gzip"))
+	if err := st.MoveRunFiles(); err != nil {
+		t.Fatal(err)
+	}
+	ar, _ := st.AgentRun(run)
+	if evs, err := st.ReadConv(ar.Conversation); err != nil || len(evs) != 2 {
+		t.Fatalf("%+v %v", evs, err)
+	}
 }

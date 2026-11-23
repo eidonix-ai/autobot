@@ -512,16 +512,28 @@ func TestClosingWriterBudgetAndFallback(t *testing.T) {
 	if !reflect.DeepEqual(cr.m.tools[5], cr.m.tools[4]) || !strings.HasSuffix(last(cr.m.seen[5]), "Only finish is available on this turn.") {
 		t.Fatalf("its last turn offered %v", toolNames(cr.m.tools[5]))
 	}
-	// The writer fails (the model cannot be reached): the report is the high and medium notes, in order.
+	// The writer fails (the model cannot be reached): the run's report is the research's own finish
+	// report, which the notes dump never replaces.
 	cr = closing(t, slices.Clone(researchOver), 15, "a.go")
-	pad := cr.pad
-	pad.Add(store.PadEntry{Title: "Minor", Importance: "low", Body: "skip me"})
 	if cr.tr.Writing == nil || cr.tr.Writing.Outcome != Failed {
 		t.Fatalf("writing %+v", cr.tr.Writing)
 	}
-	want := "## Research summary\n\nFound it in a.go:1.\n\n## Late find\n\nsee a.go:9"
-	if cr.tr.Report != want || cr.tr.Outcome != Met {
+	if cr.tr.Report != "Found it in a.go:1." || cr.tr.Outcome != Met {
 		t.Fatalf("%s: %q", cr.tr.Outcome, cr.tr.Report)
+	}
+	// With neither a written report nor a research report, the high and medium notes in order, and
+	// not the low ones.
+	cr = closing(t, []Message{
+		call("n1", "scratchpad_write", `{"title":"Found","importance":"high","description":"d","body":"body one"}`),
+		call("n2", "scratchpad_write", `{"title":"Minor","importance":"low","description":"d","body":"skip me"}`),
+		call("n3", "scratchpad_write", `{"title":"Also","importance":"medium","description":"d","body":"body two"}`),
+		{Role: "assistant"}, {Role: "assistant"}, {Role: "assistant"}, {Role: "assistant"},
+	}, 15, "a.go")
+	if cr.tr.Outcome != Unfinished || cr.tr.Writing == nil || cr.tr.Writing.Outcome != Failed {
+		t.Fatalf("%s, writing %+v", cr.tr.Outcome, cr.tr.Writing)
+	}
+	if want := "## Found\n\nbody one\n\n## Also\n\nbody two"; cr.tr.Report != want {
+		t.Fatalf("the notes report %q", cr.tr.Report)
 	}
 }
 

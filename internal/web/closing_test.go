@@ -141,22 +141,37 @@ func TestClosingReportEndToEnd(t *testing.T) {
 	}
 }
 
-// A writing session that ends with no report leaves the run with the scratchpad's high and medium
-// notes in order, and the run's outcome stays the research's.
+// A writing session that ends with no report leaves the run with the research's own finish report;
+// with none of that either, the scratchpad's high and medium notes in order. The run's outcome stays
+// the research's.
 func TestClosingReportFallsBackToTheNotes(t *testing.T) {
 	c := newContEnv(t, nil)
 	c.llm.reply = closingModel(true)
 	c.saveGraph(append(append([]workflow.Node{}, events...), c.closingBlock("A")), [2]string{"ev1", "A"})
 	steps := c.run("ev1")
 	run := c.agentRun(steps, "A")
-	want := "## Found\n\nbody of the main finding\n\n## Research summary\n\nRESEARCH REPORT\n\n## Late\n\nbody of the late note"
-	if steps["A"].Output != want || run.Status != "met" {
+	if steps["A"].Output != "RESEARCH REPORT" || run.Status != "met" {
 		t.Fatalf("output %q, run %s", steps["A"].Output, run.Status)
 	}
 	var tr agent.Transcript
 	json.Unmarshal([]byte(run.Summary), &tr)
 	if tr.Writing == nil || tr.Writing.Outcome != agent.Unfinished {
 		t.Fatalf("writing %+v", tr.Writing)
+	}
+	// No research report either: the notes.
+	c3 := newContEnv(t, nil)
+	model := closingModel(true)
+	c3.llm.reply = func(msgs []agent.Message, tools []string) agent.Message {
+		if len(msgs) > 0 && !strings.Contains(msgs[1].Content, "Your research is done") && slices.ContainsFunc(msgs, func(m agent.Message) bool { return m.Role == "assistant" }) &&
+			!strings.HasPrefix(msgs[len(msgs)-1].Content, "Before your report is written") {
+			return agent.Message{Role: "assistant"} // the research has nothing more to say, and no report
+		}
+		return model(msgs, tools)
+	}
+	c3.saveGraph(append(append([]workflow.Node{}, events...), c3.closingBlock("A")), [2]string{"ev1", "A"})
+	steps3 := c3.run("ev1")
+	if want := "## Found\n\nbody of the main finding\n\n## Late\n\nbody of the late note"; steps3["A"].Output != want {
+		t.Fatalf("the notes report %q (%+v)", steps3["A"].Output, steps3["A"])
 	}
 	// With the closing step none, a run is as before: one session, the finish report, no writing panel.
 	c2 := newContEnv(t, nil)

@@ -96,7 +96,9 @@ func RunClosing(ctx context.Context, research Config, conv *Conversation, w Writ
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTurnTime)
 		SaveTurn(sctx, research, conv, tr)
 		cancel()
-		tr.Report = writeReport(ctx, research, tr, w)
+		if rep := writeReport(ctx, research, tr, w); strings.TrimSpace(rep) != "" {
+			tr.Report = rep // else the research's own report stays
+		}
 	}
 	if strings.TrimSpace(tr.Report) == "" {
 		tr.Report = NotesReport(research.Pad)

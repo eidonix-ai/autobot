@@ -54,6 +54,12 @@ func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 			err = s.Check()
 		}
 		return s, []string{s.Entry}, err
+	case workflow.Discord:
+		s, err := workflow.DiscordSettingsOf(n, kind)
+		if err == nil {
+			err = s.Check()
+		}
+		return s, []string{s.Message}, err
 	}
 	return nil, nil, errors.New("an event block is tested once the workflow engine runs workflows")
 }
@@ -102,7 +108,7 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 			fields = append(fields, tagField{tag, a, values[tag], longTags[tag] || !builtIn})
 		}
 	}
-	data["Fields"], data["Agent"] = fields, n.Type == workflow.Agent
+	data["Fields"], data["Agent"], data["Post"] = fields, n.Type == workflow.Agent, n.Type == workflow.Discord
 	s.renderFragment(w, r, status, "node_test.html", data)
 }
 
@@ -127,6 +133,13 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
+	case workflow.DiscordSettings:
+		// Posting is the only way to test a post: this one goes to the channel.
+		if err := s.postDiscord(r.Context(), ws, st.Channel, workflow.Render(st.Message, values)); err != nil {
+			data["Error"] = "Not posted: " + err.Error() + "."
+		} else {
+			data["Posted"] = s.channelNames(ws)[st.Channel]
+		}
 	case workflow.DecisionSettings:
 		answer, err := s.decide(r.Context(), ws, st, values)
 		if err != nil {

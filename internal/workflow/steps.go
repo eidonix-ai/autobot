@@ -17,7 +17,48 @@ const (
 	Agent     = "agent"
 	Decision  = "decision"
 	CaseEntry = "case_entry" // writes an entry in the item's case file, and nothing else
+	Discord   = "discord"    // posts a message to one of the workspace's Discord channels
 )
+
+// DiscordSettings are a Post to Discord node's settings.
+type DiscordSettings struct {
+	Channel int64  `json:"channel"` // one of the workspace's Discord channels
+	Message string `json:"message"` // a template
+}
+
+// DefaultDiscord is a new Post to Discord node's settings.
+func DefaultDiscord(kind string) DiscordSettings {
+	if kind == Issue {
+		return DiscordSettings{Message: "**{issue_title}** {issue_link}\n\n{previous_output}"}
+	}
+	return DiscordSettings{Message: "**{pr_title}** {pr_link}\n\n{previous_output}"}
+}
+
+// DiscordSettingsOf reads a Post to Discord node's settings, or the defaults when it has none yet.
+func DiscordSettingsOf(n Node, kind string) (DiscordSettings, error) {
+	if len(n.Settings) == 0 {
+		return DefaultDiscord(kind), nil
+	}
+	var s DiscordSettings
+	if err := json.Unmarshal(n.Settings, &s); err != nil {
+		return s, errors.New("Post to Discord: unreadable settings")
+	}
+	return s, nil
+}
+
+// Check confirms a Post to Discord node's settings are complete; that the channel is the
+// workspace's is the web layer's to check.
+func (s DiscordSettings) Check() error {
+	switch {
+	case s.Channel == 0:
+		return errors.New("choose a channel")
+	case strings.TrimSpace(s.Message) == "":
+		return errors.New("write the message")
+	case len(s.Message) > maxTemplate:
+		return fmt.Errorf("the message is limited to %d characters", maxTemplate)
+	}
+	return nil
+}
 
 // CaseEntrySettings are a case entry node's settings. The entry is a contribution to the case file
 // written under the node's name: finalized, it is appended and can no longer change; left open, it

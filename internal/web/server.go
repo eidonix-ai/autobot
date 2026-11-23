@@ -135,6 +135,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/name", s.admin(s.renameWorkspace))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github", s.auth(s.setGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github/remove", s.auth(s.removeGitHub))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord", s.auth(s.addDiscord))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord/{channel}/test", s.auth(s.testDiscord))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord/{channel}/remove", s.auth(s.removeDiscord))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/members", s.admin(s.setMembers))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/delete", s.admin(s.deleteWorkspace))
 

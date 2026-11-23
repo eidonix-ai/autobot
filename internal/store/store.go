@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -338,5 +338,20 @@ CREATE TABLE agent_messages (
 	seq    INTEGER NOT NULL,
 	body   BLOB    NOT NULL,
 	PRIMARY KEY (run_id, seq)
+);
+`
+
+// A workspace's Discord channels, each a webhook. The webhook's address is its secret (anyone with
+// it can post to the channel), so it is sealed like a key; its id is kept in the clear to show.
+const schemaV12 = `
+CREATE TABLE discord_channels (
+	id           INTEGER PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	name         TEXT    NOT NULL,
+	webhook_id   TEXT    NOT NULL,
+	webhook      BLOB    NOT NULL,
+	added_by     INTEGER REFERENCES users(id),
+	added_at     INTEGER NOT NULL,
+	UNIQUE (workspace_id, name)
 );
 `

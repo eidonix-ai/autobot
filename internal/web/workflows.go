@@ -40,9 +40,22 @@ func canvasFacts(g workflow.Graph) (map[string]string, map[string][]string) {
 }
 
 // summaries is each node's one-line summary, for the canvas.
-func summaries(g workflow.Graph, kind string) map[string]string {
+func (s *Server) summaries(ws *store.Workspace, g workflow.Graph, kind string) map[string]string {
 	out := map[string]string{}
+	var channels map[int64]string
 	for _, n := range g.Nodes {
+		if n.Type == workflow.Discord {
+			if channels == nil {
+				channels = s.channelNames(ws)
+			}
+			d, _ := workflow.DiscordSettingsOf(n, kind)
+			if name, ok := channels[d.Channel]; ok {
+				out[n.ID] = "Posts to #" + name
+			} else {
+				out[n.ID] = "Choose a channel"
+			}
+			continue
+		}
 		out[n.ID] = workflow.Summary(n, kind, func(m workflow.ModelRef) string { return m.Model })
 	}
 	return out
@@ -77,7 +90,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	names, outputs := canvasFacts(g)
-	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": summaries(g, kind),
+	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": s.summaries(ws, g, kind),
 		"names": names, "outputs": outputs, "types": workflow.TypesFor(kind)})
 	var tabs []map[string]string
 	for _, k := range workflow.Kinds {
@@ -240,7 +253,7 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 	}
 	names, outputs := canvasFacts(g)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": summaries(g, kind), "names": names, "outputs": outputs, "links": g.Links})
+	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": s.summaries(ws, g, kind), "names": names, "outputs": outputs, "links": g.Links})
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
@@ -294,6 +307,8 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		settings, err = workflow.DecisionSettingsOf(n, kind)
 	case workflow.CaseEntry:
 		settings, err = workflow.CaseEntrySettingsOf(n)
+	case workflow.Discord:
+		settings, err = workflow.DiscordSettingsOf(n, kind)
 	default:
 		settings, err = workflow.EventSettingsOf(n)
 	}
@@ -329,11 +344,19 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
 		page = "node_case.html"
+	case workflow.DiscordSettings:
+		page = "node_discord.html"
+		channels, err := s.st.DiscordChannels(ws.ID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		data["Channels"] = channels
 	default:
 		data["Activities"] = workflow.Activities
 	}
 	if page != "node_event.html" {
-		if n.Type != workflow.CaseEntry {
+		if n.Type == workflow.Agent || n.Type == workflow.Decision {
 			models, err := s.modelOptions(ws, n.Type == workflow.Decision, model)
 			if err != nil {
 				s.fail(w, err)
@@ -399,6 +422,17 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			err = workflow.CheckTemplates(kind, outputs, c.Entry)
 		}
 		settings = c
+	case workflow.Discord:
+		d := workflow.DiscordSettings{Message: strings.TrimSpace(f.Get("message"))}
+		d.Channel, _ = strconv.ParseInt(f.Get("channel"), 10, 64)
+		if err = d.Check(); err == nil {
+			if err = workflow.CheckTemplates(kind, outputs, d.Message); err == nil {
+				if _, ok := s.channelNames(ws)[d.Channel]; !ok {
+					err = errors.New("choose one of this workspace's Discord channels")
+				}
+			}
+		}
+		settings = d
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)

@@ -8,7 +8,6 @@
 <div class="answer"><p><strong>{{.Choice}}</strong></p>
 <table class="list dense"><tbody>{{range .Choices}}<tr><td>{{.Name}}</td><td class="num">{{printf "%.1f" (pct .P)}} %</td></tr>{{end}}</tbody></table></div>
 {{end}}
-{{with .Posted}}<p class="notice">Posted to #{{.}}.</p>{{end}}
 {{if .Entry}}<p class="muted">{{if .Finalize}}Would be appended to the case file, finalized:{{else}}Would be kept in the case file as a draft:{{end}}</p>
 <pre class="entry">{{.Entry}}</pre>{{end}}
 <form method="post" action="{{.Action}}" class="stack wide step-form test-form"{{if .Agent}} target="_blank" data-native{{end}}>
@@ -17,7 +16,7 @@
   <label><span class="lbl"><code>{{"{"}}{{.Name}}{{"}"}}</code> <span class="muted">{{.About}}</span></span>
     {{if .Long}}<textarea name="tag_{{.Name}}" rows="4" class="code" spellcheck="false">{{.Value}}</textarea>{{else}}<input name="tag_{{.Name}}" value="{{.Value}}" autocomplete="off" spellcheck="false">{{end}}</label>
   {{else}}<p class="muted">Its templates use no tags.</p>{{end}}
-  <div class="row"><button>{{if .Agent}}Run{{else if .Post}}Post{{else}}Test{{end}}</button><button type="button" class="secondary" data-close>Close</button></div>
+  <div class="row"><button>{{if .Agent}}Run{{else}}Test{{end}}</button><button type="button" class="secondary" data-close>Close</button></div>
 </form>
 {{end}}
 {{end}}

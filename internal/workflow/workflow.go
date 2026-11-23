@@ -51,7 +51,6 @@ var Types = []NodeType{
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
 	{Type: CaseEntry, Label: "Case Entry"},
-	{Type: Discord, Label: "Post to Discord"},
 }
 
 // TypesFor lists the node types a kind's canvas offers.
@@ -191,8 +190,6 @@ func (g Graph) Check(kind string) error {
 			_, err = DecisionSettingsOf(n, kind)
 		case CaseEntry:
 			_, err = CaseEntrySettingsOf(n)
-		case Discord:
-			_, err = DiscordSettingsOf(n, kind)
 		}
 		if err != nil {
 			return err

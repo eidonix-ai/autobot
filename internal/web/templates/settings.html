@@ -50,29 +50,6 @@
 <p class="hint">Which token: if the GitHub user's own account or organization owns the repository, a fine-grained token limited to this repository, with Metadata (read), Contents (read), Pull requests (read and write) and Issues (read and write). For someone else's public repository (such as NVIDIA's), fine-grained tokens are read-only, so use a classic token with only the public_repo scope. The token is checked with GitHub before it is saved, stored encrypted, and never shown again.</p>
 </section>
 
-<section class="panel" id="discord">
-<h2>Discord</h2>
-{{with .DiscordError}}<p class="error">{{.}}</p>{{end}}
-{{with .DiscordNotice}}<p class="notice">{{.}}</p>{{end}}
-{{if .Channels}}
-<div class="scroll"><table class="list dense">
-<thead><tr><th>Channel</th><th>Webhook</th><th>Added</th><th></th></tr></thead>
-<tbody>{{range .Channels}}<tr>
-  <td>#{{.Name}}</td><td class="muted">…/webhooks/{{.WebhookID}}</td><td class="muted">{{tsShort .AddedAt}} by {{.AddedBy}}</td>
-  <td><div class="row">
-    <form method="post" action="{{$.WS.Path}}/settings/discord/{{.ID}}/test"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Send a test message</button></form>
-    <form method="post" action="{{$.WS.Path}}/settings/discord/{{.ID}}/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Remove</button></form>
-  </div></td>
-</tr>{{end}}</tbody>
-</table></div>
-{{end}}
-<form method="post" action="{{.WS.Path}}/settings/discord" class="row spaced">
-  <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <input name="name" value="{{.Form.Get "name"}}" placeholder="Channel name, such as reviews" aria-label="Channel name" required autocomplete="off">
-  <input type="password" name="webhook" placeholder="Webhook URL" aria-label="Webhook URL" required autocomplete="off">
-  <button>Add channel</button>
-</form>
-</section>
 
 {{if .Me.IsAdmin}}
 <section class="panel">

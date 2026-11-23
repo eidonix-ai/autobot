@@ -143,10 +143,6 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	data["Title"], data["WS"], data["Users"], data["Assigned"] = "Settings · "+ws.Name, ws, users, assigned
 	data["GH"], data["GHLogin"] = gh, login
 	data["SecretPath"], data["NewSecret"] = SecretPath, newSecret()
-	if data["Channels"], err = s.st.DiscordChannels(ws.ID); err != nil {
-		s.fail(w, err)
-		return
-	}
 	s.render(w, r, status, "settings.html", data)
 }
 

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -85,6 +86,12 @@ type Config struct {
 	Subs SubView
 	// Window is the model's context window in tokens; when 0, 128,000.
 	Window int
+	// Deadline is when the session's time is out, and WarnAt when it is first told how little is left:
+	// at the next turn after WarnAt it gets one user message, once, whatever the turn. A session that
+	// starts after WarnAt is told on its first turn. Zero WarnAt: no warning. Now is the clock (when
+	// nil, the time).
+	Deadline, WarnAt time.Time
+	Now              func() time.Time
 	// Read is what the tools of an earlier session of the same piece of work have read, so that a
 	// citation of it is not marked "(not opened)".
 	Read []string
@@ -136,6 +143,22 @@ type session struct {
 	tr        *Transcript
 	tools     map[string]Tool
 	lineShown bool // this turn's answers already carry the context line
+}
+
+func (s *session) now() time.Time {
+	if s.cfg.Now != nil {
+		return s.cfg.Now()
+	}
+	return time.Now()
+}
+
+// WarnTime is the moment a session that must be done by deadline, having limit to work in, is warned:
+// when percent of the limit is left. Zero when percent is 0 (or less): no warning.
+func WarnTime(deadline time.Time, limit time.Duration, percent int) time.Time {
+	if percent <= 0 {
+		return time.Time{}
+	}
+	return deadline.Add(-limit * time.Duration(percent) / 100)
 }
 
 func (s *session) window() int {
@@ -197,12 +220,17 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			cfg.Save(tr)
 		}
 	}
-	nudges, rejected := 0, 0
+	nudges, rejected, warned := 0, 0, false
 	for turn := 0; ; turn++ {
 		if turn >= cfg.MaxTurns {
 			tr.Outcome, tr.Error = Budget, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
 			save()
 			return tr
+		}
+		if !warned && !cfg.WarnAt.IsZero() && !s.now().Before(cfg.WarnAt) {
+			warned = true
+			left := max(1, int(math.Ceil(cfg.Deadline.Sub(s.now()).Minutes())))
+			conv.add(Message{Role: "user", Content: fmt.Sprintf("About %d minute%s left: finish with your report soon.", left, map[bool]string{true: "", false: "s"}[left == 1])})
 		}
 		// The last turn can only finish, so a run that reaches its limit still ends with its report.
 		// (Its request leaves out the other tools, so it misses the provider's cache, once.)

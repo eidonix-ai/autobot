@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/eidonix-ai/autobot/internal/store"
 )
@@ -25,6 +26,9 @@ type SubAgents struct {
 	Tools     []Tool // what they may use: read-only
 	MaxTurns  int
 	Window    int
+	Deadline  time.Time // the run's, which they share
+	WarnAt    time.Time
+	Now       func() time.Time
 	AtOnce    int // how many may work at the same time
 	PerRun    int // how many may be started in all; 0 for no limit
 
@@ -142,7 +146,7 @@ func (sa *SubAgents) work(ctx context.Context, name, title, task string) (*Trans
 		Model: sa.Model(conv.Session), Task: fmt.Sprintf("You are sub-agent %s, working for a main agent. Its task for you, %q:\n\n%s\n\n"+
 			"Find it out, saving what you find to your own scratchpad as you go, then call finish with your report: what you found, with its citations "+
 			"(file and lines, pull request or issue numbers, links), and what you could not find.", name, title, task),
-		Tools: sa.Tools, MaxTurns: sa.MaxTurns, Window: sa.Window, Pad: pad, RunID: sa.Run,
+		Tools: sa.Tools, MaxTurns: sa.MaxTurns, Window: sa.Window, Pad: pad, RunID: sa.Run, Deadline: sa.Deadline, WarnAt: sa.WarnAt, Now: sa.Now,
 		Save: func(tr *Transcript) { save(tr, "running") },
 	}, conv)
 	if strings.TrimSpace(tr.Report) == "" { // it ended without finishing and said nothing: its notes are its report

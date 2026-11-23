@@ -36,8 +36,9 @@ type Writer struct {
 	Conv *Conversation
 	// Intro is the block's rendered Instruction and Done when.
 	Intro string
-	// Time is its own time.
-	Time time.Duration
+	// Time is its own time, and WarnPercent how much of it is left when it is warned (0: not).
+	Time        time.Duration
+	WarnPercent int
 }
 
 // WriterTask is the writing session's first message: the block's instruction and Done when, what
@@ -129,6 +130,12 @@ func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer)
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.Time)
 	defer cancel()
+	cfg.Now = research.Now
+	cfg.Deadline = time.Now().Add(w.Time)
+	if cfg.Now != nil {
+		cfg.Deadline = cfg.Now().Add(w.Time)
+	}
+	cfg.WarnAt = WarnTime(cfg.Deadline, w.Time, w.WarnPercent)
 	wt := Run(wctx, cfg, w.Conv)
 	tr.Writing = wt
 	return wt.Report

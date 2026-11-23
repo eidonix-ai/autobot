@@ -15,10 +15,12 @@ import (
 type script struct {
 	replies []Message
 	seen    [][]Message
+	tools   [][]ToolSpec
 }
 
 func (s *script) Complete(ctx context.Context, msgs []Message, tools []ToolSpec) (Message, Usage, error) {
 	s.seen = append(s.seen, append([]Message{}, msgs...))
+	s.tools = append(s.tools, tools)
 	if len(s.seen) > len(s.replies) {
 		return Message{}, Usage{}, errors.New("the script ran out")
 	}
@@ -124,7 +126,7 @@ func TestBudgetAndClip(t *testing.T) {
 	}}
 	m := &script{replies: []Message{call("1", "long", `{}`), call("2", "long", `{}`), call("3", "long", `{}`)}}
 	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 2}, nil)
-	res := last(m.seen[1])
+	res := m.seen[1][len(m.seen[1])-2].Content // the tool's result, before the last-turn message
 	if tr.Outcome != Budget || len(res) > maxResult+100 || !strings.HasPrefix(res, "START") || !strings.HasSuffix(res, "END") {
 		t.Fatalf("%s, result of %d characters", tr.Outcome, len(res))
 	}
@@ -175,19 +177,30 @@ func TestBudgetWarning(t *testing.T) {
 	long := Tool{Spec: ToolSpec{Name: "long"}, Run: func(context.Context, json.RawMessage) (string, error) {
 		return "first line\n" + strings.Repeat("y", 5000), nil
 	}}
+	replies[11] = call("f", "finish", `{"status":"met","report":"what I found"}`)
 	m := &script{replies: replies}
-	Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 12}, nil)
-	warned, cut := 0, 0
-	for _, msg := range m.seen[len(m.seen)-1] {
-		if msg.Role == "user" && strings.Contains(msg.Content, "turns left") {
-			warned++
-		}
-		if msg.Role == "tool" && strings.Contains(msg.Content, "left out to save room") {
-			cut++
+	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 12}, nil)
+	var warnings []int
+	for i, msgs := range m.seen {
+		if strings.Contains(last(msgs), "turns left") {
+			warnings = append(warnings, i+1)
 		}
 	}
-	if warned != 2 || cut != 0 {
-		t.Fatalf("%d warnings, %d results cut", warned, cut)
+	// One warning, with 5 turns left (before turn 8); on the last turn finish is the only tool.
+	if len(warnings) != 1 || warnings[0] != 8 || !strings.Contains(m.seen[7][len(m.seen[7])-1].Content, "5 turns left") {
+		t.Fatalf("warned before turns %v", warnings)
+	}
+	if len(m.tools[10]) < 3 || len(m.tools[11]) != 1 || m.tools[11][0].Name != "finish" || !strings.Contains(last(m.seen[11]), "last turn") {
+		t.Fatalf("turn 11 had %d tools, the last %v", len(m.tools[10]), m.tools[11])
+	}
+	if tr.Outcome != Met || tr.Report != "what I found" {
+		t.Fatalf("%s: %q", tr.Outcome, tr.Report)
+	}
+	// One that answers its last turn in words has that as its report.
+	replies[11] = Message{Role: "assistant", Content: "my findings, in words"}
+	m = &script{replies: replies}
+	if tr := Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 12}, nil); tr.Outcome != Budget || tr.Report != "my findings, in words" {
+		t.Fatalf("%s: %q", tr.Outcome, tr.Report)
 	}
 }
 

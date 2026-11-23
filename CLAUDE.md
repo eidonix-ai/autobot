@@ -83,8 +83,8 @@ git only through its environment, never a command line or the mirror's config.
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never
    opened is marked "(not opened)" where it is cited; the plan is the agent's own notes. Only an
-   optional check model (Verify) can send it back, and that report is kept meanwhile. It warns
-   near its turn budget. Conversations are append-only so the provider's cache hits (old tool output is
+   optional check model (Verify) can send it back, and that report is kept meanwhile. It is told
+   once, at 5 turns left, and on its last turn finish is its only tool, so a run always ends with a report. Conversations are append-only so the provider's cache hits (old tool output is
    shortened in one batch past ~100k tokens), stored with test-run logs as gzip files in
    /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open plus 30 days.
    A block re-run on an item resumes its conversation (Re-run setting); a reference block

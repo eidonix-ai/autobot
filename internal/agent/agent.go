@@ -118,6 +118,13 @@ const nudge = "Keep working toward the goal with your tools. When the goal is me
 // notAvailable is the answer to a call of a tool the conversation was given but cannot run now.
 const notAvailable = "error: this tool is not available now"
 
+// turnsWarned is how many turns the agent has left when it is told so, once (Derek, 2026-11-23:
+// warning at a quarter of the turns made it stop exploring far too early).
+const turnsWarned = 5
+
+// lastTurn is the agent's last message: on that turn finish is its only tool.
+const lastTurn = "This is your last turn: call finish now with your report of what you have found."
+
 // Run works until the agent finishes or runs out of turns or time (ctx), and returns the run's
 // transcript. It adds to conv, a conversation to continue (cfg.Task is then its next message), or,
 // when conv is nil, to a new one made from cfg.System and cfg.Tools. A continued conversation sends
@@ -153,7 +160,14 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		if est := conv.tokens(); est > cfg.batchAt() && est >= afterBatch+cfg.batchAt()/5 && conv.shortenOld() {
 			afterBatch = conv.tokens()
 		}
-		reply, use, err := complete(ctx, cfg.Model, conv.request(), conv.Tools)
+		// The last turn can only finish, so a run that reaches its limit still ends with its report.
+		// (Its request leaves out the other tools, so it misses the provider's cache, once.)
+		specs, last := conv.Tools, cfg.MaxTurns > 1 && turn == cfg.MaxTurns-1
+		if last {
+			conv.add(Message{Role: "user", Content: lastTurn})
+			specs = []ToolSpec{finishSpec}
+		}
+		reply, use, err := complete(ctx, cfg.Model, conv.request(), specs)
 		if err != nil {
 			tr.Outcome, tr.Error = Failed, err.Error()
 			if ctx.Err() != nil {
@@ -169,6 +183,11 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		conv.add(reply)
 		conv.recordTurn(cfg.RunID, use)
 		if len(reply.ToolCalls) == 0 {
+			if last && strings.TrimSpace(reply.Content) != "" { // it answered in words: that is its report
+				tr.Outcome, tr.Report, tr.Error = Budget, reply.Content, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
+				save()
+				return tr
+			}
 			if nudges++; nudges > maxNudges {
 				tr.Outcome, tr.Report, tr.Error = Unfinished, reply.Content, "kept answering without calling finish"
 				save()
@@ -234,9 +253,8 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		for i, call := range reply.ToolCalls {
 			conv.add(Message{Role: "tool", ToolCallID: call.ID, Content: clip(results[i])})
 		}
-		if left := cfg.MaxTurns - turn - 1; !done && (left == max(3, cfg.MaxTurns/4) || left == 2) {
-			conv.add(Message{Role: "user", Content: fmt.Sprintf("You have %d turns left. "+
-				"Stop exploring and finish soon with what you have found: call finish with your report.", left)})
+		if left := cfg.MaxTurns - turn - 1; !done && left == turnsWarned && cfg.MaxTurns > 2*turnsWarned {
+			conv.add(Message{Role: "user", Content: fmt.Sprintf("You have %d turns left: finish with your report within them.", left)})
 		}
 		save()
 		if done {

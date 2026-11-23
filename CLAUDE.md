@@ -68,7 +68,19 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
    through finish, refuses "met" with open plan steps or with files cited but never read, warns
    near its turn budget, and trims old tool output when sending; transcripts are stored per
    message, gzipped. Built so far: PR and web tools, personas. Next: machine sessions in the
-   connector (bash on donated hardware), sub-agents, long tests that resume the agent, the engine. Web search comes from Tavily or Brave providers,
+   connector (bash on donated hardware), sub-agents, long tests that resume the agent, the engine.
+6. Discord (decided by Derek, 2026-11-23; not built yet): one bot for the instance (discordgo, one
+   outbound Gateway connection, no public endpoint), on the PUBLIC project server. A public forum
+   (the flare-autobot channel) with one post per case, created by the bot (people may reply, not
+   create posts); the post's first message carries the case's summary findings, and people ask
+   questions by mentioning the bot inside a case's post (read-only agent, public material only,
+   rate-limited per person). Approvals go to a separate invite-only text channel; only members
+   with the approver role may approve (checked on every click; stale buttons refused; first click
+   wins; who and when recorded in the case file). Human Approval is a workflow block (outputs
+   approved, denied, timed out) placed in front of frontier agents and hardware runs, usable to
+   gate any fork. A private repository's cases never reach Discord. The bot never pings anyone but
+   the approver role. Webhook channels were tried and dropped. Order: workflow engine, then the
+   bot with case posts, then Human Approval, then questions. Web search comes from Tavily or Brave providers,
    lent like inference; decision routes are detected per provider with its key.
 
 ## Testing

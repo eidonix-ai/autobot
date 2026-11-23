@@ -479,7 +479,8 @@ func complete(ctx context.Context, m Model, msgs []Message, tools []ToolSpec) (M
 // transient reports whether a model error may pass: too many requests, a server error, no answer.
 func transient(err error) bool {
 	s := err.Error()
-	for _, code := range []string{" 429 ", " 500 ", " 502 ", " 503 ", " 504 ", "could not reach"} {
+	// "reading the answer": the connection broke while the answer came; asking again is safe.
+	for _, code := range []string{" 429 ", " 500 ", " 502 ", " 503 ", " 504 ", "could not reach", "reading the answer"} {
 		if strings.Contains(s, code) {
 			return true
 		}

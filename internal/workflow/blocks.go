@@ -305,9 +305,9 @@ type ApprovalSettings struct {
 // DefaultApproval is a new Human Approval node's settings, for a workflow of kind.
 func DefaultApproval(kind string) ApprovalSettings {
 	if kind == Issue {
-		return ApprovalSettings{Request: "Go on with {issue_link}?", Hours: 24}
+		return ApprovalSettings{Request: "Go on with {issue}?", Hours: 24}
 	}
-	return ApprovalSettings{Request: "Run {pr_link} on the hardware?", Hours: 24}
+	return ApprovalSettings{Request: "Run {pr} on the hardware?", Hours: 24}
 }
 
 // Check confirms a Human Approval node's settings are complete.

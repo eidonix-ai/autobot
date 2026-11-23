@@ -11,6 +11,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/repo"
 	"github.com/eidonix-ai/autobot/internal/store"
+	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
 // A test is filled from Autobot's own copies of the pull request and the code; GitHub is asked only
@@ -50,24 +51,45 @@ func TestTestIsFilledFromTheLocalCopy(t *testing.T) {
 	e.st.SaveFiles(ws.ID, 3, []store.ItemFile{{Path: "main.go", Status: "modified", Additions: 2}})
 
 	fill := func(link string) map[string]string {
-		v := map[string]string{"pr_link": link}
+		v := map[string]string{"pr": link}
 		if err := e.ui.fillFromItem(ctx, ws, v); err != nil {
 			t.Fatalf("%s: %v", link, err)
 		}
 		return v
 	}
 	// Until the copy of pull requests is complete, GitHub is asked (this fake knows only #7).
-	if err := e.ui.fillFromItem(ctx, ws, map[string]string{"pr_link": "https://github.com/o/r/pull/3"}); err == nil {
+	if err := e.ui.fillFromItem(ctx, ws, map[string]string{"pr": "https://github.com/o/r/pull/3"}); err == nil {
 		t.Fatal("read from a copy that is not complete yet")
 	}
 	e.st.IndexSet(ws.ID, "backfill_phase", "done")
 	v := fill("https://github.com/o/r/pull/3")
-	if v["pr_title"] != "From the copy" || v["pr_author"] != "carol" || v["pr_link"] != "https://github.com/o/r/pull/3" ||
-		!strings.Contains(v["pr_diff"], "+func added() {}") || !strings.Contains(v["pr_files"], "main.go (modified, +2 -0)") {
+	if v["pr:title"] != "From the copy" || v["pr:author"] != "carol" || v["pr"] != "https://github.com/o/r/pull/3" ||
+		!strings.Contains(v["pr:diff"], "+func added() {}") || !strings.Contains(v["pr:files"], "main.go (modified, +2 -0)") {
 		t.Fatalf("%q", v)
 	}
+	// An agent starts on it from the copy too: GitHub (this fake) does not know #3.
+	llm, seen := llmServer(t)
+	p, _ := e.st.CreateProvider(store.ProviderEdit{Name: "LLM", Kind: store.KindOpenAI, Endpoint: llm.URL + "/v1", Key: "k"}, derek)
+	e.st.SetProviderModels(p.ID, []string{"m"})
+	e.st.LendProvider(p, []int64{ws.ID}, derek)
+	a := workflow.DefaultAgent(workflow.PR)
+	a.Model, a.Internet = workflow.ModelRef{Provider: p.ID, Model: "m"}, false
+	id, err := e.ui.startAgent(ws, workflow.PR, workflow.Node{ID: "ag", Type: workflow.Agent, Name: "Gather"}, a, v, derek, true, 3)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		if r, _ := e.st.AgentRun(id); r.Status != "running" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if all := strings.Join(seen(), "\n"); !strings.Contains(all, "Title: From the copy") || !strings.Contains(all, "func added") {
+		t.Fatalf("the agent was not given the pull request from the copy:\n%.2000s", all)
+	}
+
 	// One the copy does not have comes from GitHub.
-	if v := fill("https://github.com/o/r/pull/7"); v["pr_title"] != "Retry uploads" || !strings.Contains(v["pr_diff"], "retry()") {
+	if v := fill("https://github.com/o/r/pull/7"); v["pr:title"] != "Retry uploads" || !strings.Contains(v["pr:diff"], "retry()") {
 		t.Fatalf("%q", v)
 	}
 }

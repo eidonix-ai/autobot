@@ -396,7 +396,7 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 	b := e.signIn("derek")
 	tok := b.csrf()
 	base := "/w/o/r/workflows/pr/nodes/ag/test"
-	form := url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/o/r/pull/7"}, "tag_pr_title": {"t"}, "tag_pr_body": {"b"}}
+	form := url.Values{"csrf": {tok}, "tag_pr": {"https://github.com/o/r/pull/7"}}
 
 	// With no machine free, the form says so.
 	if code, _, body := b.post(base, form); code != http.StatusBadRequest || !strings.Contains(body, "no machine is free") || !strings.Contains(body, "cn7 (never connected)") {

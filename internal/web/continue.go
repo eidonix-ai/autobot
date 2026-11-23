@@ -120,7 +120,7 @@ func withSourceModel(g workflow.Graph, kind string, a workflow.AgentSettings) (w
 	return a, nil
 }
 
-// sinceTags are the values of {pr_new_commits} and {pr_new_comments} for a conversation being
+// sinceTags are the values of {pr:new_commits} and {pr:new_comments} for a conversation being
 // continued: what came after the latest run of it last saw the item. head is the pull request's head
 // now.
 func (s *Server) sinceTags(ctx context.Context, ws *store.Workspace, token string, number int, head string, row *store.Conversation, conv *agent.Conversation) (commits, comments string) {

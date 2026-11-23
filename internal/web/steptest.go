@@ -18,6 +18,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/decisions"
+	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/search"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
@@ -33,8 +34,7 @@ type tagField struct {
 	Long               bool // a text box rather than a line
 }
 
-var longTags = map[string]bool{"pr_body": true, "pr_diff": true, "pr_files": true, "issue_body": true,
-	"project_charter": true, "case_file": true, "previous_output": true}
+var longTags = map[string]bool{"previous_output": true}
 
 // stepTemplates is a node's settings and templates, or an error saying why it cannot be tested.
 func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
@@ -106,25 +106,22 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		return
 	}
 	if values == nil {
-		values = map[string]string{"repo": ws.Name}
-		if c, err := s.st.Charter(ws.ID, 0); err == nil {
-			values["project_charter"] = c.Body
-		}
+		values = map[string]string{}
 	}
 	about := map[string]string{}
 	for _, tag := range workflow.Tags(kind) {
 		about[tag.Name] = tag.About
 	}
 	var fields []tagField
-	// What a link to the item gives is read from it, as a workflow run does: only the link is asked.
-	seen := map[string]bool{"repo": true, "project_charter": true, "case_file": true, "case_link": true}
-	for _, t := range workflow.Tags(kind) {
-		if t.Name != "pr_link" && t.Name != "issue_link" && (strings.HasPrefix(t.Name, "pr_") || strings.HasPrefix(t.Name, "issue_")) {
-			seen[t.Name] = true
-		}
-	}
+	// A field is filled from its parent, as a workflow run does: only the parent ({pr}, the link) is
+	// asked, and {repo} is the workspace's.
+	seen := map[string]bool{"repo": true, "case_link": true}
 	for _, tpl := range templates {
 		for _, tag := range workflow.TemplateTags(tpl) {
+			tag = workflow.CanonicalTag(tag, kind)
+			if p := workflow.TagField(tag); p != "" {
+				tag = p
+			}
 			if seen[tag] {
 				continue
 			}
@@ -305,22 +302,28 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	prTools := false
 	var pull *agent.PR
 	seen := time.Now() // what the run reads of the item, it reads from here on
-	if m := prLinkRE.FindStringSubmatch(values["pr_link"]); m != nil && strings.EqualFold(m[1], ws.Name) {
+	if m := prLinkRE.FindStringSubmatch(values["pr"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])
-		info, err := s.gh.PullRequest(ctx, token, ws.Name, num)
-		if err != nil {
-			return 0, fmt.Errorf("reading pull request #%d: %v", num, err)
-		}
-		files, err := s.gh.PullRequestFiles(ctx, token, ws.Name, num)
-		if err != nil {
-			return 0, fmt.Errorf("reading pull request #%d's files: %v", num, err)
+		// Autobot's own copy first; GitHub only when it does not have the pull request.
+		var info *github.PullRequest
+		var files []github.ChangedFile
+		if it := s.localItem(ctx, ws, workflow.PR, num); it != nil {
+			info, files = it.pr, it.files
+		} else {
+			var err error
+			if info, err = s.gh.PullRequest(ctx, token, ws.Name, num); err != nil {
+				return 0, fmt.Errorf("reading pull request #%d: %v", num, err)
+			}
+			if files, err = s.gh.PullRequestFiles(ctx, token, ws.Name, num); err != nil {
+				return 0, fmt.Errorf("reading pull request #%d's files: %v", num, err)
+			}
 		}
 		item, commit, prTools = num, info.HeadSHA, true
 		pull = &agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files}
 		cfg.Tools = append(cfg.Tools, agent.PRTools(pull)...)
 		if loaded != nil { // what came after the conversation's last run
 			values = maps.Clone(values)
-			values["pr_new_commits"], values["pr_new_comments"] = s.sinceTags(ctx, ws, token, num, info.HeadSHA, prev, loaded)
+			values["pr:new_commits"], values["pr:new_comments"] = s.sinceTags(ctx, ws, token, num, info.HeadSHA, prev, loaded)
 		}
 	}
 	// A continued conversation is sent this block's own Instruction and Done when as its next message.
@@ -561,7 +564,7 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 
 // itemNumber is the pull request or issue a set of tag values is about, or 0.
 func itemNumber(values map[string]string) int {
-	n, _ := strconv.Atoi(cmp.Or(values["pr_number"], values["issue_number"]))
+	n, _ := strconv.Atoi(cmp.Or(values["pr:number"], values["issue:number"]))
 	return n
 }
 
@@ -576,11 +579,11 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 	}
 	set("repo", ws.Name)
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
-		set("project_charter", c.Body)
+		set("repo:charter", c.Body)
 	}
-	kind, link := workflow.PR, values["pr_link"]
+	kind, link := workflow.PR, values["pr"]
 	if link == "" {
-		kind, link = workflow.Issue, values["issue_link"]
+		kind, link = workflow.Issue, values["issue"]
 	}
 	m := itemLinkRE.FindStringSubmatch(link)
 	if link == "" {
@@ -604,7 +607,7 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 		set(k, v)
 	}
 	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
-		set("case_file", c.Contents)
+		set(workflow.ItemTag(kind)+":case_file", c.Contents)
 	}
 	return nil
 }

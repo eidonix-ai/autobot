@@ -28,7 +28,7 @@ import (
 // name), and a step's "Output to" tag is kept for the case. A dry run writes nothing: no case file,
 // no output tags, nothing posted.
 
-const maxDiff = 200_000 // characters of a pull request's diff given to {pr_diff}
+const maxDiff = 200_000 // characters of a pull request's diff given to {pr:diff}
 
 // item is what a run knows of its pull request or issue.
 type item struct {
@@ -101,6 +101,8 @@ func (s *Server) localItem(ctx context.Context, ws *store.Workspace, kind string
 	if kind != workflow.PR {
 		return it
 	}
+	it.pr = &github.PullRequest{Number: number, URL: it.url, Title: d.Title, Body: d.Body, Author: d.Author, Draft: d.Draft, State: d.State,
+		Association: d.Association, Labels: d.Labels, HeadSHA: d.HeadSHA, Base: d.Base, Additions: d.Additions, Deletions: d.Deletions}
 	if s.repos == nil || !s.repos.Ready(ws.ID) || d.HeadSHA == "" {
 		return nil
 	}
@@ -141,10 +143,10 @@ func (it *item) values(ws *store.Workspace) map[string]string {
 		for _, f := range it.files {
 			files = append(files, fmt.Sprintf("%s (%s, +%d -%d)", f.Path, f.Status, f.Additions, f.Deletions))
 		}
-		v["pr_link"], v["pr_number"], v["pr_title"], v["pr_body"], v["pr_author"] = it.url, n, it.title, it.body, it.author
-		v["pr_diff"], v["pr_files"] = diff, strings.Join(files, "\n")
+		v["pr"], v["pr:number"], v["pr:title"], v["pr:body"], v["pr:author"] = it.url, n, it.title, it.body, it.author
+		v["pr:diff"], v["pr:files"] = diff, strings.Join(files, "\n")
 	} else {
-		v["issue_link"], v["issue_number"], v["issue_title"], v["issue_body"], v["issue_author"] = it.url, n, it.title, it.body, it.author
+		v["issue"], v["issue:number"], v["issue:title"], v["issue:body"], v["issue:author"] = it.url, n, it.title, it.body, it.author
 	}
 	return v
 }
@@ -257,7 +259,7 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
-		rs.builtIn["project_charter"] = c.Body
+		rs.builtIn["repo:charter"] = c.Body
 	}
 	pass, lines := verdict(*ev, it, caseFile != nil)
 	head := "The event would have started it."
@@ -489,10 +491,10 @@ func (s *Server) runStep(rs *runState, n workflow.Node, prev string) stepOutcome
 		values[k] = v
 	}
 	values["previous_output"] = prev
-	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
-		values["case_file"] = c.Contents
-	}
 	kind := rs.run.Kind
+	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
+		values[workflow.ItemTag(kind)+":case_file"] = c.Contents
+	}
 	limit := 4 * time.Hour
 	if n.Type == workflow.Approval {
 		limit = 15 * 24 * time.Hour // a person may take up to two weeks

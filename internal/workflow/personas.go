@@ -26,8 +26,8 @@ func (p Persona) GoalFor(kind string) string {
 	return p.Goal
 }
 
-const prHead = "Pull request: {pr_link}\nTitle: {pr_title}\n\n{pr_body}\n\n"
-const issueHead = "Issue: {issue_link}\nTitle: {issue_title}\n\n{issue_body}\n\n"
+const prHead = "Pull request: {pr}\nTitle: {pr:title}\n\n{pr:body}\n\n"
+const issueHead = "Issue: {issue}\nTitle: {issue:title}\n\n{issue:body}\n\n"
 
 // Personas are the built-in presets, in the order the settings list them.
 var Personas = []Persona{

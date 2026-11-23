@@ -78,20 +78,20 @@ func TestBlockTests(t *testing.T) {
 	base := "/w/o/r/workflows/pr/nodes/"
 
 	// The form asks for each tag the block uses, with the workspace's own values filled in.
-	if code, body := b.get(base + "ag/test"); code != 200 || !strings.Contains(body, `name="tag_pr_link"`) || strings.Contains(body, `name="tag_pr_body"`) {
+	if code, body := b.get(base + "ag/test"); code != 200 || !strings.Contains(body, `name="tag_pr"`) || strings.Contains(body, `name="tag_pr:body"`) || strings.Contains(body, `name="tag_pr_body"`) {
 		t.Fatalf("agent form %d:\n%s", code, body)
 	}
 
 	// An agent test that cannot start says why on a whole page, in the tab it opened, styled, and runs
 	// again from there in the same tab.
-	code, _, page := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/elsewhere/r/pull/7"}})
+	code, _, page := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr": {"https://github.com/elsewhere/r/pull/7"}})
 	if code != http.StatusBadRequest || !strings.Contains(page, "/static/app.css") || !strings.Contains(page, "the link must be to a pull request or issue of o/r") ||
 		strings.Contains(page, `target="_blank"`) || strings.Contains(page, "data-close") {
 		t.Fatalf("a failed agent test %d:\n%s", code, page)
 	}
 
 	// An agent run reads the pull request through its tools and finishes with its report.
-	code, loc, _ := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/o/r/pull/7"}})
+	code, loc, _ := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr": {"https://github.com/o/r/pull/7"}})
 	if code != http.StatusSeeOther || !strings.HasPrefix(loc, "/w/o/r/agent-runs/") {
 		t.Fatalf("start: %d %q", code, loc)
 	}
@@ -120,7 +120,7 @@ func TestBlockTests(t *testing.T) {
 	_ = other
 
 	// A decision answers in the form.
-	if code, _, body := b.post(base+"de/test", url.Values{"csrf": {tok}, "tag_pr_title": {"t"}}); code != 200 || !strings.Contains(body, "<strong>yes</strong>") || !strings.Contains(body, "80.0 %") {
+	if code, _, body := b.post(base+"de/test", url.Values{"csrf": {tok}, "tag_pr": {"https://github.com/o/r/pull/7"}}); code != 200 || !strings.Contains(body, "<strong>yes</strong>") || !strings.Contains(body, "80.0 %") {
 		t.Fatalf("decision %d:\n%s", code, body)
 	}
 	// A case entry shows what it would write, and writes nothing.

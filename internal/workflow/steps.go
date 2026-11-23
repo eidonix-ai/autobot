@@ -149,9 +149,9 @@ func DefaultDecision(kind string) DecisionSettings {
 	s := DecisionSettings{Output: "decision", Choices: []Choice{
 		{"yes", "It should."}, {"no", "It should not."}}}
 	if kind == Issue {
-		s.Context, s.Question = "{issue_title}\n\n{issue_body}", "Is this issue a bug report?"
+		s.Context, s.Question = "{issue:title}\n\n{issue:body}", "Is this issue a bug report?"
 	} else {
-		s.Context, s.Question = "{pr_title}\n\n{pr_body}\n\n{pr_diff}", "Does this pull request need an in-depth review?"
+		s.Context, s.Question = "{pr:title}\n\n{pr:body}\n\n{pr:diff}", "Does this pull request need an in-depth review?"
 	}
 	return s
 }
@@ -326,34 +326,48 @@ func DecisionFromForm(get func(string) string) DecisionSettings {
 }
 
 // Tag is a placeholder a template may use.
+//
+// Built-in tags are parents and their fields (Derek, 2026-11-23): {pr} is the pull request's link,
+// and {pr:title}, {pr:diff}… are filled from it by Autobot; {repo} and {repo:charter} likewise from
+// the workspace. A tag without a colon that is not a parent is another step's output. So only a
+// parent is ever asked for, and a field is visibly not something to fill in.
 type Tag struct{ Name, About string }
 
 var commonTags = []Tag{
 	{"repo", "the repository, owner/name"},
-	{"project_charter", "the project charter"},
-	{"case_file", "the case file so far"},
-	{"case_link", "the case file's address, for contributors' agents"},
+	{"repo:charter", "the project charter"},
 	{"previous_output", "the output of the step this one follows"},
 }
 
 var prTags = []Tag{
-	{"pr_link", "the pull request's address"},
-	{"pr_number", "its number"},
-	{"pr_title", "its title"},
-	{"pr_body", "its description"},
-	{"pr_author", "its author"},
-	{"pr_diff", "its diff"},
-	{"pr_files", "the files it changes"},
-	{"pr_new_commits", "in a continued conversation: the commits pushed since its last turn, with their diff"},
-	{"pr_new_comments", "in a continued conversation: the comments and reviews posted since its last turn"},
+	{"pr", "the pull request's link: the rest of pr: is filled from it"},
+	{"pr:number", "its number"},
+	{"pr:title", "its title"},
+	{"pr:body", "its description"},
+	{"pr:author", "its author"},
+	{"pr:diff", "its diff"},
+	{"pr:files", "the files it changes"},
+	{"pr:case_file", "its case file so far"},
+	{"pr:new_commits", "in a continued conversation: the commits pushed since its last turn, with their diff"},
+	{"pr:new_comments", "in a continued conversation: the comments and reviews posted since its last turn"},
 }
 
 var issueTags = []Tag{
-	{"issue_link", "the issue's address"},
-	{"issue_number", "its number"},
-	{"issue_title", "its title"},
-	{"issue_body", "its description"},
-	{"issue_author", "its author"},
+	{"issue", "the issue's link: the rest of issue: is filled from it"},
+	{"issue:number", "its number"},
+	{"issue:title", "its title"},
+	{"issue:body", "its description"},
+	{"issue:author", "its author"},
+	{"issue:case_file", "its case file so far"},
+}
+
+// oldTags are the names built-in tags had before (pr_title for pr:title), which templates written
+// then still use.
+var oldTags = map[string]string{
+	"pr_link": "pr", "pr_number": "pr:number", "pr_title": "pr:title", "pr_body": "pr:body", "pr_author": "pr:author",
+	"pr_diff": "pr:diff", "pr_files": "pr:files", "pr_new_commits": "pr:new_commits", "pr_new_comments": "pr:new_comments",
+	"issue_link": "issue", "issue_number": "issue:number", "issue_title": "issue:title", "issue_body": "issue:body",
+	"issue_author": "issue:author", "project_charter": "repo:charter",
 }
 
 // Tags lists the built-in tags of a workflow kind.
@@ -364,7 +378,40 @@ func Tags(kind string) []Tag {
 	return append(append([]Tag{}, prTags...), commonTags...)
 }
 
+// CanonicalTag is a tag's current name: an old name (pr_title) becomes its new one (pr:title), and
+// {case_file} the case file of the kind's item.
+func CanonicalTag(name, kind string) string {
+	if n, ok := oldTags[name]; ok {
+		return n
+	}
+	if name == "case_file" {
+		return ItemTag(kind) + ":case_file"
+	}
+	return name
+}
+
+// ItemTag is the parent tag of a workflow kind's item: pr or issue.
+func ItemTag(kind string) string {
+	if kind == Issue {
+		return "issue"
+	}
+	return "pr"
+}
+
+// TagField is a field tag's parent (pr for pr:title), or "" for a tag that is no field.
+func TagField(name string) string {
+	parent, _, ok := strings.Cut(name, ":")
+	if !ok {
+		return ""
+	}
+	return parent
+}
+
 func builtIn(name, kind string) bool {
+	if name == "case_link" { // an old tag, never filled: still accepted so old templates save
+		return true
+	}
+	name = CanonicalTag(name, kind)
 	for _, t := range Tags(kind) {
 		if t.Name == name {
 			return true
@@ -373,11 +420,11 @@ func builtIn(name, kind string) bool {
 	return false
 }
 
-// tagRE finds the tags of a template: a word in braces. Doubled braces are literal ({{word}} is the
-// text {word}), and braces around anything but a word, as in JSON, are just text.
-var tagRE = regexp.MustCompile(`\{\{|\}\}|\{([a-z][a-z0-9_]*)\}`)
+// tagRE finds the tags of a template: a word, or a word:field, in braces. Doubled braces are literal
+// ({{word}} is the text {word}), and braces around anything else, as in JSON, are just text.
+var tagRE = regexp.MustCompile(`\{\{|\}\}|\{([a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*)?)\}`)
 
-// TemplateTags lists the tags a template uses, in order, each once.
+// TemplateTags lists the tags a template uses, as written, in order, each once.
 func TemplateTags(text string) []string {
 	var out []string
 	for _, m := range tagRE.FindAllStringSubmatch(text, -1) {
@@ -388,7 +435,8 @@ func TemplateTags(text string) []string {
 	return out
 }
 
-// Render fills a template's tags from values; a tag with no value becomes empty text.
+// Render fills a template's tags from values, which are keyed by current names; an old name is read
+// as its new one. A tag with no value becomes empty text.
 func Render(text string, values map[string]string) string {
 	return tagRE.ReplaceAllStringFunc(text, func(m string) string {
 		switch m {
@@ -397,7 +445,17 @@ func Render(text string, values map[string]string) string {
 		case "}}":
 			return "}"
 		}
-		return values[m[1:len(m)-1]]
+		name := m[1 : len(m)-1]
+		if v, ok := values[name]; ok {
+			return v
+		}
+		if n, ok := oldTags[name]; ok {
+			return values[n]
+		}
+		if name == "case_file" {
+			return values["pr:case_file"] + values["issue:case_file"]
+		}
+		return ""
 	})
 }
 
@@ -429,6 +487,9 @@ func CheckTemplates(kind string, outputs map[string]bool, templates ...string) e
 	for _, t := range templates {
 		for _, tag := range TemplateTags(t) {
 			if !builtIn(tag, kind) && !outputs[tag] {
+				if TagField(tag) != "" {
+					return fmt.Errorf("{%s} is not a tag here: see the Tags list for the fields of {%s}", tag, TagField(tag))
+				}
 				return fmt.Errorf("{%s} is not a tag here: use a built-in tag or another step's output tag, or write {{%s}} for the text itself", tag, tag)
 			}
 		}

@@ -76,7 +76,9 @@ git only through its environment, never a command line or the mirror's config.
    Event blocks (PR First Ready, PR Draft, PR Activity, Issue Opened) with summon phrase and stop tag
    (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
    own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
-   fan out and merge; loops are refused for now. Templates use {tags}; a step's "Output to" tag is
+   fan out and merge; loops are refused for now. Templates use {tags}: built-in ones are a parent and
+   its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {repo:charter}),
+   so the Test box asks only for the parent; old names such as {pr_title} still work. A step's "Output to" tag is
    kept per case (one PR or issue) and replaced by the next write. Shift-click tests one block with
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never

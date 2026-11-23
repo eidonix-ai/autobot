@@ -11,7 +11,7 @@ func TestTemplates(t *testing.T) {
 	if got := TemplateTags(tpl); strings.Join(got, ",") != "pr_link,value_summary" {
 		t.Fatalf("tags %v", got)
 	}
-	got := Render(tpl, map[string]string{"pr_link": "https://x/1", "value_summary": "fine"})
+	got := Render(tpl, map[string]string{"pr": "https://x/1", "value_summary": "fine"}) // an old name reads its new one
 	if got != `Review https://x/1. Answer as {"verdict": "..."}; write {pr_link} for the text. fine` {
 		t.Fatalf("render %q", got)
 	}
@@ -23,8 +23,49 @@ func TestTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Issue workflows have no pull request.
-	if CheckTemplates(Issue, nil, "{pr_diff}") == nil {
+	if CheckTemplates(Issue, nil, "{pr_diff}") == nil || CheckTemplates(Issue, nil, "{pr:diff}") == nil {
 		t.Fatal("an issue template used a pull request tag")
+	}
+}
+
+// Built-in tags are a parent and its fields: {pr} is the link and {pr:title} is filled from it. The
+// old names still work, and a field that does not exist is refused with where to look.
+func TestParentAndFieldTags(t *testing.T) {
+	tpl := "{pr} {pr:title} {pr_title} {repo:charter} {project_charter} {case_file} {{pr:title}}"
+	if got := strings.Join(TemplateTags(tpl), ","); got != "pr,pr:title,pr_title,repo:charter,project_charter,case_file" {
+		t.Fatalf("tags %s", got)
+	}
+	if err := CheckTemplates(PR, nil, tpl); err != nil {
+		t.Fatal(err)
+	}
+	got := Render(tpl, map[string]string{"pr": "L", "pr:title": "T", "repo:charter": "C", "pr:case_file": "F"})
+	if got != "L T T C C F {pr:title}" {
+		t.Fatalf("render %q", got)
+	}
+	if err := CheckTemplates(PR, nil, "{pr:titel}"); err == nil || !strings.Contains(err.Error(), "fields of {pr}") {
+		t.Fatalf("an unknown field: %v", err)
+	}
+	if err := CheckTemplates(Issue, nil, "{issue} {issue:body} {issue_title} {case_file}"); err != nil {
+		t.Fatal(err)
+	}
+	if CanonicalTag("case_file", Issue) != "issue:case_file" || CanonicalTag("pr_diff", PR) != "pr:diff" || TagField("pr:diff") != "pr" || TagField("pr") != "" {
+		t.Fatal("names")
+	}
+	// No step may take a built-in name for its output, old or new.
+	for _, name := range []string{"pr", "repo", "pr_title", "project_charter"} {
+		if checkOutputTo(name, PR) == nil {
+			t.Errorf("output named %s", name)
+		}
+	}
+	// Every preset uses the new names only.
+	for _, p := range Personas {
+		for _, text := range []string{p.Instruction, p.Goal, p.IssueInstruction, p.Issue} {
+			for _, tag := range TemplateTags(text) {
+				if CanonicalTag(tag, PR) != tag {
+					t.Errorf("%s uses the old name {%s}", p.Key, tag)
+				}
+			}
+		}
 	}
 }
 

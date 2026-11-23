@@ -6,7 +6,9 @@
 // (files over 1 MB are left behind and fetched only if someone reads them) and then only fetched:
 // git sends just the objects the mirror lacks, so nothing is downloaded twice. It is lean, not an
 // archive: it holds the default branch and the heads of the open pull requests
-// (refs/pull/N/head), and a pull request that closes loses its ref.
+// (refs/pull/N/head), and a pull request that closes loses its ref. git gc cannot free the objects
+// only such pull requests used (in a partial clone it keeps every object the server sent), so a
+// mirror that has grown or aged is cloned afresh and swapped in.
 //
 // The system git runs with an argument list, never a shell, and every call has a time limit and a
 // cap on its output. The workspace's GitHub token reaches git only through its environment, never
@@ -26,7 +28,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +36,14 @@ const (
 	Every        = 10 * time.Minute
 	firstBackoff = 2 * time.Minute
 	longestWait  = 60 * time.Minute
+
+	// A mirror is cloned afresh (which drops the objects only closed pull requests used, and
+	// whatever else has piled up) when it has grown to more than RefreshGrowth times its size at the
+	// last fresh clone, or when RefreshAge has passed since then. A failed attempt is not repeated
+	// for refreshRetry; the old mirror keeps serving meanwhile.
+	RefreshGrowth = 2
+	RefreshAge    = 14 * 24 * time.Hour
+	refreshRetry  = 6 * time.Hour
 
 	cloneTimeout = 45 * time.Minute
 	fetchTimeout = 15 * time.Minute
@@ -48,13 +57,10 @@ type Mirrors struct {
 	BaseURL string
 	// Git is the git program to run.
 	Git string
-	// TidyEvery is how often a mirror is rebuilt without its dead objects; zero means TidyEvery's constant.
-	TidyEvery time.Duration
 
 	dir    string // <data dir>/repos
 	mu     sync.Mutex
 	states map[int64]*state
-	bg     sync.WaitGroup // cleanups running in the background
 }
 
 // state is what is remembered, in memory, about one workspace's mirror.
@@ -68,7 +74,8 @@ type state struct {
 	next  time.Time // not before this time
 	busy  int       // syncs running or waiting
 
-	tidying atomic.Bool // a tidy-up is running or waiting
+	fresh      sync.Mutex // held while a fresh clone is made
+	freshAfter time.Time  // no new attempt at a fresh clone before this time
 }
 
 // New makes the mirrors under dataDir (the folder of the SQLite file).
@@ -114,15 +121,22 @@ func (m *Mirrors) Status(id int64) Status {
 			out.Last = fi.ModTime()
 		}
 	}
-	filepath.WalkDir(m.path(id), func(_ string, d fs.DirEntry, err error) error {
+	out.Size = dirSize(m.path(id))
+	return out
+}
+
+// dirSize is the bytes a folder holds.
+func dirSize(dir string) int64 {
+	var n int64
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			if fi, err := d.Info(); err == nil {
-				out.Size += fi.Size()
+				n += fi.Size()
 			}
 		}
 		return nil
 	})
-	return out
+	return n
 }
 
 // Due reports whether a workspace's mirror should be synced now: every Every, and after a failure
@@ -135,11 +149,12 @@ func (m *Mirrors) Due(id int64, now time.Time) bool {
 }
 
 // Prune removes the mirrors of workspaces that no longer exist: every <number>.git folder (and
-// <number>.git.new, a clone left unfinished) whose number is not in keep. Nothing else in the folder is touched.
+// <number>.git.new and .git.old, left behind by a fresh clone) whose number is not in keep.
+// Nothing else in the folder is touched.
 func (m *Mirrors) Prune(keep []int64) {
 	entries, _ := os.ReadDir(m.dir)
 	for _, e := range entries {
-		n, ok := strings.CutSuffix(strings.TrimSuffix(e.Name(), ".new"), ".git") // also a clone left unfinished
+		n, ok := strings.CutSuffix(strings.TrimSuffix(strings.TrimSuffix(e.Name(), ".new"), ".old"), ".git") // also a clone left unfinished, or an old mirror left behind
 		id, err := strconv.ParseInt(n, 10, 64)
 		if !ok || err != nil || !e.IsDir() || strconv.FormatInt(id, 10) != n {
 			continue
@@ -167,33 +182,39 @@ type Pulls struct {
 
 // Sync clones the workspace's repository if it has no mirror yet, and otherwise fetches what is
 // new: the default branch and the open pull requests' heads. A pull request that is no longer
-// open loses its ref, and once a day the mirror is rebuilt without the objects only such pull
-// requests used. Only
-// one sync of a repository runs at a time. Its outcome is remembered for Status and Due.
+// open loses its ref. When the mirror has grown or aged (RefreshGrowth, RefreshAge) and the open
+// pull requests are known, it is then cloned afresh and swapped in. Only one sync of a repository
+// writes at a time. The outcome is remembered for Status and Due.
 func (m *Mirrors) Sync(ctx context.Context, id int64, name, token string, pulls Pulls) error {
 	s := m.state(id)
 	s.mu.Lock()
 	s.busy++
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.busy--
+		s.mu.Unlock()
+	}()
 	s.write.Lock()
-	defer s.write.Unlock()
 	err := m.sync(ctx, id, name, token, pulls)
+	s.write.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.busy--
 	now := time.Now()
 	if err == nil {
 		s.last, s.err, s.fails, s.next = now, "", 0, now.Add(Every)
-		m.collect(id, s)
-		return nil
+	} else {
+		s.err = err.Error()
+		s.fails++
+		wait := firstBackoff
+		for i := 1; i < s.fails && wait < longestWait; i++ {
+			wait *= 2
+		}
+		s.next = now.Add(min(wait, longestWait))
 	}
-	s.err = err.Error()
-	s.fails++
-	wait := firstBackoff
-	for i := 1; i < s.fails && wait < longestWait; i++ {
-		wait *= 2
+	s.mu.Unlock()
+	if err == nil && pulls.Known {
+		m.refresh(ctx, id, name, token, pulls, s)
 	}
-	s.next = now.Add(min(wait, longestWait))
 	return err
 }
 
@@ -230,31 +251,115 @@ func (m *Mirrors) Ensure(ctx context.Context, id int64, name, token, commit stri
 const MaxOpenPulls = 1000
 
 func (m *Mirrors) sync(ctx context.Context, id int64, name, token string, pulls Pulls) error {
-	url := strings.TrimSuffix(m.BaseURL, "/") + "/" + name + ".git"
-	dir := m.path(id)
 	if err := os.MkdirAll(m.dir, 0o700); err != nil {
 		return err
 	}
 	if m.Ready(id) {
-		return m.update(ctx, dir, url, token, pulls)
+		return m.update(ctx, m.path(id), m.url(name), token, pulls)
 	}
-	// Clone beside the final place and move it in when whole, so a half-made clone is never a mirror.
-	// Only the default branch comes with the clone; large files stay behind until read.
-	tmp := dir + ".new"
-	os.RemoveAll(tmp)
-	if _, _, err := m.git(ctx, cloneTimeout, 1<<16, token, "clone", "--bare", "--single-branch", "--no-tags", "--filter=blob:limit=1m", "--quiet", url, tmp); err != nil {
-		os.RemoveAll(tmp)
+	tmp, err := m.freshClone(ctx, id, name, token, pulls)
+	if err != nil {
 		return err
+	}
+	os.RemoveAll(m.path(id))
+	return os.Rename(tmp, m.path(id))
+}
+
+func (m *Mirrors) url(name string) string {
+	return strings.TrimSuffix(m.BaseURL, "/") + "/" + name + ".git"
+}
+
+// cloneMark is a file in the mirror: its content is the mirror's size when it was cloned, and its
+// time says when.
+const cloneMark = "autobot-clone"
+
+// freshClone makes a new mirror beside the final place, in <id>.git.new, and checks it: the
+// default branch and the open pull requests, nothing broken, the default branch resolves. A
+// half-made or bad clone is never a mirror: on any failure nothing is left behind. Only the
+// default branch comes with the clone; large files stay behind until read.
+func (m *Mirrors) freshClone(ctx context.Context, id int64, name, token string, pulls Pulls) (string, error) {
+	tmp := m.path(id) + ".new"
+	os.RemoveAll(tmp)
+	fail := func(err error) (string, error) {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	url := m.url(name)
+	if _, _, err := m.git(ctx, cloneTimeout, 1<<16, token, "clone", "--bare", "--single-branch", "--no-tags", "--filter=blob:limit=1m", "--quiet", url, tmp); err != nil {
+		return fail(err)
 	}
 	if err := m.update(ctx, tmp, url, token, pulls); err != nil {
-		os.RemoveAll(tmp)
+		return fail(err)
+	}
+	g := "--git-dir=" + tmp
+	if _, _, err := m.git(ctx, fetchTimeout, 1<<16, token, g, "fsck", "--connectivity-only", "--no-dangling"); err != nil {
+		return fail(err)
+	}
+	if _, _, err := m.git(ctx, readTimeout, 1<<10, token, g, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+		return fail(fmt.Errorf("the default branch does not resolve: %v", err))
+	}
+	if err := os.WriteFile(filepath.Join(tmp, cloneMark), []byte(strconv.FormatInt(dirSize(tmp), 10)), 0o600); err != nil {
+		return fail(err)
+	}
+	return tmp, nil
+}
+
+// freshDue reports whether the mirror has grown past RefreshGrowth times its size at its last
+// fresh clone, or is older than RefreshAge. A mirror with no record of its clone counts as due.
+func (m *Mirrors) freshDue(id int64) bool {
+	mark := filepath.Join(m.path(id), cloneMark)
+	b, err := os.ReadFile(mark)
+	fi, err2 := os.Stat(mark)
+	if err != nil || err2 != nil {
+		return true
+	}
+	was, _ := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return time.Since(fi.ModTime()) > RefreshAge || dirSize(m.path(id)) > RefreshGrowth*was
+}
+
+// refresh replaces the mirror with a fresh clone when it is due. The new clone is made and checked
+// while the old mirror goes on serving, without the writer lock; only the swap holds it. If anything
+// fails the old mirror stays as it was, whole, and the error is shown on the Settings page.
+func (m *Mirrors) refresh(ctx context.Context, id int64, name, token string, pulls Pulls, s *state) {
+	s.mu.Lock()
+	waiting := time.Now().Before(s.freshAfter)
+	s.mu.Unlock()
+	if waiting || !m.freshDue(id) || !s.fresh.TryLock() {
+		return
+	}
+	defer s.fresh.Unlock()
+	tmp, err := m.freshClone(ctx, id, name, token, pulls)
+	if err == nil {
+		err = m.swap(id, tmp, s)
+		if err != nil {
+			os.RemoveAll(tmp)
+		}
+	}
+	if err != nil {
+		s.mu.Lock()
+		s.err = "fresh clone: " + err.Error()
+		s.freshAfter = time.Now().Add(refreshRetry)
+		s.mu.Unlock()
+	}
+}
+
+// swap puts the new mirror in the old one's place, under the writer lock, and then deletes the old.
+func (m *Mirrors) swap(id int64, tmp string, s *state) error {
+	dir, old := m.path(id), m.path(id)+".old"
+	s.write.Lock()
+	os.RemoveAll(old)
+	if err := os.Rename(dir, old); err != nil {
+		s.write.Unlock()
 		return err
 	}
-	os.RemoveAll(dir)
 	if err := os.Rename(tmp, dir); err != nil {
+		os.Rename(old, dir) // put the old one back
+		s.write.Unlock()
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, tidyMark), nil, 0o600) // nothing to tidy yet
+	s.write.Unlock()
+	os.RemoveAll(old)
+	return nil
 }
 
 // update brings a repository up to date: it points it at its address (a renamed workspace has a
@@ -314,82 +419,6 @@ func (m *Mirrors) update(ctx context.Context, dir, url, token string, pulls Pull
 		}
 	}
 	return nil
-}
-
-// TidyEvery is how often a mirror is rebuilt to drop the objects nothing refers to any more: those
-// only closed pull requests used.
-const TidyEvery = 24 * time.Hour
-
-// tidyMark is a file in the mirror whose time says when it was last tidied (or made).
-const tidyMark = "autobot-tidy"
-
-// collect starts the tidy-up in the background when a day has passed since the last one. It holds
-// the repository's writer lock, so no sync or fetch runs meanwhile. s.mu is held by the caller.
-func (m *Mirrors) collect(id int64, s *state) {
-	every := m.TidyEvery
-	if every == 0 {
-		every = TidyEvery
-	}
-	if fi, err := os.Stat(filepath.Join(m.path(id), tidyMark)); err == nil && time.Since(fi.ModTime()) < every {
-		return
-	}
-	if !s.tidying.CompareAndSwap(false, true) {
-		return
-	}
-	m.bg.Add(1)
-	go func() {
-		defer m.bg.Done()
-		defer s.tidying.Store(false)
-		s.write.Lock()
-		defer s.write.Unlock()
-		if err := m.tidy(context.Background(), id); err != nil {
-			s.mu.Lock()
-			s.err = "tidying up: " + err.Error()
-			s.mu.Unlock()
-		}
-	}()
-}
-
-// tidy rebuilds the mirror's objects as one pack of just what its refs reach, and deletes what the
-// old packs held beyond that. (git gc cannot do this here: in a partial clone it keeps every object
-// of the packs the server sent, reachable or not.) Large files git left behind stay behind: nothing
-// is fetched. The new pack is whole before any old one is removed.
-func (m *Mirrors) tidy(ctx context.Context, id int64) error {
-	dir := m.path(id)
-	packs := filepath.Join(dir, "objects", "pack")
-	old, _ := filepath.Glob(filepath.Join(packs, "*.pack"))
-	out, _, err := m.git(ctx, cloneTimeout, 1<<10, "", "-c", "pack.threads=2", "--git-dir="+dir, "pack-objects", "--revs", "--all",
-		"--missing=allow-promisor", "--delta-base-offset", "--quiet", filepath.Join(packs, "pack"))
-	if err != nil {
-		return err
-	}
-	name := strings.TrimSpace(string(out))
-	if !regexp.MustCompile(`^[0-9a-f]{40,64}$`).MatchString(name) {
-		return fmt.Errorf("git packed objects without saying where: %q", name)
-	}
-	fresh := filepath.Join(packs, "pack-"+name)
-	if err := os.WriteFile(fresh+".promisor", nil, 0o600); err != nil { // the new pack is a partial clone's, like the old ones
-		return err
-	}
-	for _, p := range old {
-		base := strings.TrimSuffix(p, ".pack")
-		if base == fresh {
-			continue
-		}
-		if _, err := os.Stat(base + ".keep"); err == nil {
-			continue
-		}
-		for _, ext := range []string{".pack", ".idx", ".rev", ".bitmap", ".promisor", ".mtimes"} {
-			os.Remove(base + ext)
-		}
-	}
-	// What was loose (small fetches arrive loose) and is now in a pack, or reaches nothing.
-	for _, args := range [][]string{{"prune-packed", "--quiet"}, {"prune", "--expire=now"}} {
-		if _, _, err := m.git(ctx, fetchTimeout, 1<<16, "", append([]string{"--git-dir=" + dir}, args...)...); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(filepath.Join(dir, tidyMark), nil, 0o600)
 }
 
 // env is the environment git runs in: nothing inherited, no prompts, no system or user config. The

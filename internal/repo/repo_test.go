@@ -97,7 +97,6 @@ func (s *source) seed() (first, second string) {
 func newMirrors(t *testing.T, s *source) *Mirrors {
 	m := New(t.TempDir())
 	m.BaseURL = s.base
-	t.Cleanup(m.bg.Wait) // a tidy-up running in the background must end before the folder goes
 	return m
 }
 
@@ -315,7 +314,11 @@ func TestListLogDiffOverview(t *testing.T) {
 func wrapper(t *testing.T, real string) (path, args, env string) {
 	dir := t.TempDir()
 	path, args, env = filepath.Join(dir, "git"), filepath.Join(dir, "args.log"), filepath.Join(dir, "env.log")
-	script := "#!/bin/sh\necho \"$@\" >> " + args + "\nenv >> " + env + "\nexec " + real + " \"$@\"\n"
+	// A file named "fail" beside the logs makes git fail when its text is part of the command line.
+	fail := filepath.Join(dir, "fail")
+	script := "#!/bin/sh\necho \"$@\" >> " + args + "\nenv >> " + env + "\n" +
+		"if [ -s " + fail + " ]; then case \"$*\" in *\"$(cat " + fail + ")\"*) echo 'boom' >&2; exit 1;; esac; fi\n" +
+		"exec " + real + " \"$@\"\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -450,10 +453,11 @@ func TestPruneRemovesOnlyMirrorsOfGoneWorkspaces(t *testing.T) {
 	os.MkdirAll(filepath.Join(m.dir, "02.git"), 0o700)
 	os.MkdirAll(filepath.Join(m.dir, "1.git.new"), 0o700)
 	os.MkdirAll(filepath.Join(m.dir, "4.git.new"), 0o700)
+	os.MkdirAll(filepath.Join(m.dir, "4.git.old"), 0o700)
 	os.WriteFile(filepath.Join(m.dir, "3.git"), []byte("a file"), 0o600)
 	os.WriteFile(filepath.Join(m.dir, "notes.txt"), []byte("mine"), 0o600)
 	m.Prune([]int64{1})
-	for name, want := range map[string]bool{"1.git": true, "1.git.new": true, "4.git.new": false, "2.git": false, "abc.git": true, "02.git": true, "3.git": true, "notes.txt": true} {
+	for name, want := range map[string]bool{"1.git": true, "1.git.new": true, "4.git.new": false, "4.git.old": false, "2.git": false, "abc.git": true, "02.git": true, "3.git": true, "notes.txt": true} {
 		if _, err := os.Stat(filepath.Join(m.dir, name)); (err == nil) != want {
 			t.Errorf("%s present = %v, want %v", name, err == nil, want)
 		}
@@ -563,71 +567,6 @@ func TestEnsureFetchesOnlyThatPullRequest(t *testing.T) {
 	syncPulls(t, m, 1, 2)
 	if got := refsOf(t, m); got != "refs/heads/main refs/pull/1/head refs/pull/2/head" {
 		t.Errorf("the closed pull request's ref stayed: %s", got)
-	}
-}
-
-// Once a day the mirror is rebuilt without the objects only closed pull requests used (git gc
-// would keep them: a partial clone keeps whatever its server sent), in the background, and
-// without downloading anything.
-func TestDailyTidyRemovesTheObjectsOfClosedPulls(t *testing.T) {
-	s := newSource(t)
-	s.seed()
-	m := newMirrors(t, s)
-	gitPath, argsLog, _ := wrapper(t, s.realGit)
-	m.Git = gitPath
-	tidies := func() int { b, _ := os.ReadFile(argsLog); return strings.Count(string(b), " pack-objects ") }
-	ctx := context.Background()
-
-	syncPulls(t, m, 1, 2)
-	m.bg.Wait()
-	syncPulls(t, m, 2) // pull request 1 closed, but a fresh mirror needs no tidying and it is not a day yet
-	m.bg.Wait()
-	if tidies() != 0 || !strings.Contains(objects(t, m), s.prs[0]) {
-		t.Errorf("tidied within a day (%d times)", tidies())
-	}
-	m.TidyEvery = time.Nanosecond
-	syncPulls(t, m, 2)
-	m.bg.Wait()
-	if tidies() != 1 {
-		t.Fatalf("%d tidy-ups, want 1; status %+v", tidies(), m.Status(1))
-	}
-	if all := objects(t, m); strings.Contains(all, s.prs[0]) || !strings.Contains(all, s.prs[1]) {
-		t.Errorf("after the tidy-up: closed pull request's commit present = %v, open one's present = %v",
-			strings.Contains(all, s.prs[0]), strings.Contains(all, s.prs[1]))
-	}
-	if st := m.Status(1); st.Err != "" {
-		t.Errorf("status %+v", st)
-	}
-	// One pack, still marked as a partial clone's; the large file was not downloaded to make it;
-	// and the mirror still works: reading (the large file is fetched now, as always), and syncing.
-	packs, _ := filepath.Glob(filepath.Join(m.path(1), "objects", "pack", "*.pack"))
-	promisors, _ := filepath.Glob(filepath.Join(m.path(1), "objects", "pack", "*.promisor"))
-	if len(packs) != 1 || len(promisors) != 1 {
-		t.Errorf("packs %v, promisor marks %v", packs, promisors)
-	}
-	if missing := s.git(m.path(1), "rev-list", "--objects", "--missing=print", "--all"); !strings.Contains(missing, "?") {
-		t.Errorf("the tidy-up downloaded the large file:\n%s", missing)
-	}
-	r := m.Repo(1, "")
-	head, err := r.Resolve(ctx, "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if text, err := r.ReadFile(ctx, head, "docs/big.txt"); err != nil || !strings.Contains(text, "needle in the big file") {
-		t.Errorf("reading the large file after the tidy-up: %v", err)
-	}
-	if got, err := r.Resolve(ctx, "pr/2"); err != nil || got != s.prs[1] {
-		t.Errorf("the open pull request: %q, %v", got, err)
-	}
-	if out := s.git(m.path(1), "fsck", "--connectivity-only"); strings.Contains(out, "missing") {
-		t.Errorf("fsck: %s", out)
-	}
-	s.commit("later", map[string]string{"later.txt": "l\n"})
-	s.push("main")
-	syncPulls(t, m, 2)
-	m.bg.Wait()
-	if _, err := r.Resolve(ctx, "main"); err != nil {
-		t.Error(err)
 	}
 }
 

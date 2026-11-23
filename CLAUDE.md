@@ -41,9 +41,10 @@ The old harness's `triage.service` and `donor-hub.service` were stopped and disa
 `internal/repo` keeps one lean bare git mirror per workspace in `<data dir>/repos/<workspace id>.git`:
 the default branch and the heads of the open pull requests only (files over 1 MB are fetched only when
 read). `autobot serve` syncs it every 10 minutes (failures back off 2 to 60 minutes), asking GitHub
-which pull requests are open (an ETag list); a closed pull request loses its ref, and once a day the
-mirror is rebuilt without the objects only closed ones used (plain `git gc` cannot do this in a
-partial clone). A run on a pull request fetches just that head. The workspace's Settings page shows the
+which pull requests are open (an ETag list); a closed pull request loses its ref. Plain `git gc` cannot free the
+objects only closed ones used (a partial clone keeps everything the server sent), so a mirror that has
+grown past twice its size at the last fresh clone, or is 14 days old, is cloned afresh beside the old
+one, checked (`fsck`, default branch resolves) and swapped in; if that fails the old mirror stays. A run on a pull request fetches just that head. The workspace's Settings page shows the
 last fetch, size and any error. Agents get `list_files`, `read_file`, `search_code`, `search_history`,
 `repo_overview` and `pr_diff` over it instead of GitHub API calls; with no mirror yet they read through
 GitHub as before. It runs the system `git` (the host needs it installed); the workspace's token reaches

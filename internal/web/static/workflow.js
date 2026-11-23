@@ -66,7 +66,7 @@
     var t = types[type];
     var outs = (state.outputs || {})[id] || t.outputs || ['out'];
     var dfid = editor.addNode(type, t.event ? 0 : 1, outs.length, x, y, 'wf-' + type, { id: id },
-      '<div class="wf-node"><div class="wf-name"></div><div class="wf-title"></div><div class="wf-sub"></div></div>');
+      '<div class="wf-node"><div class="wf-name"></div><div class="wf-title"></div><div class="wf-sub"></div><div class="wf-ref"></div></div>');
     dfToID[dfid] = id; idToDf[id] = dfid;
     var el = nodeEl(dfid);
     el.querySelector('.wf-title').textContent = t.label;
@@ -112,6 +112,10 @@
     var el = nodeEl(idToDf[id]);
     if (!el) { return; }
     el.querySelector('.wf-sub').textContent = state.summaries[id] || '';
+    // A block that continues another's conversation has a dashed border and says whose.
+    var ref = (state.continues || {})[id] || '';
+    el.classList.toggle('wf-reference', !!ref);
+    el.querySelector('.wf-ref').textContent = ref;
     el.querySelector('.wf-name').textContent = (state.names || {})[id] || types[editor.getNodeFromId(idToDf[id]).name].label;
   }
 
@@ -194,11 +198,16 @@
     saveTimer = setTimeout(save, 300);
   }
 
+  // New reference blocks not yet saved: block id -> the id of the block whose conversation it continues.
+  var newRefs = {}, sentRefs = {};
+
   function layout() {
     var data = editor.export().drawflow.Home.data, nodes = [], links = [];
+    sentRefs = {};
     Object.keys(data).forEach(function (k) {
-      var n = data[k], id = dfToID[n.id];
-      nodes.push({ id: id, type: n.name, x: Math.round(n.pos_x), y: Math.round(n.pos_y) });
+      var n = data[k], id = dfToID[n.id], node = { id: id, type: n.name, x: Math.round(n.pos_x), y: Math.round(n.pos_y) };
+      if (newRefs[id]) { node.continue_of = sentRefs[id] = newRefs[id]; }
+      nodes.push(node);
       Object.keys(n.outputs).forEach(function (cls) {
         n.outputs[cls].connections.forEach(function (c) {
           links.push({ from: id, out: outName(id, cls), to: dfToID[c.node], in: 'in' });
@@ -233,7 +242,8 @@
     }).then(function (r) {
       if (r.status === 200) {
         state.version = r.body.version; state.summaries = r.body.summaries; state.names = r.body.names;
-        state.outputs = r.body.outputs;
+        state.outputs = r.body.outputs; state.continues = r.body.continues;
+        Object.keys(sentRefs).forEach(function (id) { delete newRefs[id]; });
         Object.keys(idToDf).forEach(setSummary);
         show('Saved');
       } else {
@@ -262,7 +272,7 @@
   editor.on('connectionCreated', function (c) { lastLink = c; scheduleSave(); });
 
   // ---- the right-click menu, and placing a node with the mouse ----
-  var placing = null;
+  var placing = null, placingRef = null;   // placingRef: the block a reference being placed continues
 
   function hideMenu() { menu.hidden = true; menu.replaceChildren(); }
 
@@ -278,17 +288,18 @@
     menu.hidden = false;
   }
 
-  function startPlacing(type, x, y) {
-    placing = type;
-    ghost.textContent = types[type].label;
+  function startPlacing(type, x, y, ref) {
+    placing = type; placingRef = ref || null;
+    var what = ref ? 'a reference to ' + ((state.names || {})[ref] || 'a block') : types[type].label;
+    ghost.textContent = ref ? 'Reference to ' + ((state.names || {})[ref] || 'a block') : types[type].label;
     moveGhost(x, y);
     ghost.hidden = false;
-    show('Click to place ' + types[type].label + ' (Esc cancels)');
+    show('Click to place ' + what + ' (Esc cancels)');
   }
 
   function moveGhost(x, y) { ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; }
 
-  function stopPlacing() { placing = null; ghost.hidden = true; show(''); }
+  function stopPlacing() { placing = null; placingRef = null; ghost.hidden = true; show(''); }
 
   // Where a point on the screen falls on the canvas, allowing for its pan and zoom.
   function canvasPoint(clientX, clientY) {
@@ -302,7 +313,12 @@
     var node = e.target.closest('.drawflow-node');
     if (node) {
       var dfid = node.id.replace('node-', '');
-      openMenu(e.clientX, e.clientY, [{ label: 'Delete', run: function () { editor.removeNodeId('node-' + dfid); } }]);
+      var nid = dfToID[dfid], items = [{ label: 'Delete', run: function () { editor.removeNodeId('node-' + dfid); } }];
+      // An Agent block that starts its own conversations can be referred to: a new block that continues it.
+      if (editor.getNodeFromId(dfid).name === 'agent' && !(state.continues || {})[nid]) {
+        items.push({ label: 'New reference', run: function () { startPlacing('agent', e.clientX, e.clientY, nid); } });
+      }
+      openMenu(e.clientX, e.clientY, items);
       return;
     }
     openMenu(e.clientX, e.clientY, state.types.map(function (t) {
@@ -321,9 +337,14 @@
   root.addEventListener('mousedown', function (e) {
     if (placing && e.button === 0) {
       e.stopPropagation(); e.preventDefault();
-      var p = canvasPoint(e.clientX, e.clientY), type = placing;
+      var p = canvasPoint(e.clientX, e.clientY), type = placing, ref = placingRef, id = newID();
       stopPlacing();
-      addNode(newID(), type, p.x, p.y);
+      if (ref) {
+        newRefs[id] = ref;
+        if (!state.continues) { state.continues = {}; }
+        state.continues[id] = 'continues ' + ((state.names || {})[ref] || '');
+      }
+      addNode(id, type, p.x, p.y);
       scheduleSave();
       return;
     }
@@ -360,6 +381,15 @@
   // An agent's preset fills its Instruction and Done when, read-only; Custom unlocks them, starting
   // from the text that was there.
   modal.addEventListener('change', function (e) {
+    // Continuing another block's conversation: the model is that conversation's, shown read-only.
+    var cont = e.target.closest('select[data-continue]');
+    if (cont) {
+      var on = cont.value !== '', form = cont.form;
+      form.querySelectorAll('[data-when-continuing]').forEach(function (el) { el.hidden = !on; });
+      form.querySelectorAll('[data-when-alone]').forEach(function (el) { el.hidden = on; });
+      form.querySelector('[data-source-model]').value = cont.options[cont.selectedIndex].dataset.model || '';
+      return;
+    }
     var sel = e.target.closest('select[data-preset]');
     if (!sel) { return; }
     var form = sel.form, opt = sel.options[sel.selectedIndex], custom = sel.value === 'custom';
@@ -387,9 +417,9 @@
       if (resp.status === 200) {
         return resp.json().then(function (body) {
           state.version = body.version; state.summaries = body.summaries; state.names = body.names;
-          state.outputs = body.outputs;
+          state.outputs = body.outputs; state.continues = body.continues;
           syncPorts(id, body.links || []);
-          setSummary(id); modal.hidePopover(); show('Saved');
+          Object.keys(idToDf).forEach(setSummary); modal.hidePopover(); show('Saved');
         });
       }
       if (resp.headers.get('Content-Type').indexOf('application/json') === 0) {

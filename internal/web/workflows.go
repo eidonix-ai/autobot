@@ -40,6 +40,23 @@ func canvasFacts(g workflow.Graph) (map[string]string, map[string][]string) {
 	return names, outputs
 }
 
+// continuesFacts is, for each Agent block that continues another's conversation, the line its
+// block on the canvas shows: whose conversation it continues, or that the block is deleted.
+func continuesFacts(g workflow.Graph, kind string) map[string]string {
+	out := map[string]string{}
+	for _, n := range g.Nodes {
+		a, err := workflow.AgentSettingsOf(n, kind)
+		if n.Type != workflow.Agent || err != nil || !a.Continues() {
+			continue
+		}
+		out[n.ID] = "continues: (deleted)"
+		if src, _, err := continuedBlock(g, kind, a); err == nil {
+			out[n.ID] = "continues " + workflow.DisplayName(*src)
+		}
+	}
+	return out
+}
+
 // summaries is each node's one-line summary, for the canvas.
 func (s *Server) summaries(ws *store.Workspace, g workflow.Graph, kind string) map[string]string {
 	out := map[string]string{}
@@ -79,7 +96,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	}
 	names, outputs := canvasFacts(g)
 	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": s.summaries(ws, g, kind),
-		"names": names, "outputs": outputs, "types": workflow.TypesFor(kind)})
+		"names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "types": workflow.TypesFor(kind)})
 	var tabs []map[string]string
 	for _, k := range workflow.Kinds {
 		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
@@ -105,10 +122,11 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Version int `json:"version"`
 		Nodes   []struct {
-			ID   string  `json:"id"`
-			Type string  `json:"type"`
-			X    float64 `json:"x"`
-			Y    float64 `json:"y"`
+			ID         string  `json:"id"`
+			Type       string  `json:"type"`
+			X          float64 `json:"x"`
+			Y          float64 `json:"y"`
+			ContinueOf string  `json:"continue_of"` // a new Agent block placed as a reference to another
 		} `json:"nodes"`
 		Links []workflow.Link `json:"links"`
 	}
@@ -135,6 +153,19 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 		node := workflow.Node{ID: n.ID, Type: n.Type, X: n.X, Y: n.Y}
 		if k, ok := kept[n.ID]; ok && k.Type == n.Type {
 			node.Settings, node.Name = k.Settings, k.Name
+		} else if n.Type == workflow.Agent && n.ContinueOf != "" {
+			// A reference to a block: an Agent block that continues its conversation. It starts from the
+			// defaults of a new Agent block, with the other block's model shown read-only.
+			a := workflow.DefaultAgent(kind)
+			a.ContinueOf = n.ContinueOf
+			if err := checkContinuation(old, kind, node, a); err != nil {
+				jsonError(w, http.StatusBadRequest, "Not saved: "+err.Error()+".")
+				return
+			}
+			if _, src, err := continuedBlock(old, kind, a); err == nil {
+				a.Model = src.Model
+			}
+			node.Settings, _ = json.Marshal(a)
 		}
 		g.Nodes = append(g.Nodes, node)
 	}
@@ -190,6 +221,36 @@ func (s *Server) modelOptions(ws *store.Workspace, decisions bool, cur workflow.
 	return out, nil
 }
 
+// modelLabel names a model and its provider, as a model dropdown does; "" for none.
+func (s *Server) modelLabel(m workflow.ModelRef) string {
+	if !m.Set() {
+		return ""
+	}
+	if p, err := s.st.Provider(m.Provider); err == nil {
+		return m.Model + " · " + p.Name
+	}
+	return m.Model
+}
+
+// checkContinuation confirms that a block set to continue another's conversation names a block of
+// the canvas that starts conversations of its own, other than itself. A choice kept as it was is not
+// checked: the block it names may have been deleted since, which does not stop the canvas saving.
+func checkContinuation(g workflow.Graph, kind string, n workflow.Node, a workflow.AgentSettings) error {
+	if !a.Continues() {
+		return nil
+	}
+	if old, err := workflow.AgentSettingsOf(n, kind); err == nil && old.ContinueOf == a.ContinueOf {
+		return nil
+	}
+	if a.ContinueOf == n.ID {
+		return errors.New("a block cannot continue its own conversation")
+	}
+	if _, _, err := continuedBlock(g, kind, a); err != nil {
+		return errors.New("choose a block of this canvas that starts its own conversation")
+	}
+	return nil
+}
+
 // checkMachines confirms each machine is one of the workspace's.
 func (s *Server) checkMachines(ws *store.Workspace, ids []int64) error {
 	machines, err := s.st.Machines(ws.ID)
@@ -243,7 +304,7 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 	}
 	names, outputs := canvasFacts(g)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": s.summaries(ws, g, kind), "names": names, "outputs": outputs, "links": g.Links})
+	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": s.summaries(ws, g, kind), "names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "links": g.Links})
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
@@ -346,6 +407,28 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		data["Instruction"], data["Goal"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind)
 		data["Locked"] = workflow.PersonaOf(st.Persona) != nil
 		data["Preamble"] = fmt.Sprintf(preamble, ws.Name)
+		// The blocks whose conversation this one may continue: the others that start their own.
+		type source struct {
+			ID, Name, Model string
+			Selected        bool
+		}
+		var sources []source
+		found := st.ContinueOf == ""
+		for _, o := range g.Nodes {
+			if os, err := workflow.AgentSettingsOf(o, kind); o.Type == workflow.Agent && o.ID != n.ID && err == nil && !os.Continues() {
+				sources = append(sources, source{o.ID, workflow.DisplayName(o), s.modelLabel(os.Model), o.ID == st.ContinueOf})
+				found = found || o.ID == st.ContinueOf
+			}
+		}
+		if !found { // the block it continued is gone, or no longer starts a conversation
+			sources = append([]source{{ID: st.ContinueOf, Name: "(deleted)", Selected: true}}, sources...)
+		}
+		data["Sources"] = sources
+		for _, o := range sources {
+			if o.Selected {
+				data["SourceModel"] = o.Model
+			}
+		}
 	case workflow.DecisionSettings:
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
@@ -409,12 +492,23 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		a := workflow.AgentFromForm(f.Get, func(k string) []string { return f[k] })
 		a.Model = parseModel(f.Get("model"))
 		a.Verify = parseModel(f.Get("verify"))
-		if err = a.Check(kind); err == nil {
-			if workflow.PersonaOf(a.Persona) != nil { // a preset's own text is not stored on the block
-				a.Instruction, a.Goal = "", ""
+		if a.Continues() {
+			// Its model is the conversation's: a copy of the other block's, for the form to show.
+			a.Model = workflow.ModelRef{}
+			if err = checkContinuation(g, kind, *n, a); err == nil {
+				if _, src, serr := continuedBlock(g, kind, a); serr == nil {
+					a.Model = src.Model
+				}
 			}
-			if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil {
-				err = s.checkModel(ws, a.Model, false)
+		}
+		if err == nil {
+			if err = a.Check(kind); err == nil {
+				if workflow.PersonaOf(a.Persona) != nil { // a preset's own text is not stored on the block
+					a.Instruction, a.Goal = "", ""
+				}
+				if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil && !a.Continues() {
+					err = s.checkModel(ws, a.Model, false)
+				}
 			}
 		}
 		if err == nil && a.Verify.Set() {

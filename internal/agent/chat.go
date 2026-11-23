@@ -33,10 +33,29 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
-// Usage is what one model call cost.
+// Usage is what one model call cost. Cached is how much of the input the provider answered from
+// its cache of earlier requests: it reuses work only when a request starts with exactly the bytes
+// of an earlier one.
 type Usage struct {
-	In  int `json:"prompt_tokens"`
-	Out int `json:"completion_tokens"`
+	In     int
+	Out    int
+	Cached int
+}
+
+// apiUsage is a chat completion's usage object. Providers report cached input in one of two
+// places: OpenAI-style gateways in prompt_tokens_details.cached_tokens, DeepSeek in
+// prompt_cache_hit_tokens.
+type apiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	Details          struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CacheHitTokens int `json:"prompt_cache_hit_tokens"`
+}
+
+func (u apiUsage) usage() Usage {
+	return Usage{In: u.PromptTokens, Out: u.CompletionTokens, Cached: min(max(u.Details.CachedTokens, u.CacheHitTokens), u.PromptTokens)}
 }
 
 // Model answers a conversation, perhaps asking for tools.
@@ -54,7 +73,30 @@ type ToolSpec struct {
 // OpenAI is a model behind an OpenAI-compatible chat completions API.
 type OpenAI struct {
 	Endpoint, Key, Model string
-	HTTP                 *http.Client
+	// Session, when set, is sent as the request's user field, the same for every request of a
+	// conversation, so that a gateway can send the conversation to the server that holds its cache.
+	Session string
+	HTTP    *http.Client
+}
+
+// request is the body of a chat completion request. It is a struct, never a map, so that the same
+// conversation always serializes to the same bytes, in this order: the parts that stay the same
+// (model, session, tools) come first, then the messages, which only ever grow at their end. A request
+// is then the previous request with messages added, which is what a provider's cache can reuse.
+type request struct {
+	Model    string    `json:"model"`
+	User     string    `json:"user,omitempty"`
+	Tools    []reqTool `json:"tools,omitempty"`
+	Messages []Message `json:"messages"`
+}
+
+type reqTool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	} `json:"function"`
 }
 
 var chatHTTP = &http.Client{
@@ -66,20 +108,13 @@ var chatHTTP = &http.Client{
 
 // Complete asks for the next message. Errors never contain the key.
 func (o *OpenAI) Complete(ctx context.Context, msgs []Message, tools []ToolSpec) (Message, Usage, error) {
-	type fn struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Parameters  json.RawMessage `json:"parameters"`
-	}
-	type tool struct {
-		Type     string `json:"type"`
-		Function fn     `json:"function"`
-	}
-	var ts []tool
+	rq := request{Model: o.Model, User: o.Session, Messages: msgs}
 	for _, t := range tools {
-		ts = append(ts, tool{"function", fn{t.Name, t.Description, t.Parameters}})
+		rt := reqTool{Type: "function"}
+		rt.Function.Name, rt.Function.Description, rt.Function.Parameters = t.Name, t.Description, t.Parameters
+		rq.Tools = append(rq.Tools, rt)
 	}
-	body, err := json.Marshal(map[string]any{"model": o.Model, "messages": msgs, "tools": ts})
+	body, err := json.Marshal(rq)
 	if err != nil {
 		return Message{}, Usage{}, err
 	}
@@ -123,12 +158,12 @@ func (o *OpenAI) Complete(ctx context.Context, msgs []Message, tools []ToolSpec)
 		Choices []struct {
 			Message Message `json:"message"`
 		} `json:"choices"`
-		Usage Usage `json:"usage"`
+		Usage apiUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil || len(r.Choices) == 0 {
 		return Message{}, Usage{}, fmt.Errorf("%s answered with something other than a chat completion", req.URL.Host)
 	}
 	m := r.Choices[0].Message
 	m.Role = "assistant"
-	return m, r.Usage, nil
+	return m, r.Usage.usage(), nil
 }

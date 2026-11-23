@@ -287,6 +287,30 @@ func (r *Repo) Log(ctx context.Context, commit, text, p string) (string, error) 
 	return string(out), nil
 }
 
+// Commits lists the commits that to has and from does not, newest first (at most MaxLogLines), or
+// "No new commits." It fails if from is not in the local copy: a branch rewritten since may have
+// lost it.
+func (r *Repo) Commits(ctx context.Context, from, to string) (string, error) {
+	if err := needSHA(from); err != nil {
+		return "", err
+	}
+	if err := needSHA(to); err != nil {
+		return "", err
+	}
+	if !r.has(ctx, from) {
+		return "", fmt.Errorf("commit %s is not in the local copy", from)
+	}
+	out, _, err := r.git(ctx, readTimeout, 256<<10, "log", "--max-count="+strconv.Itoa(MaxLogLines), "--date=short",
+		"--format=%h %ad %an: %s", from+".."+to, "--")
+	if err != nil {
+		return "", err
+	}
+	if len(out) == 0 {
+		return "No new commits.", nil
+	}
+	return string(out), nil
+}
+
 // MaxDiff is the most of a diff Diff returns.
 const MaxDiff = 4 << 20
 

@@ -58,24 +58,15 @@ func TestNudge(t *testing.T) {
 	}
 }
 
-// "met" is refused while the agent's plan has open steps, and accepted once they are done.
-func TestPlanHoldsFinish(t *testing.T) {
+// The plan is the agent's own notes: any status word is taken, and finish takes the report whatever
+// the plan says (Derek, 2026-11-23: a run lost a finished report to a plan marked "completed").
+func TestPlanNeverHoldsFinish(t *testing.T) {
 	m := &script{replies: []Message{
-		call("p", "update_plan", `{"steps":[{"step":"read the diff","status":"done"},{"step":"run the tests","status":"pending"}]}`),
-		call("f1", "finish", `{"status":"met","report":"done"}`),
-		call("p2", "update_plan", `{"steps":[{"step":"read the diff","status":"done"},{"step":"run the tests","status":"dropped","note":"no machine"}]}`),
-		call("f2", "finish", `{"status":"met","report":"done"}`),
+		call("p", "update_plan", `{"steps":[{"step":"read the diff","status":"completed"},{"step":"run the tests","status":"pending"}]}`),
+		call("f", "finish", `{"status":"met","report":"the report"}`),
 	}}
 	tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil)
-	if tr.Outcome != Met || !strings.Contains(last(m.seen[2]), "run the tests") {
-		t.Fatalf("%+v\n%s", tr, last(m.seen[2]))
-	}
-	// Blocked is always accepted: the agent says it cannot go on.
-	m = &script{replies: []Message{
-		call("p", "update_plan", `{"steps":[{"step":"x","status":"pending"}]}`),
-		call("f", "finish", `{"status":"blocked","report":"cn7 has no free GPU"}`),
-	}}
-	if tr := Run(context.Background(), Config{Model: m, MaxTurns: 10}, nil); tr.Outcome != Blocked {
+	if tr.Outcome != Met || tr.Report != "the report" || len(tr.Plan) != 2 || tr.Plan[0].Status != "completed" {
 		t.Fatalf("%+v", tr)
 	}
 }
@@ -162,8 +153,9 @@ func TestCitedFilesMustBeRead(t *testing.T) {
 	}
 }
 
-// Running low on turns, the agent is told to wrap up; old tool results are cut when sent.
-func TestBudgetWarningAndTrimming(t *testing.T) {
+// Running low on turns, the agent is told to wrap up. Results are not cut while the request is small:
+// what was sent is never rewritten (see cache_test.go for when it is).
+func TestBudgetWarning(t *testing.T) {
 	var replies []Message
 	for i := 0; i < 12; i++ {
 		replies = append(replies, call(fmt.Sprint(i), "long", `{}`))
@@ -173,28 +165,17 @@ func TestBudgetWarningAndTrimming(t *testing.T) {
 	}}
 	m := &script{replies: replies}
 	Run(context.Background(), Config{Model: m, Tools: []Tool{long}, MaxTurns: 12}, nil)
-	warned := 0
+	warned, cut := 0, 0
 	for _, msg := range m.seen[len(m.seen)-1] {
 		if msg.Role == "user" && strings.Contains(msg.Content, "turns left") {
 			warned++
 		}
-	}
-	if warned != 2 {
-		t.Fatalf("%d warnings", warned)
-	}
-	sent := m.seen[len(m.seen)-1]
-	var full, cut int
-	for _, msg := range sent {
-		if msg.Role == "tool" {
-			if strings.Contains(msg.Content, "left out to save room") {
-				cut++
-			} else if len(msg.Content) > 5000 {
-				full++
-			}
+		if msg.Role == "tool" && strings.Contains(msg.Content, "left out to save room") {
+			cut++
 		}
 	}
-	if full != keepTurns || cut == 0 {
-		t.Fatalf("%d sent in full, %d cut", full, cut)
+	if warned != 2 || cut != 0 {
+		t.Fatalf("%d warnings, %d results cut", warned, cut)
 	}
 }
 

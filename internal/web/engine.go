@@ -699,9 +699,34 @@ func (s *Server) writeEntry(rs *runState, n workflow.Node, text string, finalize
 	return err
 }
 
-// agentStep runs an agent and waits for it to end.
+// agentStep runs an agent and waits for it to end. A block that continues another's conversation
+// first waits for any run in progress in that conversation to end (for as long as its own time
+// limit), and takes no part, with a note, when the item has no conversation and it is set to skip.
 func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a workflow.AgentSettings, values map[string]string) stepOutcome {
-	id, err := s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by, false)
+	a, err := withSourceModel(rs.g, rs.run.Kind, a)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	limit := time.Duration(a.MaxMinutes) * time.Minute
+	waited := time.Now()
+	var id int64
+	for {
+		id, err = s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
+		if !errors.Is(err, store.ErrConversationBusy) {
+			break
+		}
+		if time.Since(waited) > limit {
+			return stepOutcome{err: fmt.Errorf("waited %d minutes for the run in progress in the conversation to end", a.MaxMinutes)}
+		}
+		select {
+		case <-ctx.Done():
+			return stepOutcome{err: errors.New("stopped waiting for the conversation's run in progress")}
+		case <-time.After(convWait):
+		}
+	}
+	if errors.Is(err, errNoConversation) {
+		return stepOutcome{port: "out", note: errNoConversation.Error()}
+	}
 	if err != nil {
 		return stepOutcome{err: err}
 	}
@@ -709,7 +734,7 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		select {
 		case <-ctx.Done():
 			return stepOutcome{agentRun: id, err: errors.New("the agent did not end in time")}
-		case <-time.After(2 * time.Second):
+		case <-time.After(agentPoll):
 		}
 		run, err := s.st.AgentRun(id)
 		if err != nil {

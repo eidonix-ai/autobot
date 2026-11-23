@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -174,7 +175,8 @@ type TestRun struct {
 	Timeout     time.Duration
 	State       string // queued, running, passed, failed, error
 	Cancel      bool
-	Output      string
+	Output      string // only the last 4 KB: the whole output is in the run's file (RunOutput)
+	OutputSize  int    // bytes of output written; -1 once the output was deleted
 	Summary     string
 	CreatedAt   time.Time
 	StartedAt   time.Time // zero until a machine takes it
@@ -185,7 +187,7 @@ type TestRun struct {
 func (r TestRun) Active() bool { return r.State == "queued" || r.State == "running" }
 
 const runCols = `r.id, r.workspace_id, r.machine_id, m.name, ` + authorName + `, r.script, r.ref, r.commit_sha, r.gpus, r.private, r.session,
-	r.timeout_sec, r.state, r.cancel, r.output, r.summary, r.created_at, r.started_at, r.ended_at`
+	r.timeout_sec, r.state, r.cancel, r.output, r.output_size, r.summary, r.created_at, r.started_at, r.ended_at`
 
 const runFrom = ` FROM test_runs r JOIN machines m ON m.id = r.machine_id LEFT JOIN users u ON u.id = r.started_by`
 
@@ -194,7 +196,7 @@ func scanRun(row scanner) (*TestRun, error) {
 	var timeout, created int64
 	var started, ended sql.NullInt64
 	if err := row.Scan(&r.ID, &r.WorkspaceID, &r.MachineID, &r.MachineName, &r.StartedBy, &r.Script, &r.Ref, &r.Commit, &r.GPUs, &r.Private, &r.Session,
-		&timeout, &r.State, &r.Cancel, &r.Output, &r.Summary, &created, &started, &ended); err != nil {
+		&timeout, &r.State, &r.Cancel, &r.Output, &r.OutputSize, &r.Summary, &created, &started, &ended); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -242,6 +244,10 @@ func (s *Store) queue(m *Machine, script, ref, commit string, private, session b
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	// The id may be a deleted run's (SQLite reuses the highest one): never add to its log.
+	if err := removeFile(s.testLog(id)); err != nil {
+		return nil, err
+	}
 	what := "started test run"
 	if session {
 		what = "opened a session, run"
@@ -305,12 +311,12 @@ func (s *Store) StartRun(id int64) (bool, error) {
 	return n == 1, nil
 }
 
-// AppendOutput adds text to a running run's output while it is under max bytes, and reports
+// AppendOutput adds text to a running run's output file while it is under max bytes, and reports
 // whether the run is still running and whether its output has reached max.
 func (s *Store) AppendOutput(id int64, text string, max int) (running, full bool, err error) {
 	var state string
 	var size int
-	err = s.db.QueryRow(`SELECT state, length(CAST(output AS BLOB)) FROM test_runs WHERE id = ?`, id).Scan(&state, &size)
+	err = s.db.QueryRow(`SELECT state, output_size FROM test_runs WHERE id = ?`, id).Scan(&state, &size)
 	if err != nil || state != "running" {
 		return false, false, err
 	}
@@ -318,10 +324,23 @@ func (s *Store) AppendOutput(id int64, text string, max int) (running, full bool
 		return true, true, nil
 	}
 	text = strings.ToValidUTF8(text, "\uFFFD")
-	if _, err := s.db.Exec(`UPDATE test_runs SET output = output || ? WHERE id = ?`, text, id); err != nil {
+	if err := s.appendGz(s.testLog(id), []byte(text)); err != nil {
+		return false, false, err
+	}
+	if _, err := s.db.Exec(`UPDATE test_runs SET output_size = ? WHERE id = ?`, size+len(text), id); err != nil {
 		return false, false, err
 	}
 	return true, size+len(text) >= max, nil
+}
+
+// RunOutput is a run's whole output, read from its file, and whether any is kept (output older than
+// 30 days is deleted). A run from before output went to files, not yet moved, answers from its row.
+func (s *Store) RunOutput(r *TestRun) (text string, kept bool, err error) {
+	b, err := readGz(s.testLog(r.ID))
+	if errors.Is(err, os.ErrNotExist) {
+		return r.Output, r.Output != "", nil
+	}
+	return string(b), true, err
 }
 
 // RequestCancel asks for a run to stop. A queued run ends at once; a running one stops when its
@@ -337,8 +356,14 @@ func (s *Store) RequestCancel(id int64) error {
 
 // FinishRun records how an active run ended. It does nothing to a run that has already ended.
 func (s *Store) FinishRun(id int64, state, summary string) error {
-	_, err := s.db.Exec(`UPDATE test_runs SET state = ?, summary = ?, ended_at = ? WHERE id = ? AND state IN ('queued', 'running')`,
-		state, summary, now(), id)
+	// The row keeps the end of the output, for summaries; the rest is in the file. It is set with
+	// the state, so anyone who sees the run ended sees the tail too.
+	kept := ""
+	if b, err := readGz(s.testLog(id)); err == nil {
+		kept = tail(string(b), TailKept)
+	}
+	_, err := s.db.Exec(`UPDATE test_runs SET state = ?, summary = ?, ended_at = ?, output = COALESCE(NULLIF(?, ''), output)
+		WHERE id = ? AND state IN ('queued', 'running')`, state, summary, now(), kept, id)
 	return err
 }
 

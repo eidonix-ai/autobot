@@ -426,6 +426,52 @@ func (c *Client) PullRequestFiles(ctx context.Context, token, name string, numbe
 	return out, nil
 }
 
+// Commit is one commit of a comparison.
+type Commit struct {
+	SHA     string
+	Author  string
+	Message string // its first line
+}
+
+// Compare lists the commits that head has and base does not, and the files head changes since base
+// (GitHub's compare, GET only; at most 250 commits and 300 files). An unknown commit is ErrNoRepo.
+func (c *Client) Compare(ctx context.Context, token, name, base, head string) ([]Commit, []ChangedFile, error) {
+	if !refRE.MatchString(base) || !refRE.MatchString(head) || strings.Contains(base+head, "..") {
+		return nil, nil, errors.New("compare needs two commit ids")
+	}
+	var r struct {
+		Commits []struct {
+			SHA    string `json:"sha"`
+			Commit struct {
+				Message string `json:"message"`
+				Author  struct {
+					Name string `json:"name"`
+				} `json:"author"`
+			} `json:"commit"`
+		} `json:"commits"`
+		Files []struct {
+			Filename  string `json:"filename"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+			Patch     string `json:"patch"`
+		} `json:"files"`
+	}
+	if _, err := c.get(ctx, token, "/repos/"+name+"/compare/"+base+"..."+head, &r); err != nil {
+		return nil, nil, err
+	}
+	var commits []Commit
+	for _, k := range r.Commits {
+		first, _, _ := strings.Cut(k.Commit.Message, "\n")
+		commits = append(commits, Commit{k.SHA, k.Commit.Author.Name, first})
+	}
+	var files []ChangedFile
+	for _, f := range r.Files {
+		files = append(files, ChangedFile{f.Filename, f.Status, f.Additions, f.Deletions, f.Patch})
+	}
+	return commits, files, nil
+}
+
 // Diff writes a pull request's changes as one unified diff, from its files' patches.
 func Diff(files []ChangedFile) string {
 	var b strings.Builder

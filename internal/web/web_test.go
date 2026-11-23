@@ -83,6 +83,10 @@ func (fakeGitHub) PullRequestFiles(context.Context, string, string, int) ([]gith
 	return []github.ChangedFile{{Path: "upload.go", Status: "modified", Additions: 3, Deletions: 1, Patch: "@@ -1 +1,3 @@\n-retry(3)\n+for {\n+  retry()\n+}"}}, nil
 }
 
+func (fakeGitHub) Compare(context.Context, string, string, string, string) ([]github.Commit, []github.ChangedFile, error) {
+	return nil, nil, errors.New("no comparison in this fake")
+}
+
 func (fakeGitHub) Comments(context.Context, string, string, int) ([]github.Comment, error) {
 	return nil, nil
 }

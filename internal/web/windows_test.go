@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
@@ -106,4 +108,25 @@ func requestTools(t *testing.T, body string) []string {
 		out = append(out, tl.Function.Name)
 	}
 	return out
+}
+
+// At start, a permitted model without a window gets the one its provider's model list gives; a
+// window someone set is kept.
+func TestWindowsFilledAtStart(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"big","context_window":1048576},{"id":"set","context_window":1048576},{"id":"silent"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	p, err := e.st.CreateProvider(store.ProviderEdit{Name: "P", Kind: store.KindOpenAI, Endpoint: srv.URL, Key: "k"}, derek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.st.SetProviderModels(p.ID, []string{"big", "set", "silent"})
+	e.st.SetModelWindows(p.ID, map[string]int{"set": 64000})
+	e.ui.CheckRoutes(context.Background())
+	if got, _ := e.st.ModelWindows(p.ID); len(got) != 2 || got["big"] != 1048576 || got["set"] != 64000 {
+		t.Fatalf("windows %v", got)
+	}
 }

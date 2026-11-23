@@ -319,6 +319,12 @@ func (s *Server) CheckRoutes(ctx context.Context) {
 		return
 	}
 	for _, p := range all {
+		if store.SearchKind(p.Kind) {
+			continue
+		}
+		if err := s.fillWindows(ctx, p); err != nil {
+			log.Printf("reading the context windows of provider %d: %v", p.ID, err)
+		}
 		if p.Kind != store.KindOpenAI {
 			continue
 		}
@@ -326,6 +332,45 @@ func (s *Server) CheckRoutes(ctx context.Context) {
 			log.Printf("checking decision routes of provider %d: %v", p.ID, err)
 		}
 	}
+}
+
+// fillWindows sets the context window of each permitted model that has none, from what the
+// provider's model list says; a window someone set is kept. Without it an agent would assume a
+// small window and compact far too early.
+func (s *Server) fillWindows(ctx context.Context, p *store.Provider) error {
+	p, err := s.st.Provider(p.ID) // with its permitted models
+	if err != nil {
+		return err
+	}
+	known, err := s.st.ModelWindows(p.ID)
+	if err != nil {
+		return err
+	}
+	missing := false
+	for _, m := range p.Models {
+		missing = missing || known[m] == 0
+	}
+	if !missing {
+		return nil
+	}
+	key, err := s.st.ProviderKey(p.ID)
+	if err != nil {
+		return err
+	}
+	found, err := providers.Discover(ctx, p.Kind, p.Endpoint, key)
+	if err != nil {
+		return err
+	}
+	set := map[string]int{}
+	for _, m := range found {
+		if m.Window > 0 && known[m.ID] == 0 {
+			set[m.ID] = m.Window
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return s.st.SetModelWindows(p.ID, set)
 }
 
 // recheckRoutes is the provider page's "Check again".

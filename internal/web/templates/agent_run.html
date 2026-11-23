@@ -3,10 +3,22 @@
 <h1>{{.Run.NodeName}}{{if .Run.Test}} <span class="muted">test</span>{{end}}</h1>
 <div id="run-head" data-live>
 <p class="status"><span class="dot {{.Dot}}"></span> {{.Outcome}} · {{.Run.Model}} · {{.T.Turns}} turn{{if ne .T.Turns 1}}s{{end}} · {{.T.In}} tokens in{{with .Cache}} ({{.}}){{end}}, {{.T.Out}} out · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if not .Run.FinishedAt.IsZero}}, took {{.Took}}{{end}}</p>
+{{with .WriterLine}}<p class="status muted">{{.}}</p>{{end}}
 {{with .T.Error}}<p class="error">{{.}}</p>{{end}}
 {{if .Report}}<section class="panel"><h2>Report</h2><div class="md">{{.Report}}</div></section>{{end}}
 {{if .T.Plan}}<section class="panel"><h2>Plan</h2><ul class="plan">{{range .T.Plan}}<li class="{{.Status}}">{{.Step}}{{with .Note}} <span class="muted">({{.}})</span>{{end}}</li>{{end}}</ul></section>{{end}}
 </div>
+{{if .HasPad}}
+<section class="panel"><h2>Scratchpad</h2>
+<ol class="pad" id="run-pad" data-live data-live-list>
+{{range .Pad}}
+<li class="{{.Importance}}"><details><summary><span class="muted">#{{.N}} · {{.Importance}} · {{.Author}}</span> {{.Title}}{{with .Description}} <span class="muted">— {{.}}</span>{{end}}</summary><pre>{{.Body}}</pre></details></li>
+{{else}}
+<li class="muted">No notes yet.</li>
+{{end}}
+</ol>
+</section>
+{{end}}
 <section class="panel"><h2>Transcript</h2>
 {{if .Gone}}<p class="muted">The conversation was deleted: its pull request or issue closed more than 30 days ago.</p>{{end}}
 {{if and (gt .Run.MsgsFrom 0) (not .Gone)}}<p class="muted">This run continues a conversation: its first {{.Run.MsgsFrom}} messages are from earlier runs.</p>{{end}}
@@ -20,5 +32,18 @@
 {{end}}
 </ol>
 </section>
+{{if .Run.WriterConversation}}
+<section class="panel"><h2>Writing the report</h2>
+<ol class="transcript" id="run-writing" data-live data-live-list>
+{{range .Writing}}
+<li class="{{.Role}}">
+  {{if .Collapsed}}<details><summary>{{.Label}}</summary><pre>{{.Text}}</pre></details>
+  {{else}}<div class="who">{{.Label}}{{with .Usage}} <span class="muted">{{.}}</span>{{end}}</div>{{with .Text}}<pre>{{.}}</pre>{{end}}{{end}}
+  {{range .Calls}}<div class="call"><code>{{.Name}}</code> <span class="muted">{{.Args}}</span></div>{{end}}
+</li>
+{{end}}
+</ol>
+</section>
+{{end}}
 {{end}}
 {{define "head"}}{{if eq .Run.Status "running"}}<script src="/static/live.js"></script>{{end}}{{end}}

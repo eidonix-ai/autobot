@@ -9,6 +9,14 @@
   var every = 3000;
   var self = document.currentScript && document.currentScript.getAttribute('src');
 
+  // The markup of an item, as the page was sent: a details a person has opened is still the same item.
+  function markup(el) {
+    var copy = el.cloneNode(true);
+    copy.querySelectorAll('details[open]').forEach(function (d) { d.removeAttribute('open'); });
+    if (copy.hasAttribute('open')) copy.removeAttribute('open');
+    return copy.outerHTML;
+  }
+
   function sync(old, next) {
     if (!old.hasAttribute('data-live-list')) {
       if (old.innerHTML !== next.innerHTML) old.innerHTML = next.innerHTML;
@@ -17,7 +25,7 @@
     var have = old.children, want = next.children;
     for (var i = 0; i < want.length; i++) {
       if (i >= have.length) old.appendChild(document.importNode(want[i], true));
-      else if (have[i].outerHTML !== want[i].outerHTML) old.replaceChild(document.importNode(want[i], true), have[i]);
+      else if (markup(have[i]) !== markup(want[i])) old.replaceChild(document.importNode(want[i], true), have[i]);
     }
     while (have.length > want.length) old.removeChild(old.lastElementChild);
   }

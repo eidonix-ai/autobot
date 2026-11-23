@@ -6,14 +6,14 @@
   <input type="hidden" name="version" value="">
   <div class="row">
     <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
-    <label data-when-alone{{if .S.ContinueOf}} hidden{{end}}>Model
-      <select name="model">
+    <label>Model
+      <select name="model" data-model>
         {{if not .Models}}<option value="">No text models are assigned</option>{{end}}
         {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
     <label>Preset
       <select name="persona" data-preset>
-        {{range .Presets}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
+        {{range .Presets}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}" data-closing="{{.Closing}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
         <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
       </select></label>
   </div>
@@ -23,8 +23,7 @@
         <option value="">None</option>
         {{range .Sources}}<option value="{{.ID}}" data-model="{{.Model}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
       </select></label>
-    <label data-when-continuing{{if not .S.ContinueOf}} hidden{{end}}>Model <input value="{{.SourceModel}}" readonly data-source-model></label>
-    <label data-when-continuing{{if not .S.ContinueOf}} hidden{{end}}>If this item has no earlier conversation
+    <label data-when-continuing{{if not .S.ContinueOf}} hidden{{end}}>If this item has no earlier report
       <select name="no_conversation">
         <option value="skip"{{if ne .S.NoConversation "fresh"}} selected{{end}}>Skip</option>
         <option value="fresh"{{if eq .S.NoConversation "fresh"}} selected{{end}}>Start fresh</option>
@@ -36,6 +35,13 @@
     <textarea name="system_prompt" rows="3" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
   <label><span class="lbl">Done when <span class="info" tabindex="0" data-tip="The goal. The agent can only finish once it is met, or by saying why it cannot be.">ⓘ</span></span>
     <textarea name="goal" rows="2" class="code" spellcheck="false" required{{if .Locked}} readonly{{end}}>{{.Goal}}</textarea></label>
+  <div class="row">
+    <label><span class="lbl">Closing step <span class="info" tabindex="0" data-tip="The preset's, read-only. Write the report: research notes go to the scratchpad, and a fresh session writes the report from them.">ⓘ</span></span>
+      <select name="closing" data-closing{{if .Locked}} disabled{{end}}>
+        <option value=""{{if eq .Closing ""}} selected{{end}}>None: finish delivers the output</option>
+        <option value="report"{{if eq .Closing "report"}} selected{{end}}>Write the report from the scratchpad</option>
+      </select></label>
+  </div>
   <details class="tags"><summary>What every agent is told first</summary><pre class="entry">{{.Preamble}}</pre></details>
   {{template "tags" .}}
   <div class="row">
@@ -59,6 +65,7 @@
   </div>
   <div class="row">
     <label>Turn limit <input type="number" name="max_turns" min="1" max="500" value="{{.S.MaxTurns}}"></label>
+    <label data-when-report{{if ne .Closing "report"}} hidden{{end}}>Turns to write the report <input type="number" name="report_turns" min="1" max="200" value="{{.ReportTurns}}"></label>
     <label>Time limit (minutes) <input type="number" name="max_minutes" min="1" max="240" value="{{.S.MaxMinutes}}"></label>
   </div>
   <fieldset>

@@ -763,7 +763,7 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 	var id int64
 	for {
 		id, err = s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
-		if !errors.Is(err, store.ErrConversationBusy) {
+		if !errors.Is(err, store.ErrThreadBusy) {
 			break
 		}
 		if time.Since(waited) > limit {

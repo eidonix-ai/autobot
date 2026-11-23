@@ -79,7 +79,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}
 	prTools := false
 	var pull *agent.PR
-	var fresh string // what is new since the thread's last run, for its opening message
+	var fresh string   // what is new since the thread's last run, for its opening message
 	seen := time.Now() // what the run reads of the item, it reads from here on
 	if m := prLinkRE.FindStringSubmatch(values["pr"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])

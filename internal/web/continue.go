@@ -48,6 +48,9 @@ func (s *Server) chooseThread(ws *store.Workspace, kind string, n workflow.Node,
 	case a.Continues():
 		th, err = s.st.LatestThread(ws.ID, kind, a.ContinueOf, item)
 		if err == nil {
+			if busy, berr := s.st.ThreadRunning(th.ID); berr != nil || busy {
+				return nil, errors.Join(berr, store.ErrThreadBusy) // wait for its report
+			}
 			// The other block has run, but with nothing to continue from if it ended with no report.
 			if _, ok, rerr := s.st.Pad(th.ID).LastReport(); rerr != nil || !ok {
 				err = store.ErrNotFound

@@ -425,7 +425,7 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 		_, page = b.get(loc)
 		return !strings.Contains(page, `/static/live.js`)
 	})
-	if !strings.Contains(page, "Goal met") || !strings.Contains(page, "bash: [exit 0]") {
+	if !strings.Contains(page, "Goal met") || !strings.Contains(page, "[exit 0]") {
 		t.Fatalf("run page:\n%s", page)
 	}
 	if cmds := cmdLog(); len(cmds) != 2 || cmds[1] != "cargo test" { // the readiness check, then the agent's

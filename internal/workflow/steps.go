@@ -234,7 +234,7 @@ func (s AgentSettings) Check(kind string) error {
 	case !s.Model.Set() && !s.Continues():
 		return errors.New("choose a model")
 	case s.NoConversation != "" && s.NoConversation != "skip" && s.NoConversation != "fresh":
-		return errors.New("choose what to do when the item has no earlier conversation")
+		return errors.New("choose what to do when the item has no earlier report")
 	case PersonaOf(s.Persona) == nil && s.Persona != "custom":
 		return errors.New("choose a preset, or Custom")
 	case strings.TrimSpace(s.EffectiveInstruction(kind)) == "":

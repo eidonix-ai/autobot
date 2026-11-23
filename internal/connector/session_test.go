@@ -33,8 +33,8 @@ func TestCapWriter(t *testing.T) {
 	if !strings.HasPrefix(got, strings.Repeat("0123456789", 5)) || !strings.HasSuffix(got, "89THE END") || !strings.Contains(got, "9907 bytes of output left out") {
 		t.Fatalf("%q", got)
 	}
-	if len(got) > 100+60 {
-		t.Fatalf("%d bytes kept", len(got))
+	if len(got) > 100+60 || len(w.head)+len(w.tail) > 200 {
+		t.Fatalf("%d bytes shown, %d kept in memory", len(got), len(w.head)+len(w.tail))
 	}
 	// Exactly at the cap nothing is left out; one write larger than the cap is cut too.
 	w = newCapWriter(100)

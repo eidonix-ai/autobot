@@ -119,6 +119,7 @@ func TestSessionCommandsGuarded(t *testing.T) {
 	}
 	e.req(t, "POST", tokP, "/connector/v1/heartbeat", idleStatus)
 	pr, _ := e.st.ActiveRun(plain.ID)
+	e.ui.sessions.open(pr.ID) // even if a queue existed for it
 	if code, _ := e.req(t, "GET", tokP, fmt.Sprintf("/connector/v1/runs/%d/commands", pr.ID), nil); code != http.StatusNotFound {
 		t.Fatalf("commands of an ordinary run: %d", code)
 	}
@@ -151,6 +152,22 @@ func TestSessionCommandsGuarded(t *testing.T) {
 	}
 	if code, _ := e.req(t, "GET", tok7, path, nil); code != http.StatusNotFound {
 		t.Fatalf("commands of a finished session: %d", code)
+	}
+
+	// Stopped from its run page, a session serves nothing more, though its agent has not noticed yet.
+	stopped, err := e.ui.OpenSession(cn7, "", "", false, 0, time.Hour, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopped.Close()
+	e.req(t, "POST", tok7, "/connector/v1/heartbeat", idleStatus)
+	stoppedPath := fmt.Sprintf("/connector/v1/runs/%d/commands", stopped.RunID())
+	e.st.RequestCancel(stopped.RunID())
+	if code, _ := e.req(t, "GET", tok7, stoppedPath, nil); code != http.StatusNotFound {
+		t.Fatalf("commands of a session whose stop was asked for: %d", code)
+	}
+	if code, _ := e.req(t, "POST", tok7, stoppedPath+"/c1/result", protocol.CommandResult{}); code != http.StatusNotFound {
+		t.Fatalf("a result for a session whose stop was asked for: %d", code)
 	}
 
 	// A session that ends on its own (its machine went quiet) while its queue still exists: a run
@@ -369,7 +386,10 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 	a := workflow.DefaultAgent(workflow.PR)
 	a.Model, a.Internet, a.Machines = workflow.ModelRef{Provider: p.ID, Model: "m"}, false, []int64{cn7.ID}
 	raw, _ := json.Marshal(a)
-	g, _ := json.Marshal(workflow.Graph{Nodes: []workflow.Node{{ID: "ag", Type: workflow.Agent, Name: "Tester", Settings: raw}}, Links: []workflow.Link{}})
+	a.Verify = workflow.ModelRef{Provider: p.ID, Model: "not-lent"} // its start fails after the session is queued
+	rawBad, _ := json.Marshal(a)
+	g, _ := json.Marshal(workflow.Graph{Nodes: []workflow.Node{{ID: "ag", Type: workflow.Agent, Name: "Tester", Settings: raw},
+		{ID: "bad", Type: workflow.Agent, Name: "Broken", Settings: rawBad}}, Links: []workflow.Link{}})
 	if _, err := e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(g), derek); err != nil {
 		t.Fatal(err)
 	}
@@ -388,6 +408,14 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 
 	_, cmdLog := e.fakeConnector(t, tok7)
 	waitFor(t, "the connector to check in", func() bool { _, on := e.ui.live.get(cn7.ID); return on })
+	// An agent that fails to start after its session was queued closes it.
+	if code, _, body := b.post("/w/o/r/workflows/pr/nodes/bad/test", form); code != http.StatusBadRequest || !strings.Contains(body, "the check") {
+		t.Fatalf("a broken agent: %d\n%s", code, body)
+	}
+	waitFor(t, "the session of the agent that failed to start to be closed", func() bool {
+		runs, _ := e.st.Runs(cn7.ID, 5)
+		return len(runs) == 1 && runs[0].Session && !runs[0].Active()
+	})
 	code, loc, body := b.post(base, form)
 	if code != http.StatusSeeOther {
 		t.Fatalf("start: %d\n%s", code, body)
@@ -413,7 +441,7 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 	// The session was closed: its run ended, and the machine is free again.
 	waitFor(t, "the session to be closed", func() bool {
 		runs, _ := e.st.Runs(cn7.ID, 5)
-		return len(runs) == 1 && runs[0].Session && !runs[0].Active()
+		return len(runs) == 2 && runs[0].Session && !runs[0].Active()
 	})
 }
 

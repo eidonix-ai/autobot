@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/index"
 	"github.com/eidonix-ai/autobot/internal/store"
 )
 
@@ -144,6 +145,9 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	data["GH"], data["GHLogin"] = gh, login
 	data["SecretPath"], data["NewSecret"] = SecretPath, newSecret()
 	s.discordSettings(r, ws, data)
+	if st, err := index.StatusOf(s.st, ws.ID); err == nil {
+		data["Index"] = st
+	}
 
 	s.render(w, r, status, "settings.html", data)
 }

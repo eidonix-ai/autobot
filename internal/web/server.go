@@ -24,6 +24,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/index"
 	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/yuin/goldmark"
@@ -78,6 +79,7 @@ type GitHub interface {
 	Role(ctx context.Context, token, name, user string) (string, error)
 	DefaultBranch(ctx context.Context, token, name string) (string, error)
 	agent.Reader
+	index.Source // what the local copy of pull requests and issues reads (see Index)
 }
 
 // New builds the web interface.

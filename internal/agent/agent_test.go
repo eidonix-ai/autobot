@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -199,15 +200,15 @@ func TestBudgetWarningAndTrimming(t *testing.T) {
 
 // One turn runs at most maxCalls tool calls; the rest are refused, to be made next turn.
 func TestCallsPerTurn(t *testing.T) {
-	runs := 0
-	tool := Tool{Spec: ToolSpec{Name: "t"}, Run: func(context.Context, json.RawMessage) (string, error) { runs++; return "ok", nil }}
+	var runs atomic.Int32 // the calls of one turn run at the same time
+	tool := Tool{Spec: ToolSpec{Name: "t"}, Run: func(context.Context, json.RawMessage) (string, error) { runs.Add(1); return "ok", nil }}
 	var many []Message
 	for i := 0; i < maxCalls+5; i++ {
 		many = append(many, call(fmt.Sprint(i), "t", `{}`))
 	}
 	m := &script{replies: []Message{calls(many...), call("f", "finish", `{"status":"met","report":"done"}`)}}
 	Run(context.Background(), Config{Model: m, Tools: []Tool{tool}, MaxTurns: 5}, nil)
-	if runs != maxCalls || !strings.Contains(last(m.seen[1]), "next turn") {
-		t.Fatalf("%d calls ran", runs)
+	if runs.Load() != maxCalls || !strings.Contains(last(m.seen[1]), "next turn") {
+		t.Fatalf("%d calls ran", runs.Load())
 	}
 }

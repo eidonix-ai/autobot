@@ -36,6 +36,19 @@ limits sign-ins per address and connections and sizes. The config from before it
 The old harness's `triage.service` and `donor-hub.service` were stopped and disabled on 2026-11-22
 (Derek's OK); their data is still in `/var/lib/triage`. Don't delete it without asking.
 
+## Local copy of the code
+
+`internal/repo` keeps one lean bare git mirror per workspace in `<data dir>/repos/<workspace id>.git`:
+the default branch and the heads of the open pull requests only (files over 1 MB are fetched only when
+read). `autobot serve` syncs it every 10 minutes (failures back off 2 to 60 minutes), asking GitHub
+which pull requests are open (an ETag list); a closed pull request loses its ref, and once a day the
+mirror is rebuilt without the objects only closed ones used (plain `git gc` cannot do this in a
+partial clone). A run on a pull request fetches just that head. The workspace's Settings page shows the
+last fetch, size and any error. Agents get `list_files`, `read_file`, `search_code`, `search_history`,
+`repo_overview` and `pr_diff` over it instead of GitHub API calls; with no mirror yet they read through
+GitHub as before. It runs the system `git` (the host needs it installed); the workspace's token reaches
+git only through its environment, never a command line or the mirror's config.
+
 ## Pieces
 
 1. Users and workspaces, the project charter, first-time admin setup in the browser, workspace

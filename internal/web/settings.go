@@ -144,6 +144,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	data["GH"], data["GHLogin"] = gh, login
 	data["SecretPath"], data["NewSecret"] = SecretPath, newSecret()
 	s.discordSettings(r, ws, data)
+	s.repoSettings(ws, data)
 
 	s.render(w, r, status, "settings.html", data)
 }

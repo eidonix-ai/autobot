@@ -25,6 +25,7 @@ import (
 	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/netguard"
+	"github.com/eidonix-ai/autobot/internal/repo"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -53,6 +54,7 @@ type Server struct {
 	ready     atomic.Bool // set once a user exists; users are never deleted, so it never goes back
 	fails     loginFails  // failed sign-ins by account
 	poll      *poller     // what the poller remembers in memory
+	repos     *repo.Mirrors
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.

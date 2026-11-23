@@ -270,6 +270,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		token = id.Token
 	}
 	prTools := false
+	var pull *agent.PR
 	if m := prLinkRE.FindStringSubmatch(values["pr_link"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])
 		info, err := s.gh.PullRequest(ctx, token, ws.Name, num)
@@ -281,7 +282,8 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 			return 0, fmt.Errorf("reading pull request #%d's files: %v", num, err)
 		}
 		item, commit, prTools = num, info.HeadSHA, true
-		cfg.Tools = append(cfg.Tools, agent.PRTools(&agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files})...)
+		pull = &agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files}
+		cfg.Tools = append(cfg.Tools, agent.PRTools(pull)...)
 	}
 	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
 	// request's head, or the default branch's) instead of through GitHub.
@@ -302,6 +304,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		}
 		cfg.Tools = append(cfg.Tools, agent.SandboxTools(sess)...)
 	}
+	cfg.Tools = s.withLocalCode(ctx, ws, token, pull, sess != nil, cfg.Tools) // the code from Autobot's own copy, when it has one
 	if a.Internet {
 		searcher, err := s.searcher(ws)
 		if err != nil {

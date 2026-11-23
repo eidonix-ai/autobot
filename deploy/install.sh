@@ -11,6 +11,7 @@ scp -q deploy/autobot.service "$host":autobot.service.new
 rm -f /tmp/autobot-linux
 
 ssh "$host" 'set -eu
+command -v git >/dev/null || echo "warning: git is not installed on this host; agents will read code through GitHub (sudo apt-get install git)"
 id autobot >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/autobot --no-create-home --shell /usr/sbin/nologin autobot
 if ! sudo test -f /etc/autobot/secret.key; then
 	sudo install -d -m 0700 -o root -g root /etc/autobot

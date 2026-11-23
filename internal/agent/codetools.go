@@ -29,7 +29,7 @@ type LocalPR struct {
 	Files  []string // the paths it changes
 }
 
-const refHelp = `a commit id, "main" (or the default branch's name) or "pr/<number>" for a pull request's head`
+const refHelp = `a commit id, main (or the default branch's name), or pr/<number> for a pull request's head`
 
 // CodeTools read the repository from Autobot's own local copy: files, search, history and the pull
 // request's diff, with no machine and no GitHub calls. With a pull request they read at its head,

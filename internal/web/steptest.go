@@ -115,7 +115,13 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		about[tag.Name] = tag.About
 	}
 	var fields []tagField
-	seen := map[string]bool{}
+	// What a link to the item gives is read from it, as a workflow run does: only the link is asked.
+	seen := map[string]bool{"repo": true, "project_charter": true, "case_file": true, "case_link": true}
+	for _, t := range workflow.Tags(kind) {
+		if t.Name != "pr_link" && t.Name != "issue_link" && (strings.HasPrefix(t.Name, "pr_") || strings.HasPrefix(t.Name, "issue_")) {
+			seen[t.Name] = true
+		}
+	}
 	for _, tpl := range templates {
 		for _, tag := range workflow.TemplateTags(tpl) {
 			if seen[tag] {
@@ -151,6 +157,11 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data := map[string]any{}
+	if err := s.fillFromItem(r.Context(), ws, values); err != nil {
+		data["Error"] = err.Error() + "."
+		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, values, data)
+		return
+	}
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
@@ -523,3 +534,45 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 		"Took": run.FinishedAt.Sub(run.StartedAt).Round(time.Second).String()}
 	s.render(w, r, http.StatusOK, "agent_run.html", data)
 }
+
+// fillFromItem fills a test's tags the way a workflow run does: from the pull request or issue its
+// link names (title, description, author, files, diff…), the workspace's repository and charter,
+// and the item's case file. Values the person typed are kept.
+func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values map[string]string) error {
+	set := func(k, v string) {
+		if values[k] == "" {
+			values[k] = v
+		}
+	}
+	set("repo", ws.Name)
+	if c, err := s.st.Charter(ws.ID, 0); err == nil {
+		set("project_charter", c.Body)
+	}
+	kind, link := workflow.PR, values["pr_link"]
+	if link == "" {
+		kind, link = workflow.Issue, values["issue_link"]
+	}
+	m := itemLinkRE.FindStringSubmatch(link)
+	if link == "" {
+		return nil
+	}
+	if m == nil || !strings.EqualFold(m[1], ws.Name) {
+		return fmt.Errorf("the link must be to a pull request or issue of %s", ws.Name)
+	}
+	number, _ := strconv.Atoi(m[3])
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	it, err := s.loadItem(ctx, ws, kind, number)
+	if err != nil {
+		return fmt.Errorf("reading #%d from GitHub: %v", number, err)
+	}
+	for k, v := range it.values(ws) {
+		set(k, v)
+	}
+	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
+		set("case_file", c.Contents)
+	}
+	return nil
+}
+
+var itemLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/(pull|issues)/(\d+)`)

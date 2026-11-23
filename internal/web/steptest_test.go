@@ -78,13 +78,12 @@ func TestBlockTests(t *testing.T) {
 	base := "/w/o/r/workflows/pr/nodes/"
 
 	// The form asks for each tag the block uses, with the workspace's own values filled in.
-	if code, body := b.get(base + "ag/test"); code != 200 || !strings.Contains(body, `name="tag_pr_link"`) || !strings.Contains(body, `name="tag_pr_body"`) {
+	if code, body := b.get(base + "ag/test"); code != 200 || !strings.Contains(body, `name="tag_pr_link"`) || strings.Contains(body, `name="tag_pr_body"`) {
 		t.Fatalf("agent form %d:\n%s", code, body)
 	}
 
 	// An agent run reads the pull request through its tools and finishes with its report.
-	code, loc, _ := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/o/r/pull/7"},
-		"tag_pr_title": {"Retry uploads"}, "tag_pr_body": {"x"}})
+	code, loc, _ := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/o/r/pull/7"}})
 	if code != http.StatusSeeOther || !strings.HasPrefix(loc, "/w/o/r/agent-runs/") {
 		t.Fatalf("start: %d %q", code, loc)
 	}
@@ -100,6 +99,9 @@ func TestBlockTests(t *testing.T) {
 		t.Fatalf("run page:\n%s", body)
 	}
 	all := strings.Join(seen(), "\n")
+	if !strings.Contains(all, "Title: Retry uploads") { // filled from the link, as a workflow run would
+		t.Fatal("the title was not read from the pull request's link")
+	}
 	if !strings.Contains(all, `retry()`) || !strings.Contains(all, "Done when:") || !strings.Contains(all, "to gather the facts that will start its case file") {
 		t.Fatal("the model did not get the diff, the goal or the persona")
 	}

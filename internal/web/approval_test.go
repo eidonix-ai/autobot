@@ -30,7 +30,6 @@ func approvalWorkflow(t *testing.T, e *env, ws *store.Workspace, by *store.User)
 	}
 }
 
-
 // A request goes to the case's Discord post; Discord's signed click from a person answers it, a
 // bot's or a forged one does not, and the first answer wins. The run then takes that branch.
 func TestApprovalOnDiscord(t *testing.T) {

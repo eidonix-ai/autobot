@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -163,14 +164,87 @@ func (s *Store) AgentRun(id int64) (*AgentRun, error) {
 }
 
 // StopOrphanRuns marks runs left running by an earlier Autobot process as failed: whatever ran
-// them is gone. A session's commands are queued in memory, so a session left over from the last
-// process is ended too (its connector is told to stop at its next check-in). Call it once at
-// start, before any run begins.
+// them is gone. A run that took notes in its thread since it started, and has no report of its own
+// kept there, gets the notes as its report (the high and medium ones in order), which is also kept in
+// the thread as its newest report, so that what continues the thread has something to open with. A
+// session's commands are queued in memory, so a session left over from the last process is ended too
+// (its connector is told to stop at its next check-in). Call it once at start, before any run begins.
 func (s *Store) StopOrphanRuns() error {
+	if err := s.reportOrphans(); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`UPDATE agent_runs SET status = 'failed', finished_at = ? WHERE status = 'running'`, now()); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`UPDATE test_runs SET state = 'error', summary = 'Autobot restarted: the session ended.', ended_at = ?
 		WHERE session = 1 AND state IN ('queued', 'running')`, now())
 	return err
+}
+
+// reportOrphans gives each running run with notes of its own, and no report, a notes report.
+func (s *Store) reportOrphans() error {
+	rows, err := s.db.Query(`SELECT id, thread, summary, started_at FROM agent_runs WHERE status = 'running' AND thread != 0`)
+	if err != nil {
+		return err
+	}
+	type orphan struct {
+		id, thread, started int64
+		summary             string
+	}
+	var orphans []orphan
+	for rows.Next() {
+		var o orphan
+		if err := rows.Scan(&o.id, &o.thread, &o.summary, &o.started); err != nil {
+			rows.Close()
+			return err
+		}
+		orphans = append(orphans, o)
+	}
+	rows.Close()
+	for _, o := range orphans {
+		entries, err := s.Pad(o.thread).List()
+		if err != nil {
+			return err
+		}
+		var mine []PadEntry // what the run wrote since it started
+		hasReport := false
+		for _, e := range entries {
+			if e.At.Unix() >= o.started {
+				mine = append(mine, e)
+				hasReport = hasReport || e.Report
+			}
+		}
+		report := NotesText(mine)
+		if hasReport || report == "" {
+			continue
+		}
+		var sum map[string]any
+		if json.Unmarshal([]byte(o.summary), &sum) != nil || sum == nil {
+			sum = map[string]any{}
+		}
+		sum["report"] = report
+		if sum["outcome"] == nil {
+			sum["outcome"] = "failed"
+		}
+		if sum["error"] == nil || sum["error"] == "" {
+			sum["error"] = "Autobot restarted while it ran."
+		}
+		b, _ := json.Marshal(sum)
+		if _, err := s.db.Exec(`UPDATE agent_runs SET summary = ? WHERE id = ?`, string(b), o.id); err != nil {
+			return err
+		}
+		if _, err := s.Pad(o.thread).Add(PadEntry{Title: ReportTitle(o.id), Importance: High, Description: firstLineOf(report, 160), Body: report, Report: true}); err != nil && !errors.Is(err, ErrThreadGone) {
+			return err
+		}
+	}
+	return nil
+}
+
+// firstLineOf is the first line of a text, at most n characters.
+func firstLineOf(s string, n int) string {
+	first, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+	if r := []rune(first); len(r) > n {
+		first = string(r[:n]) + "…"
+	}
+	return first
 }

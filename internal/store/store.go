@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -359,3 +359,45 @@ CREATE TABLE discord_channels (
 // The Discord webhook channels of schemaV12 are gone: Discord is reached through a bot instead
 // (Derek, 2026-11-23), which can post into a case's forum post, show buttons and read mentions.
 const schemaV13 = `DROP TABLE discord_channels;`
+
+// Workflow runs: one run of a workflow on one pull request or issue, from one event node. The run
+// keeps the workflow as it was when it started (later edits do not change a run under way), and
+// each step's state, port and output as it goes, so a run can be read back, and later resumed.
+// A case's values are its steps' output tags: one value per name, replaced by every write.
+const schemaV14 = `
+CREATE TABLE workflow_runs (
+	id           INTEGER PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	kind         TEXT    NOT NULL,
+	event_node   TEXT    NOT NULL,
+	item         INTEGER NOT NULL,
+	dry_run      INTEGER NOT NULL DEFAULT 0,
+	graph        TEXT    NOT NULL,
+	status       TEXT    NOT NULL,
+	note         TEXT    NOT NULL DEFAULT '',
+	started_by   INTEGER REFERENCES users(id),
+	started_at   INTEGER NOT NULL,
+	finished_at  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX workflow_runs_item ON workflow_runs (workspace_id, kind, item);
+CREATE TABLE workflow_steps (
+	run_id      INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+	node_id     TEXT    NOT NULL,
+	status      TEXT    NOT NULL,
+	port        TEXT    NOT NULL DEFAULT '',
+	output      TEXT    NOT NULL DEFAULT '',
+	error       TEXT    NOT NULL DEFAULT '',
+	agent_run   INTEGER NOT NULL DEFAULT 0,
+	started_at  INTEGER NOT NULL DEFAULT 0,
+	finished_at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (run_id, node_id)
+);
+CREATE TABLE case_values (
+	case_uuid  TEXT    NOT NULL REFERENCES cases(uuid) ON DELETE CASCADE,
+	name       TEXT    NOT NULL,
+	value      TEXT    NOT NULL,
+	node_id    TEXT    NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (case_uuid, name)
+);
+`

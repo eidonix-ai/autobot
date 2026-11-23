@@ -240,6 +240,9 @@ type Item struct {
 	Kind   string // "pr" or "issue"
 	Title  string
 	State  string // "open" or "closed"
+	Body   string
+	Author string
+	URL    string // its page on GitHub
 }
 
 // Item reads issue or pull request number of owner/repo.
@@ -248,7 +251,12 @@ func (c *Client) Item(ctx context.Context, token, name string, number int) (*Ite
 		Number      int       `json:"number"`
 		Title       string    `json:"title"`
 		State       string    `json:"state"`
+		Body        string    `json:"body"`
+		HTMLURL     string    `json:"html_url"`
 		PullRequest *struct{} `json:"pull_request"`
+		User        struct {
+			Login string `json:"login"`
+		} `json:"user"`
 	}
 	if _, err := c.get(ctx, token, fmt.Sprintf("/repos/%s/issues/%d", name, number), &it); err != nil {
 		if errors.Is(err, ErrNoRepo) {
@@ -260,7 +268,7 @@ func (c *Client) Item(ctx context.Context, token, name string, number int) (*Ite
 	if it.PullRequest != nil {
 		kind = "pr"
 	}
-	return &Item{Number: it.Number, Kind: kind, Title: it.Title, State: it.State}, nil
+	return &Item{Number: it.Number, Kind: kind, Title: it.Title, State: it.State, Body: it.Body, Author: it.User.Login, URL: it.HTMLURL}, nil
 }
 
 // File reads a file from owner/repo's default branch, up to 64 KB. A missing file is ErrNoRepo.
@@ -288,6 +296,7 @@ type PullRequest struct {
 	Body    string
 	Author  string
 	Draft   bool
+	State   string // "open" or "closed"
 	HeadSHA string
 	Base    string // the branch it merges into
 }
@@ -300,6 +309,7 @@ func (c *Client) PullRequest(ctx context.Context, token, name string, number int
 		Title   string `json:"title"`
 		Body    string `json:"body"`
 		Draft   bool   `json:"draft"`
+		State   string `json:"state"`
 		User    struct {
 			Login string `json:"login"`
 		} `json:"user"`
@@ -317,7 +327,7 @@ func (c *Client) PullRequest(ctx context.Context, token, name string, number int
 		return nil, err
 	}
 	return &PullRequest{Number: pr.Number, URL: pr.HTMLURL, Title: pr.Title, Body: pr.Body, Author: pr.User.Login,
-		Draft: pr.Draft, HeadSHA: pr.Head.SHA, Base: pr.Base.Ref}, nil
+		Draft: pr.Draft, State: pr.State, HeadSHA: pr.Head.SHA, Base: pr.Base.Ref}, nil
 }
 
 // ChangedFile is one file a pull request changes.

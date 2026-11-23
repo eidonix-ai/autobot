@@ -104,6 +104,9 @@ func serve(args []string) error {
 	if err := st.StopOrphanRuns(); err != nil { // their goroutines died with the last process
 		return err
 	}
+	if err := st.StopOrphanWorkflows(); err != nil {
+		return err
+	}
 	if users, err := st.Users(); err != nil {
 		return err
 	} else if len(users) == 0 {

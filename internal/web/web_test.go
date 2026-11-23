@@ -63,7 +63,18 @@ func (fakeGitHub) PullRequest(_ context.Context, _, name string, n int) (*github
 		return nil, github.ErrNoRepo
 	}
 	return &github.PullRequest{Number: 7, URL: "https://github.com/" + name + "/pull/7", Title: "Retry uploads", Body: "Retries forever.",
-		Author: "alice", HeadSHA: "0123456789abcdef0123456789abcdef01234567", Base: "main"}, nil
+		Author: "alice", State: "open", HeadSHA: "0123456789abcdef0123456789abcdef01234567", Base: "main"}, nil
+}
+
+func (fakeGitHub) Item(_ context.Context, _, name string, n int) (*github.Item, error) {
+	if n == 7 {
+		return &github.Item{Number: 7, Kind: "pr", Title: "Retry uploads", State: "open"}, nil
+	}
+	if n == 8 {
+		return &github.Item{Number: 8, Kind: "issue", Title: "Uploads hang", State: "open", Body: "They never finish.", Author: "bob",
+			URL: "https://github.com/" + name + "/issues/8"}, nil
+	}
+	return nil, github.ErrNoRepo
 }
 
 func (fakeGitHub) PullRequestFiles(context.Context, string, string, int) ([]github.ChangedFile, error) {

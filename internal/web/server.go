@@ -57,6 +57,7 @@ type GitHub interface {
 	File(ctx context.Context, token, name, path string) (string, error)
 	Tarball(ctx context.Context, token, name, commit string) (io.ReadCloser, error)
 	PullRequest(ctx context.Context, token, name string, number int) (*github.PullRequest, error)
+	Item(ctx context.Context, token, name string, number int) (*github.Item, error)
 	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
 	agent.Reader
 }
@@ -161,6 +162,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.testForm))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.runTest))
 	s.mux.Handle("GET /w/{owner}/{repo}/agent-runs/{id}", s.auth(s.agentRun))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/run", s.auth(s.runWorkflow))
+	s.mux.Handle("GET /w/{owner}/{repo}/workflow-runs/{id}", s.auth(s.workflowRun))
 	s.mux.Handle("GET /w/{owner}/{repo}/models", s.auth(s.modelsPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members", s.auth(s.membersPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members/{username}", s.auth(s.memberPage))

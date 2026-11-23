@@ -1,0 +1,21 @@
+{{define "head"}}{{if eq .Run.Status "running"}}<meta http-equiv="refresh" content="3">{{end}}{{end}}
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/workflows/{{.Run.Kind}}">Workflows</a> /</p>
+<h1>Run on {{.What}} #{{.Run.Item}}{{if .Run.DryRun}} <span class="muted">dry run</span>{{end}}</h1>
+<p class="status"><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
+  {{if eq .Run.Status "running"}}Running{{else if eq .Run.Status "done"}}Finished{{else}}Failed{{end}} · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}</p>
+<section class="panel"><h2>The event</h2><pre class="verdict">{{.Run.Note}}</pre></section>
+<section class="panel"><h2>Steps</h2>
+<ol class="steps">
+{{range .Steps}}
+<li class="{{.Status}}">
+  <div class="step-head"><span class="dot {{if eq .Status "running"}}busy{{else if eq .Status "done"}}on{{else}}off{{end}}"></span>
+    <strong>{{.Name}}</strong> <span class="muted">{{.Label}} · {{.Status}}{{with .Port}} → {{.}}{{end}}{{with .Took}} · {{.}}{{end}}</span>
+    {{if .AgentRun}}<a href="{{$.WS.Path}}/agent-runs/{{.AgentRun}}">transcript</a>{{end}}</div>
+  {{with .Error}}<p class="{{if eq $.Run.Status "failed"}}error{{else}}muted{{end}}">{{.}}</p>{{end}}
+  {{with .Output}}<details{{if le (len .) 600}} open{{end}}><summary>Output</summary><pre>{{.}}</pre></details>{{end}}
+</li>
+{{end}}
+</ol>
+</section>
+{{end}}

@@ -71,6 +71,11 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 	t, _ := workflow.TypeOf(n.Type)
 	data["Name"], data["Type"], data["Node"] = workflow.DisplayName(n), t, n
 	data["Action"] = ws.Path() + "/workflows/" + kind + "/nodes/" + n.ID + "/test"
+	if t.Event { // an event block runs the whole workflow from itself
+		data["Action"], data["Kind"] = ws.Path()+"/workflows/"+kind+"/nodes/"+n.ID+"/run", kind
+		s.renderFragment(w, r, status, "node_run.html", data)
+		return
+	}
 	_, templates, err := stepTemplates(n, kind)
 	if err != nil {
 		data["Problem"] = err.Error()

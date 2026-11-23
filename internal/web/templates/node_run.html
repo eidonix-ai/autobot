@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="modal-head"><h2>Run · {{.Name}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide step-form test-form" target="_blank" data-native>
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>{{if eq .Kind "pr"}}Pull request{{else}}Issue{{end}} number <input name="item" value="{{.Form.Get "item"}}" placeholder="123" inputmode="numeric" required autocomplete="off"></label>
+  <label class="check"><input type="checkbox" name="dry_run"{{if .Form.Get "dry_run"}} checked{{end}}> Dry run <span class="info" tabindex="0" data-tip="Runs the agents and decisions, but writes nothing: no case file entry, no output tags, nothing posted.">ⓘ</span></label>
+  <div class="row"><button>Run the workflow</button><button type="button" class="secondary" data-close>Close</button></div>
+</form>
+{{end}}

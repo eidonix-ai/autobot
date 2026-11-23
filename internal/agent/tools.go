@@ -9,16 +9,15 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/search"
 )
 
@@ -257,31 +256,13 @@ func WebTools(searcher func(ctx context.Context, query string, n int) ([]search.
 		}})
 }
 
-// publicOnly refuses a connection to anything but a public address. It runs on the address being
-// dialled, after the name is resolved, so a name cannot be pointed at a private address to slip by.
-func publicOnly(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil {
-		return err
-	}
-	ip = ip.Unmap()
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || cgnat.Contains(ip) || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		return fmt.Errorf("%s is not a public address", ip)
-	}
-	return nil
-}
-
-var cgnat = netip.MustParsePrefix("100.64.0.0/10")
-
+// Fetches go only to public addresses, never Autobot's own network: netguard's rule, with no
+// exceptions (hosts an admin trusts for providers are not for agents).
 var fetchClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
 		Proxy:                 nil,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, Control: publicOnly}).DialContext,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, Control: netguard.PublicOnly}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 20 * time.Second,
 		MaxIdleConns:          4,

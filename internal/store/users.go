@@ -57,8 +57,8 @@ func scanUser(row scanner, extra ...any) (*User, error) {
 }
 
 func hashPassword(pw string) (string, error) {
-	if len(pw) < 8 {
-		return "", invalid("Passwords need at least 8 characters.")
+	if len(pw) < 12 { // for new passwords; existing shorter ones still sign in (Derek, 2026-11-23)
+		return "", invalid("Passwords need at least 12 characters.")
 	}
 	if len(pw) > 72 {
 		return "", invalid("Passwords can be at most 72 bytes long.")

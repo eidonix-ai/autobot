@@ -3,17 +3,51 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/eidonix-ai/autobot/internal/decisions"
+	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/providers"
 	"github.com/eidonix-ai/autobot/internal/search"
 	"github.com/eidonix-ai/autobot/internal/store"
 )
+
+// hostRE is a host a provider may be trusted at on the local network: a name or an address, with
+// perhaps a port, and nothing else.
+var hostRE = regexp.MustCompile(`^(?:[a-z0-9]([a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?$`)
+
+// saveTrusted sets the hosts providers may use on Autobot's own network. Only an admin may: any
+// other address a provider is given must be public, so no one can point Autobot at the LAN.
+func (s *Server) saveTrusted(w http.ResponseWriter, r *http.Request) {
+	var hosts []string
+	for _, line := range strings.Split(r.PostForm.Get("hosts"), "\n") {
+		h := strings.ToLower(strings.TrimSpace(line))
+		if h == "" {
+			continue
+		}
+		if !hostRE.MatchString(h) {
+			s.providersPage(w, r, http.StatusBadRequest, map[string]any{"Trusted": r.PostForm.Get("hosts"),
+				"Error": fmt.Sprintf("%q is not a host: give a name or an address, with a port if you like, such as llm.lan:8000.", h)})
+			return
+		}
+		if !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	if err := s.st.SetSetting(store.TrustedEndpoints, strings.Join(hosts, "\n")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	netguard.SetTrusted(hosts)
+	http.Redirect(w, r, "/providers?trusted=1", http.StatusSeeOther)
+}
 
 // preset is a well-known provider the Add form can fill in. "custom" takes the endpoint typed in.
 type preset struct {
@@ -77,7 +111,20 @@ func (s *Server) providersPage(w http.ResponseWriter, r *http.Request, status in
 	if r.URL.Query().Has("deleted") {
 		data["Notice"] = "Provider deleted."
 	}
+	if r.URL.Query().Has("trusted") {
+		data["Notice"] = "Saved."
+	}
 	data["Title"], data["Providers"], data["Others"], data["Presets"] = "Providers", list, others, presets
+	if me(r).IsAdmin {
+		hosts, err := s.st.TrustedHosts()
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		if _, ok := data["Trusted"]; !ok {
+			data["Trusted"] = strings.Join(hosts, "\n")
+		}
+	}
 	s.render(w, r, status, "providers.html", data)
 }
 

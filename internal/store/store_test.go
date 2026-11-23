@@ -22,7 +22,7 @@ func open(t *testing.T) *Store {
 
 func mustUser(t *testing.T, st *Store, name string, admin bool) *User {
 	t.Helper()
-	u, err := st.CreateUser(name, "", "password123", admin)
+	u, err := st.CreateUser(name, "", "password-1234", admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestReopenKeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateUser("derek", "Derek", "password123", true); err != nil {
+	if _, err := st.CreateUser("derek", "Derek", "password-1234", true); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
@@ -183,7 +183,7 @@ func TestSessions(t *testing.T) {
 	if _, err := st.CheckPassword("u", "wrong-password"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("wrong password: %v", err)
 	}
-	if _, err := st.CheckPassword("nobody", "password123"); !errors.Is(err, ErrNotFound) {
+	if _, err := st.CheckPassword("nobody", "password-1234"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown user: %v", err)
 	}
 	tok, _ := st.CreateSession(u.ID)
@@ -227,14 +227,14 @@ func TestSessions(t *testing.T) {
 
 func TestUsernames(t *testing.T) {
 	st := open(t)
-	if u, err := st.CreateUser("  Derek ", "Derek Yates", "password123", true); err != nil || u.Username != "derek" {
+	if u, err := st.CreateUser("  Derek ", "Derek Yates", "password-1234", true); err != nil || u.Username != "derek" {
 		t.Fatalf("got %v, %v", u, err)
 	}
-	if _, err := st.CreateUser("DEREK", "", "password123", false); !isInput(err) {
+	if _, err := st.CreateUser("DEREK", "", "password-1234", false); !isInput(err) {
 		t.Fatalf("duplicate username: %v", err)
 	}
 	for _, bad := range []string{"", "a b", "-x", strings.Repeat("a", 33)} {
-		if _, err := st.CreateUser(bad, "", "password123", false); !isInput(err) {
+		if _, err := st.CreateUser(bad, "", "password-1234", false); !isInput(err) {
 			t.Errorf("username %q accepted", bad)
 		}
 	}
@@ -257,7 +257,7 @@ func TestCreateFirstAdmin(t *testing.T) {
 	errs := make(chan error, n)
 	for i := range n {
 		go func() {
-			_, err := st.CreateFirstAdmin(fmt.Sprintf("user%d", i), "", "password123")
+			_, err := st.CreateFirstAdmin(fmt.Sprintf("user%d", i), "", "password-1234")
 			errs <- err
 		}()
 	}
@@ -274,7 +274,7 @@ func TestCreateFirstAdmin(t *testing.T) {
 	if won != 1 || len(users) != 1 || !users[0].IsAdmin {
 		t.Fatalf("%d winners, users %+v; want exactly one admin", won, users)
 	}
-	if _, err := st.CreateFirstAdmin("late", "", "password123"); !errors.Is(err, ErrSetupDone) {
+	if _, err := st.CreateFirstAdmin("late", "", "password-1234"); !errors.Is(err, ErrSetupDone) {
 		t.Fatalf("setup after the first user: %v", err)
 	}
 }

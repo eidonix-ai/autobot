@@ -3,7 +3,9 @@ package web
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -39,6 +41,11 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
+	// Closed for good once anyone exists: answer before hashing anything, so it costs nothing.
+	if need, err := s.setupNeeded(); err != nil || !need {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxForm)
 	r.ParseForm()
 	f := r.PostForm
@@ -89,12 +96,22 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxForm)
 	r.ParseForm()
 	next := safeNext(r.PostForm.Get("next"))
-	u, err := s.st.CheckPassword(r.PostForm.Get("username"), r.PostForm.Get("password"))
+	name := r.PostForm.Get("username")
+	if wait := s.fails.locked(name); wait > 0 {
+		s.render(w, r, http.StatusTooManyRequests, "login.html", map[string]any{"Title": "Sign in", "Next": next, "Form": r.PostForm,
+			"Error": fmt.Sprintf("Too many failed sign-ins for this account. Try again in %d minutes.", int(wait.Minutes())+1)})
+		return
+	}
+	u, err := s.st.CheckPassword(name, r.PostForm.Get("password"))
 	if errors.Is(err, store.ErrNotFound) {
+		if s.fails.failed(name) {
+			log.Printf("sign-in: account %q locked for %s after %d failures", name, lockFor, maxFails)
+		}
 		s.render(w, r, http.StatusUnauthorized, "login.html", map[string]any{
 			"Title": "Sign in", "Next": next, "Form": r.PostForm, "Error": "Wrong username or password."})
 		return
 	}
+	s.fails.clear(name)
 	if err != nil {
 		s.fail(w, err)
 		return

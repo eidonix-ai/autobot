@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCaseContributions(t *testing.T) {
@@ -129,5 +130,13 @@ func TestAgentMessagesCompressed(t *testing.T) {
 	}
 	if r, _ := st.AgentRun(id); r.Status != "met" || r.FinishedAt.IsZero() {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// A title from GitHub cannot add links or images to a case file.
+func TestHeadlineEscapesTitle(t *testing.T) {
+	h := CaseHeadline(time.Now(), "o/r", "pr", 7, "![x](https://evil.example/?d=1) [click](https://evil.example)")
+	if strings.Contains(h, "![x](") || strings.Contains(h, "[click](") {
+		t.Fatalf("%s", h)
 	}
 }

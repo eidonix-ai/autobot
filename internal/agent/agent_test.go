@@ -196,3 +196,18 @@ func TestBudgetWarningAndTrimming(t *testing.T) {
 		t.Fatalf("%d sent in full, %d cut", full, cut)
 	}
 }
+
+// One turn runs at most maxCalls tool calls; the rest are refused, to be made next turn.
+func TestCallsPerTurn(t *testing.T) {
+	runs := 0
+	tool := Tool{Spec: ToolSpec{Name: "t"}, Run: func(context.Context, json.RawMessage) (string, error) { runs++; return "ok", nil }}
+	var many []Message
+	for i := 0; i < maxCalls+5; i++ {
+		many = append(many, call(fmt.Sprint(i), "t", `{}`))
+	}
+	m := &script{replies: []Message{calls(many...), call("f", "finish", `{"status":"met","report":"done"}`)}}
+	Run(context.Background(), Config{Model: m, Tools: []Tool{tool}, MaxTurns: 5}, nil)
+	if runs != maxCalls || !strings.Contains(last(m.seen[1]), "next turn") {
+		t.Fatalf("%d calls ran", runs)
+	}
+}

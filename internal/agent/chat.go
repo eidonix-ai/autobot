@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/eidonix-ai/autobot/internal/netguard"
 )
 
 // Message is one message of a conversation, in the OpenAI chat format our providers speak.
@@ -56,6 +58,8 @@ type OpenAI struct {
 }
 
 var chatHTTP = &http.Client{
+	// Only public addresses, or hosts an admin trusts: the address comes from a person.
+	Transport:     netguard.Transport(),
 	Timeout:       10 * time.Minute,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }

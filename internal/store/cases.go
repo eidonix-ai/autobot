@@ -370,7 +370,23 @@ func CaseHeadline(at time.Time, repo, kind string, number int, title string) str
 		label, path = "PR", "pull"
 	}
 	return fmt.Sprintf("Opened %s ET for [%s %s #%d](https://github.com/%s/%s/%d): %s",
-		at.In(eastern).Format("2006-01-02 15:04"), repo, label, number, repo, path, number, strings.TrimSpace(title))
+		at.In(eastern).Format("2006-01-02 15:04"), repo, label, number, repo, path, number, escapeMarkdown(strings.TrimSpace(title)))
+}
+
+// escapeMarkdown makes text show as itself in Markdown: a title written on GitHub cannot add
+// links, images or formatting to a case file.
+func escapeMarkdown(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if strings.ContainsRune("\\`*_{}[]()<>#+-.!|~", r) {
+			b.WriteByte('\\')
+		}
+		if r == '\n' || r == '\r' {
+			r = ' '
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // CaseSummary is one row of a workspace's list of cases.

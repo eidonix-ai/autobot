@@ -76,6 +76,7 @@ const (
 	maxRejected = 3
 	maxResult   = 24_000 // characters of a tool's result shown to the model
 	keepTurns   = 6      // turns whose tool results are sent in full; older ones are cut to a line
+	maxCalls    = 16     // tool calls one turn may make; the rest are refused, to be made next turn
 )
 
 var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it when the goal is met, or when you are blocked and cannot meet it. " +
@@ -150,6 +151,10 @@ func Run(ctx context.Context, cfg Config, tr *Transcript) *Transcript {
 		var finish *ToolCall
 		var wg sync.WaitGroup
 		for i, call := range reply.ToolCalls {
+			if i >= maxCalls && call.Function.Name != "finish" {
+				results[i] = fmt.Sprintf("error: at most %d tool calls run in one turn; make this one in your next turn", maxCalls)
+				continue
+			}
 			switch call.Function.Name {
 			case "finish":
 				c := call

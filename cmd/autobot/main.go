@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/web"
 	"golang.org/x/term"
@@ -107,6 +108,12 @@ func serve(args []string) error {
 	if err := st.StopOrphanWorkflows(); err != nil {
 		return err
 	}
+	// Providers reach only public addresses, and these hosts, which an admin trusts on the LAN.
+	trusted, err := st.TrustedHosts()
+	if err != nil {
+		return err
+	}
+	netguard.SetTrusted(trusted)
 	if users, err := st.Users(); err != nil {
 		return err
 	} else if len(users) == 0 {

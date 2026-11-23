@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/eidonix-ai/autobot/internal/netguard"
 )
 
 const (
@@ -30,6 +32,8 @@ type Model struct {
 
 // client does not follow redirects, so a key sent to the endpoint cannot be passed on to another site.
 var client = &http.Client{
+	// Only public addresses, or hosts an admin trusts: the address comes from a person.
+	Transport:     netguard.Transport(),
 	Timeout:       timeout,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }

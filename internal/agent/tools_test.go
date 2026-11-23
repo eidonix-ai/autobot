@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/eidonix-ai/autobot/internal/netguard"
 )
 
 // fetch_url reaches only public addresses: not this machine, the LAN, or a redirect to either.
@@ -21,12 +23,12 @@ func TestFetchRefusesPrivateAddresses(t *testing.T) {
 		}
 	}
 	for _, s := range []string{"127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.0.1", "100.100.0.1", "169.254.1.1", "0.0.0.0", "::1", "fd00::1", "fe80::1"} {
-		if publicOnly("tcp", s+":80", nil) == nil && publicOnly("tcp", "["+s+"]:80", nil) == nil {
+		if netguard.PublicOnly("tcp", s+":80", nil) == nil && netguard.PublicOnly("tcp", "["+s+"]:80", nil) == nil {
 			t.Errorf("%s counted as public", s)
 		}
 	}
 	for _, s := range []string{"1.1.1.1:443", "[2606:4700:4700::1111]:443"} {
-		if err := publicOnly("tcp", s, nil); err != nil {
+		if err := netguard.PublicOnly("tcp", s, nil); err != nil {
 			t.Errorf("%s refused: %v", s, err)
 		}
 	}

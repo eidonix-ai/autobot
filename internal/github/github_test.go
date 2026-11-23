@@ -123,3 +123,15 @@ func TestTarball(t *testing.T) {
 		t.Fatal("a wrong token downloaded a private repository")
 	}
 }
+
+// A path a model gives stays a path in the repository.
+func TestRepoPath(t *testing.T) {
+	for _, bad := range []string{"", "../other/repo", "a/../../b", "a/./b", "x?ref=main", "x#y", "%2e%2e/x", "a\\b", "a//b", "a\nb"} {
+		if p, err := repoPath(bad); err == nil {
+			t.Errorf("repoPath(%q) = %q", bad, p)
+		}
+	}
+	if p, err := repoPath("/internal/web/a b.go"); err != nil || p != "internal/web/a%20b.go" {
+		t.Errorf("%q %v", p, err)
+	}
+}

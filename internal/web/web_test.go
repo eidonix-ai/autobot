@@ -198,7 +198,7 @@ func (b *browser) csrf() string {
 func (e *env) signIn(username string) *browser {
 	e.t.Helper()
 	b := e.browser()
-	code, loc, _ := b.post("/login", url.Values{"username": {username}, "password": {"password123"}})
+	code, loc, _ := b.post("/login", url.Values{"username": {username}, "password": {"password-1234"}})
 	if code != http.StatusSeeOther || loc != "/" {
 		e.t.Fatalf("sign in %s: %d %q", username, code, loc)
 	}
@@ -206,7 +206,7 @@ func (e *env) signIn(username string) *browser {
 }
 
 func (e *env) user(name string, admin bool) *store.User {
-	u, err := e.st.CreateUser(name, "", "password123", admin)
+	u, err := e.st.CreateUser(name, "", "password-1234", admin)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestSignInRequired(t *testing.T) {
 		t.Errorf("bad password: %d", code)
 	}
 	// The post-login redirect stays on this site.
-	if code, loc, _ := b.post("/login", url.Values{"username": {"u"}, "password": {"password123"}, "next": {"//evil.example"}}); code != http.StatusSeeOther || loc != "/" {
+	if code, loc, _ := b.post("/login", url.Values{"username": {"u"}, "password": {"password-1234"}, "next": {"//evil.example"}}); code != http.StatusSeeOther || loc != "/" {
 		t.Errorf("open redirect: %d %q", code, loc)
 	}
 }
@@ -250,7 +250,7 @@ func TestAdminSetsUpWorkspaceAndUser(t *testing.T) {
 		t.Fatalf("bad workspace name: %d", code)
 	}
 
-	code, loc, _ = admin.post("/admin/users", url.Values{"csrf": {tok}, "username": {"alice"}, "display_name": {"Alice"}, "password": {"password123"}})
+	code, loc, _ = admin.post("/admin/users", url.Values{"csrf": {tok}, "username": {"alice"}, "display_name": {"Alice"}, "password": {"password-1234"}})
 	if code != http.StatusSeeOther || !strings.HasPrefix(loc, "/admin/users/") {
 		t.Fatalf("create user: %d %q", code, loc)
 	}
@@ -358,7 +358,7 @@ func TestFirstTimeSetup(t *testing.T) {
 		t.Fatalf("setup page: %d", code)
 	}
 
-	form := url.Values{"username": {"derek"}, "display_name": {"Derek"}, "password": {"password123"}, "confirm": {"password123"}}
+	form := url.Values{"username": {"derek"}, "display_name": {"Derek"}, "password": {"password-1234"}, "confirm": {"password-1234"}}
 
 	// A form posted from another site is refused, so a web page cannot plant its own admin.
 	for _, h := range []map[string]string{{"Sec-Fetch-Site": "cross-site"}, {"Origin": "https://evil.example"}} {
@@ -380,7 +380,7 @@ func TestFirstTimeSetup(t *testing.T) {
 		t.Fatal("cross-site post created a user")
 	}
 
-	mismatch := url.Values{"username": {"derek"}, "password": {"password123"}, "confirm": {"password124"}}
+	mismatch := url.Values{"username": {"derek"}, "password": {"password-1234"}, "confirm": {"password124"}}
 	if code, _, body := b.post("/setup", mismatch); code != http.StatusBadRequest || !strings.Contains(body, "did not match") {
 		t.Fatalf("mismatched passwords: %d", code)
 	}
@@ -398,7 +398,7 @@ func TestFirstTimeSetup(t *testing.T) {
 	if code, loc := redirect(t, other, "/setup"); code != http.StatusSeeOther || loc != "/login" {
 		t.Fatalf("setup page after setup: %d %q", code, loc)
 	}
-	second := url.Values{"username": {"mallory"}, "password": {"password123"}, "confirm": {"password123"}}
+	second := url.Values{"username": {"mallory"}, "password": {"password-1234"}, "confirm": {"password-1234"}}
 	if code, loc, _ := other.post("/setup", second); code != http.StatusSeeOther || loc != "/login" {
 		t.Fatalf("second setup: %d %q", code, loc)
 	}

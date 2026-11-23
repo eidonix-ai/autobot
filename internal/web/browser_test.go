@@ -101,7 +101,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		chromedp.EmulateViewport(1400, 900),
 		chromedp.Navigate(e.srv.URL+"/login?next="+url.QueryEscape("/w/o/r/workflows/pr")),
 		chromedp.SendKeys(`input[name=username]`, "derek"),
-		chromedp.SendKeys(`input[name=password]`, "password123"),
+		chromedp.SendKeys(`input[name=password]`, "password-1234"),
 		chromedp.Submit(`input[name=password]`),
 		chromedp.WaitVisible(`#wf .drawflow`),
 		place("PR Ready", 400, 300),

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -417,7 +418,11 @@ func (c *Client) FileAt(ctx context.Context, token, name, ref, path string) (str
 		Encoding string `json:"encoding"`
 		Size     int    `json:"size"`
 	}
-	p := "/repos/" + name + "/contents/" + strings.TrimPrefix(path, "/") + "?ref=" + ref
+	clean, err := repoPath(path)
+	if err != nil {
+		return "", err
+	}
+	p := "/repos/" + name + "/contents/" + clean + "?ref=" + url.QueryEscape(ref)
 	if _, err := c.get(ctx, token, p, &f); err != nil {
 		if errors.Is(err, ErrNoRepo) {
 			return "", fmt.Errorf("no file %s at %.12s", path, ref)
@@ -432,6 +437,24 @@ func (c *Client) FileAt(ctx context.Context, token, name, ref, path string) (str
 	}
 	b, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(f.Content, "\n", ""))
 	return string(b), err
+}
+
+// repoPath checks a path inside a repository and escapes it for the contents API. The path may
+// come from a model, so it must stay a path in this repository: no "..", and nothing (?, #, %)
+// that would change which request is made.
+func repoPath(p string) (string, error) {
+	p = strings.Trim(p, "/")
+	if p == "" || strings.ContainsAny(p, "?#%\\") || strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", fmt.Errorf("%q is not a path in the repository", p)
+	}
+	var parts []string
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf("%q is not a path in the repository", p)
+		}
+		parts = append(parts, url.PathEscape(seg))
+	}
+	return strings.Join(parts, "/"), nil
 }
 
 // Tree lists the files of owner/repo at a commit, up to GitHub's limit of about 100,000.

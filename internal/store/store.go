@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16}
 
 const schemaV1 = `
 CREATE TABLE users (
@@ -406,4 +406,12 @@ CREATE TABLE case_values (
 // container with the code and keeps it, and Autobot sends it commands until the run is closed.
 const schemaV15 = `
 ALTER TABLE test_runs ADD COLUMN session INTEGER NOT NULL DEFAULT 0;
+`
+
+// Settings of the whole instance, by name, such as the hosts providers may use on the local network.
+const schemaV16 = `
+CREATE TABLE settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 `

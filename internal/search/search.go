@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/eidonix-ai/autobot/internal/netguard"
 )
 
 // The search APIs Autobot speaks; a provider of one of these kinds has a key and no models.
@@ -32,6 +34,8 @@ const maxBody = 4 << 20
 
 // client does not follow redirects, so a key sent to the API cannot be passed on to another site.
 var client = &http.Client{
+	// Only public addresses, or hosts an admin trusts: the address comes from a person.
+	Transport:     netguard.Transport(),
 	Timeout:       30 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }

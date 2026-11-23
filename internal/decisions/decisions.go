@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/eidonix-ai/autobot/internal/netguard"
 )
 
 // The two protocols, as provider kinds.
@@ -49,7 +51,9 @@ type Answer struct {
 	Probabilities map[string]float64 // choice: per option; score: per level ("0", "1", …)
 }
 
-var client = &http.Client{Timeout: 60 * time.Second,
+var client = &http.Client{
+	// Only public addresses, or hosts an admin trusts: the address comes from a person.
+	Transport: netguard.Transport(), Timeout: 60 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 // Ask asks the questions about input with model, over the protocol kind names.

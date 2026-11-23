@@ -250,7 +250,10 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	rs.run = run
-	go s.drive(rs)
+	go func() {
+		defer survive(fmt.Sprintf("workflow run %d", rs.run.ID), func(msg string) { s.st.FinishWorkflowRun(rs.run.ID, "failed") })
+		s.drive(rs)
+	}()
 	return id, nil
 }
 
@@ -325,7 +328,12 @@ func (s *Server) drive(rs *runState) {
 				save(st)
 				running++
 				prev := previousOutput(fired, steps, nodes)
-				go func(n workflow.Node, prev string) { results <- finished{n.ID, s.runStep(rs, n, prev)} }(n, prev)
+				go func(n workflow.Node, prev string) {
+					o := stepOutcome{err: errors.New("the step crashed")}
+					defer func() { results <- finished{n.ID, o} }()
+					defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
+					o = s.runStep(rs, n, prev)
+				}(n, prev)
 			}
 		}
 		if running == 0 {

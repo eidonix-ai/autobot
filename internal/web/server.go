@@ -8,12 +8,14 @@ import (
 	"crypto/subtle"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -48,6 +51,7 @@ type Server struct {
 	md        goldmark.Markdown
 	mux       *http.ServeMux
 	ready     atomic.Bool // set once a user exists; users are never deleted, so it never goes back
+	fails     loginFails  // failed sign-ins by account
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -186,6 +190,7 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /providers", s.auth(s.providerList))
 	s.mux.Handle("POST /providers", s.auth(s.createProvider))
+	s.mux.Handle("POST /providers/trusted", s.admin(s.saveTrusted))
 	s.mux.Handle("GET /providers/{id}", s.auth(s.provider))
 	s.mux.Handle("POST /providers/{id}", s.auth(s.updateProvider))
 	s.mux.Handle("POST /providers/{id}/discover", s.auth(s.discoverModels))
@@ -203,9 +208,10 @@ func (s *Server) Handler() http.Handler {
 	guarded := http.NewCrossOriginProtection().Handler(s.mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
+		netguard.NoteOwnHost(r.Host) // so agents' fetches cannot loop back in through the router
 		guarded.ServeHTTP(w, r)
 	})
 }
@@ -267,8 +273,22 @@ func (s *Server) auth(next http.HandlerFunc) http.Handler {
 				return
 			}
 		}
+		// A signed-in page is for this person only: no browser or proxy keeps a copy.
+		w.Header().Set("Cache-Control", "no-store")
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &session{u, csrf, c.Value})))
 	})
+}
+
+// survive keeps a panic in background work (a run, a step, an agent) from ending the whole
+// service: it is logged, and calls onPanic, if given, with what happened.
+func survive(what string, onPanic func(string)) {
+	if r := recover(); r != nil {
+		msg := fmt.Sprintf("%s crashed: %v", what, r)
+		log.Printf("%s\n%s", msg, debug.Stack())
+		if onPanic != nil {
+			onPanic(msg)
+		}
+	}
 }
 
 // admin admits admins only; to anyone else the page does not exist.
@@ -291,8 +311,16 @@ func toLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // safeNext keeps post-login redirects on this site.
+// safeNext keeps a redirect after sign-in on this site: a path, never another host. Browsers drop
+// tabs and line breaks from addresses and read a backslash as a slash, so "/\t/evil.example" would
+// become "//evil.example"; anything with those, or that parses with a host, goes home instead.
 func safeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+	if !strings.HasPrefix(next, "/") || strings.ContainsAny(next, "\\") ||
+		strings.ContainsFunc(next, func(r rune) bool { return r < 0x20 || r == 0x7f || r == ' ' }) {
+		return "/"
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Host != "" || strings.HasPrefix(u.Path, "//") {
 		return "/"
 	}
 	return next

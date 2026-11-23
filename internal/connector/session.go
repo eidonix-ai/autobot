@@ -32,6 +32,9 @@ func inboxDir(runDir string) string { return filepath.Join(runDir, "inbox") }
 
 var cidRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
+// maxRunning is how many of a session's commands run at once; the rest wait their turn.
+const maxRunning = 8
+
 // inboxFile is where a command's file is written on the host.
 func inboxFile(runDir, cid string) (string, error) {
 	if !cidRE.MatchString(cid) {
@@ -109,6 +112,9 @@ func (c *Connector) serveSession(ctx context.Context, run int64, container, runD
 		}
 	}
 	long := &http.Client{Timeout: protocol.PollWait + 15*time.Second}
+	// At most this many commands run at once, however many arrive: Docker on the donor's machine
+	// starts a process for each.
+	slots := make(chan struct{}, maxRunning)
 	for ctx.Err() == nil {
 		cmds, status, err := c.pollCommands(ctx, long, run)
 		if status == http.StatusNotFound {
@@ -123,7 +129,13 @@ func (c *Connector) serveSession(ctx context.Context, run int64, container, runD
 		}
 		for _, cmd := range cmds {
 			go func() {
+				select {
+				case slots <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
 				res := c.runCommand(ctx, container, runDir, cmd, out)
+				<-slots
 				c.reportCommand(ctx, run, cmd.ID, res)
 			}()
 		}

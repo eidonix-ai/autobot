@@ -109,7 +109,7 @@ type DecisionSettings struct {
 
 // DefaultAgent is a new agent node's settings, for a workflow of kind.
 func DefaultAgent(kind string) AgentSettings {
-	s := AgentSettings{Persona: "code_quality", Internet: true, SubAgents: 5, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
+	s := AgentSettings{Persona: "code_quality", Internet: false, SubAgents: 5, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
 	if kind == Issue {
 		s.Instruction = "Look into this issue: {issue_link}\n\n{issue_title}\n\n{issue_body}"
 		s.Goal = "The issue is understood: the report says what is wrong or asked for, where in the code it lies, and what should be done."

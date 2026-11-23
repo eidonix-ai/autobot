@@ -1,12 +1,12 @@
-{{define "head"}}{{if eq .Run.Status "running"}}<meta http-equiv="refresh" content="3">{{end}}{{end}}
+{{define "head"}}{{if eq .Run.Status "running"}}<script src="/static/live.js"></script>{{end}}{{end}}
 {{define "content"}}
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/workflows/{{.Run.Kind}}">Workflows</a> /</p>
 <h1>Run on {{.What}} #{{.Run.Item}}{{if .Run.DryRun}} <span class="muted">dry run</span>{{end}}</h1>
-<p class="status"><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
+<p class="status" id="run-status" data-live><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
   {{if eq .Run.Status "running"}}Running{{else if eq .Run.Status "done"}}Finished{{else}}Failed{{end}} · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}</p>
 <section class="panel"><h2>The event</h2><pre class="verdict">{{.Run.Note}}</pre></section>
 <section class="panel"><h2>Steps</h2>
-<ol class="steps">
+<ol class="steps" id="run-steps" data-live data-live-list>
 {{range .Steps}}
 <li class="{{.Status}}">
   <div class="step-head"><span class="dot {{if or (eq .Status "running") (eq .Status "waiting")}}busy{{else if eq .Status "done"}}on{{else}}off{{end}}"></span>

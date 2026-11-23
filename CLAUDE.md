@@ -79,9 +79,10 @@ git only through its environment, never a command line or the mirror's config.
    fan out and merge; loops are refused for now. Templates use {tags}; a step's "Output to" tag is
    kept per case (one PR or issue) and replaced by the next write. Shift-click tests one block with
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
-   through finish, refuses "met" (at most 3 times) when the report cites files never read, warns
-   near its turn budget. The plan is the agent's own notes and never holds finish back (Derek,
-   2026-11-23). Conversations are append-only so the provider's cache hits (old tool output is
+   through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never
+   opened is marked "(not opened)" where it is cited; the plan is the agent's own notes. Only an
+   optional check model (Verify) can send it back, and that report is kept meanwhile. It warns
+   near its turn budget. Conversations are append-only so the provider's cache hits (old tool output is
    shortened in one batch past ~100k tokens), stored with test-run logs as gzip files in
    /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open plus 30 days.
    A block re-run on an item resumes its conversation (Re-run setting); a reference block

@@ -126,23 +126,12 @@ func TestSandboxReadsFeedCitations(t *testing.T) {
 	f := &fakeSession{files: map[string]string{"src/lib.rs": "pub fn a() {}\n", "tests/it.rs": "#[test] fn t() {}\n"}}
 	m := &script{replies: []Message{
 		calls(call("1", "read_file", `{"path":"src/lib.rs"}`), call("2", "read_file", `{"path":"gone.rs"}`)),
-		call("3", "finish", `{"status":"met","report":"lib.rs is fine; gone.rs and tests/it.rs are too."}`),
 		call("4", "read_file", `{"path":"/work/source/tests/it.rs"}`),
 		call("5", "finish", `{"status":"met","report":"lib.rs is fine; gone.rs and tests/it.rs are too."}`),
-		call("6", "grep", `{"pattern":"fn","path":"src/lib.rs"}`),
-		call("7", "finish", `{"status":"met","report":"lib.rs and tests/it.rs are fine."}`),
 	}}
 	tr := Run(context.Background(), Config{Model: m, Tools: SandboxTools(f), MaxTurns: 10}, nil)
-	refused := m.seen[2][len(m.seen[2])-1].Content
-	if !strings.Contains(refused, "gone.rs, tests/it.rs") || strings.Contains(refused, "lib.rs,") {
-		t.Fatalf("first refusal: %q", refused)
-	}
-	// gone.rs is still unread, so the second finish is refused too, then the report drops it.
-	if second := m.seen[4][len(m.seen[4])-1].Content; !strings.Contains(second, "gone.rs") {
-		t.Fatalf("second refusal: %q", second)
-	}
-	if tr.Outcome != Met {
-		t.Fatalf("%s: %s", tr.Outcome, tr.Error)
+	if tr.Outcome != Met || tr.Report != "lib.rs is fine; gone.rs (not opened) and tests/it.rs are too." {
+		t.Fatalf("%s: %q", tr.Outcome, tr.Report)
 	}
 	if got := strings.Join(tr.Read, " "); got != "src/lib.rs tests/it.rs" {
 		t.Fatalf("read: %q", got)

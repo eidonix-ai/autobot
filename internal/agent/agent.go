@@ -245,22 +245,23 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 	}
 }
 
-// finish handles a call to finish: accepted, it sets the outcome and returns done.
+// finish handles a call to finish: accepted, it sets the outcome and returns done. Finish takes the
+// report: a file it cites that the agent never opened is marked "(not opened)" where it is cited,
+// not held against it (Derek, 2026-11-23, after two runs lost finished reports to refusals near
+// their turn limit). Only the optional check by another model (Verify) sends the agent back, and its
+// report is kept meanwhile, so a run that then runs out of turns still has it.
 func (tr *Transcript) finish(ctx context.Context, cfg Config, args string, rejected *int) (string, bool) {
 	var a struct{ Status, Report string }
 	if json.Unmarshal([]byte(args), &a) != nil || (a.Status != Met && a.Status != Blocked) || strings.TrimSpace(a.Report) == "" {
 		return "error: finish needs a status (met or blocked) and a report", false
 	}
+	a.Report = tr.annotate(a.Report)
 	if a.Status == Met {
-		if unread := tr.unread(a.Report); len(unread) > 0 && *rejected < maxRejected {
-			*rejected++
-			return "Not finished: your report cites " + strings.Join(unread, ", ") + ", which you have not read in this run. " +
-				"Read them to confirm what you say about them, or take those claims out, then finish again.", false
-		}
 		if cfg.Verify != nil && *rejected < maxRejected {
 			ok, why, err := cfg.Verify(ctx, cfg.Goal, a.Report)
 			if err == nil && !ok {
 				*rejected++
+				tr.Report = a.Report
 				return "Not finished: a check of your report found the goal not yet met" + why +
 					". The goal: " + cfg.Goal + "\nKeep working, then finish again.", false
 			}
@@ -333,17 +334,26 @@ func transient(err error) bool {
 // followed by a line number.
 var citedRE = regexp.MustCompile(`\b([\w./-]*[\w-]+\.(?:go|mod|py|rs|ts|tsx|js|jsx|c|h|cc|cpp|hpp|java|kt|swift|rb|php|cs|sh|ya?ml|toml|json|md|sql|proto))\b`)
 
-// unread lists the files a report cites that the agent's tools never read.
-func (tr *Transcript) unread(report string) []string {
-	var out []string
-	for _, m := range citedRE.FindAllStringSubmatch(report, -1) {
-		c := strings.TrimPrefix(strings.TrimPrefix(m[1], "./"), "/")
-		if slices.Contains(out, c) || slices.ContainsFunc(tr.Read, func(r string) bool { return samePath(r, c) }) {
+// citedLines is what may follow a cited file: its line or lines, and the end of a code span.
+var citedLines = regexp.MustCompile("^(?::\\d+(?:[-–]\\d+)?)?`?")
+
+// annotate marks each place the report cites a file the agent's tools never read: "(not opened)"
+// after the citation, its line numbers and any code span around it.
+func (tr *Transcript) annotate(report string) string {
+	var b strings.Builder
+	last := 0
+	for _, ix := range citedRE.FindAllStringSubmatchIndex(report, -1) {
+		c := strings.TrimPrefix(strings.TrimPrefix(report[ix[2]:ix[3]], "./"), "/")
+		if slices.ContainsFunc(tr.Read, func(r string) bool { return samePath(r, c) }) {
 			continue
 		}
-		out = append(out, c)
+		end := ix[1] + len(citedLines.FindString(report[ix[1]:]))
+		b.WriteString(report[last:end])
+		b.WriteString(" (not opened)")
+		last = end
 	}
-	return out
+	b.WriteString(report[last:])
+	return b.String()
 }
 
 // samePath reports whether two paths name the same file, one perhaps given relative to a folder.

@@ -138,18 +138,30 @@ var readTool = Tool{Spec: ToolSpec{Name: "read"},
 		return []string{a.Path}
 	}}
 
-// A report may cite only files the agent read: GLM-5.3-Flash once cited four files it never opened.
-func TestCitedFilesMustBeRead(t *testing.T) {
+// Finish takes the report, and marks where it cites a file the agent never opened (GLM-5.3-Flash
+// once cited four files it never opened).
+func TestUnreadCitationsAreMarked(t *testing.T) {
 	m := &script{replies: []Message{
 		call("r", "read", `{"path":"internal/target.go"}`),
-		call("f1", "finish", `{"status":"met","report":"target.go:302 is fixed; every reader in query.go:253 and frame.go checks for nil."}`),
-		calls(call("r2", "read", `{"path":"query.go"}`), call("r3", "read", `{"path":"internal/frame.go"}`)),
-		call("f2", "finish", `{"status":"met","report":"target.go:302 is fixed; every reader in query.go:253 and frame.go checks for nil. See https://go.dev/doc."}`),
+		call("f", "finish", `{"status":"met","report":"target.go:302 is fixed; every reader in query.go:253-260 and `+"`frame.go`"+` checks for nil, as query.go says. See https://go.dev/doc."}`),
 	}}
 	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{readTool}, MaxTurns: 10}, nil)
-	refusal := last(m.seen[2])
-	if tr.Outcome != Met || !strings.Contains(refusal, "query.go, frame.go") || strings.Contains(refusal, "target.go") {
-		t.Fatalf("%s: %q", tr.Outcome, refusal)
+	want := "target.go:302 is fixed; every reader in query.go:253-260 (not opened) and `frame.go` (not opened) checks for nil, as query.go (not opened) says. See https://go.dev/doc."
+	if tr.Outcome != Met || tr.Turns != 2 || tr.Report != want {
+		t.Fatalf("%s %d:\n%s\nwant\n%s", tr.Outcome, tr.Turns, tr.Report, want)
+	}
+}
+
+// A report the check sends back is kept: a run that then runs out of turns still has it.
+func TestARefusedReportIsKept(t *testing.T) {
+	m := &script{replies: []Message{
+		call("f", "finish", `{"status":"met","report":"the first report"}`),
+		call("r", "read", `{"path":"a.go"}`),
+	}}
+	never := func(context.Context, string, string) (bool, string, error) { return false, "", nil }
+	tr := Run(context.Background(), Config{Model: m, Tools: []Tool{readTool}, Verify: never, MaxTurns: 2}, nil)
+	if tr.Outcome != Budget || tr.Report != "the first report" {
+		t.Fatalf("%s: %q", tr.Outcome, tr.Report)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/index"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
@@ -40,6 +41,7 @@ type item struct {
 	url      string
 	pr       *github.PullRequest // pull requests only
 	files    []github.ChangedFile
+	diff     string // the pull request's diff, when it was read from the local copy rather than from files' patches
 	assoc    string // the author's standing in the project, as GitHub says it
 	labels   []string
 	comments []github.Comment
@@ -79,12 +81,59 @@ func (s *Server) loadItem(ctx context.Context, ws *store.Workspace, kind string,
 	return it, nil
 }
 
+// localItem is a pull request or issue from Autobot's own copies: the item from the local copy of
+// pull requests and issues, a pull request's diff from the local copy of the code. It is nil when
+// they do not have it in full; the caller then reads GitHub.
+func (s *Server) localItem(ctx context.Context, ws *store.Workspace, kind string, number int) *item {
+	if !index.Ready(s.st, ws.ID) {
+		return nil
+	}
+	d, err := s.st.ItemIndex(ws.ID).Read(number)
+	if err != nil || d.Slim || d.Remote || d.Kind != kind {
+		return nil
+	}
+	path := "issues"
+	if kind == workflow.PR {
+		path = "pull"
+	}
+	it := &item{kind: kind, number: number, title: d.Title, state: d.State, body: d.Body, author: d.Author,
+		url: fmt.Sprintf("https://github.com/%s/%s/%d", ws.Name, path, number), assoc: d.Association, labels: d.Labels}
+	if kind != workflow.PR {
+		return it
+	}
+	if s.repos == nil || !s.repos.Ready(ws.ID) || d.HeadSHA == "" {
+		return nil
+	}
+	token, err := s.token(ws)
+	if err != nil {
+		return nil
+	}
+	if err := s.repos.Ensure(ctx, ws.ID, ws.Name, token, d.HeadSHA, number); err != nil {
+		return nil
+	}
+	r := s.repos.Repo(ws.ID, token)
+	base, err := r.Branch(ctx, d.Base)
+	if err != nil {
+		return nil
+	}
+	if it.diff, err = r.Diff(ctx, base, d.HeadSHA); err != nil || it.diff == "" {
+		return nil
+	}
+	for _, f := range d.Files {
+		it.files = append(it.files, github.ChangedFile{Path: f.Path, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions})
+	}
+	return it
+}
+
 // values are an item's built-in tags.
 func (it *item) values(ws *store.Workspace) map[string]string {
 	v := map[string]string{"repo": ws.Name}
 	n := strconv.Itoa(it.number)
 	if it.kind == workflow.PR {
-		diff := github.Diff(it.files)
+		diff := it.diff
+		if diff == "" {
+			diff = github.Diff(it.files)
+		}
 		if len(diff) > maxDiff {
 			diff = strings.ToValidUTF8(diff[:maxDiff], "") + "\n[the diff goes on; read the rest with the pr_diff tool]"
 		}

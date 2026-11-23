@@ -137,6 +137,13 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		}
 	}
 	data["Fields"], data["Agent"] = fields, n.Type == workflow.Agent
+	if n.Type == workflow.Agent && r.Method == http.MethodPost {
+		// An agent's test is posted from the canvas into a tab of its own, which opens on the run; one
+		// that could not start shows its error there, as a whole page.
+		data["Standalone"], data["Title"] = true, "Test · "+workflow.DisplayName(n)
+		s.render(w, r, status, "node_test.html", data)
+		return
+	}
 	s.renderFragment(w, r, status, "node_test.html", data)
 }
 
@@ -585,9 +592,13 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 	number, _ := strconv.Atoi(m[3])
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	it, err := s.loadItem(ctx, ws, kind, number)
-	if err != nil {
-		return fmt.Errorf("reading #%d from GitHub: %v", number, err)
+	// Autobot's own copy first; GitHub only for what it does not have.
+	it := s.localItem(ctx, ws, kind, number)
+	if it == nil {
+		var err error
+		if it, err = s.loadItem(ctx, ws, kind, number); err != nil {
+			return fmt.Errorf("reading #%d from GitHub: %v", number, err)
+		}
 	}
 	for k, v := range it.values(ws) {
 		set(k, v)

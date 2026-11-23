@@ -423,7 +423,7 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 	var page string
 	waitFor(t, "the agent to finish", func() bool {
 		_, page = b.get(loc)
-		return !strings.Contains(page, `http-equiv="refresh"`)
+		return !strings.Contains(page, `/static/live.js`)
 	})
 	if !strings.Contains(page, "Goal met") || !strings.Contains(page, "bash: [exit 0]") {
 		t.Fatalf("run page:\n%s", page)

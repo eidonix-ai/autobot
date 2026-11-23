@@ -82,6 +82,14 @@ func TestBlockTests(t *testing.T) {
 		t.Fatalf("agent form %d:\n%s", code, body)
 	}
 
+	// An agent test that cannot start says why on a whole page, in the tab it opened, styled, and runs
+	// again from there in the same tab.
+	code, _, page := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/elsewhere/r/pull/7"}})
+	if code != http.StatusBadRequest || !strings.Contains(page, "/static/app.css") || !strings.Contains(page, "the link must be to a pull request or issue of o/r") ||
+		strings.Contains(page, `target="_blank"`) || strings.Contains(page, "data-close") {
+		t.Fatalf("a failed agent test %d:\n%s", code, page)
+	}
+
 	// An agent run reads the pull request through its tools and finishes with its report.
 	code, loc, _ := b.post(base+"ag/test", url.Values{"csrf": {tok}, "tag_pr_link": {"https://github.com/o/r/pull/7"}})
 	if code != http.StatusSeeOther || !strings.HasPrefix(loc, "/w/o/r/agent-runs/") {
@@ -90,7 +98,7 @@ func TestBlockTests(t *testing.T) {
 	var body string
 	for i := 0; i < 100; i++ {
 		_, body = b.get(loc)
-		if !strings.Contains(body, `http-equiv="refresh"`) {
+		if !strings.Contains(body, `/static/live.js`) {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)

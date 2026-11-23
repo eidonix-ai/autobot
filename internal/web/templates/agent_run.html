@@ -1,14 +1,16 @@
 {{define "content"}}
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/workflows/{{.Run.Kind}}">Workflows</a> /</p>
 <h1>{{.Run.NodeName}}{{if .Run.Test}} <span class="muted">test</span>{{end}}</h1>
+<div id="run-head" data-live>
 <p class="status"><span class="dot {{.Dot}}"></span> {{.Outcome}} · {{.Run.Model}} · {{.T.Turns}} turn{{if ne .T.Turns 1}}s{{end}} · {{.T.In}} tokens in{{with .Cache}} ({{.}}){{end}}, {{.T.Out}} out · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if not .Run.FinishedAt.IsZero}}, took {{.Took}}{{end}}</p>
 {{with .T.Error}}<p class="error">{{.}}</p>{{end}}
 {{if .Report}}<section class="panel"><h2>Report</h2><div class="md">{{.Report}}</div></section>{{end}}
 {{if .T.Plan}}<section class="panel"><h2>Plan</h2><ul class="plan">{{range .T.Plan}}<li class="{{.Status}}">{{.Step}}{{with .Note}} <span class="muted">({{.}})</span>{{end}}</li>{{end}}</ul></section>{{end}}
+</div>
 <section class="panel"><h2>Transcript</h2>
 {{if .Gone}}<p class="muted">The conversation was deleted: its pull request or issue closed more than 30 days ago.</p>{{end}}
 {{if and (gt .Run.MsgsFrom 0) (not .Gone)}}<p class="muted">This run continues a conversation: its first {{.Run.MsgsFrom}} messages are from earlier runs.</p>{{end}}
-<ol class="transcript">
+<ol class="transcript" id="run-transcript" data-live data-live-list>
 {{range .Entries}}
 <li class="{{.Role}}">
   {{if .Collapsed}}<details><summary>{{.Label}}</summary><pre>{{.Text}}</pre></details>
@@ -19,4 +21,4 @@
 </ol>
 </section>
 {{end}}
-{{define "head"}}{{if eq .Run.Status "running"}}<meta http-equiv="refresh" content="3">{{end}}{{end}}
+{{define "head"}}{{if eq .Run.Status "running"}}<script src="/static/live.js"></script>{{end}}{{end}}

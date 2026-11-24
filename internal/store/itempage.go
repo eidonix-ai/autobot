@@ -169,6 +169,6 @@ func (s *Store) LastRuns(workspaceID int64, kind string, numbers []int) (map[int
 		return nil, false, err
 	}
 	var going int
-	err = s.db.QueryRow(`SELECT COUNT(*) FROM (SELECT 1 FROM workflow_runs WHERE workspace_id = ? AND kind = ? AND status = 'running' AND item IN (`+in+`) LIMIT 1)`, args...).Scan(&going)
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM (SELECT 1 FROM workflow_runs WHERE workspace_id = ? AND kind = ? AND status IN ('running', 'queued') AND item IN (`+in+`) LIMIT 1)`, args...).Scan(&going)
 	return out, going > 0, err
 }

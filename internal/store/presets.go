@@ -371,7 +371,7 @@ func (s *Store) RemovePreset(id int64, rewrite func(StoredGraph) (string, bool, 
 	}
 	for _, table := range []struct{ name, where, set string }{
 		{"workflows", "1 = 1", ", version = version + 1"},
-		{"workflow_runs", "status = 'running'", ""},
+		{"workflow_runs", "status IN ('running', 'queued')", ""},
 	} {
 		rows, err := tx.Query(`SELECT rowid, workspace_id, kind, graph FROM ` + table.name + ` WHERE ` + table.where)
 		if err != nil {

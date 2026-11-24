@@ -391,6 +391,6 @@ func (s *Store) PruneEvents(before time.Time) error {
 func (s *Store) WorkflowRunning(workspaceID int64, kind, node string, item int) (bool, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT count(*) FROM workflow_runs WHERE workspace_id = ? AND kind = ? AND event_node = ? AND item = ?
-		AND status = 'running'`, workspaceID, kind, node, item).Scan(&n)
+		AND status IN ('running', 'queued')`, workspaceID, kind, node, item).Scan(&n)
 	return n > 0, err
 }

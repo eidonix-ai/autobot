@@ -201,38 +201,51 @@ func (s *Server) ResumeWorkflows(ctx context.Context) {
 }
 
 func (s *Server) resume(ctx context.Context, id int64) error {
-	run, err := s.st.WorkflowRun(id)
+	rs, err := s.runState(ctx, id)
 	if err != nil {
 		return err
+	}
+	s.launch(rs)
+	return nil
+}
+
+// runState builds the state to drive a recorded run from: its workflow as it was, and its item and
+// the case's tags as they are now. A run resumed after a restart and a queued run that is starting
+// are both driven from it.
+func (s *Server) runState(ctx context.Context, id int64) (*runState, error) {
+	run, err := s.st.WorkflowRun(id)
+	if err != nil {
+		return nil, err
 	}
 	ws, err := s.st.WorkspaceByID(run.WorkspaceID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var g workflow.Graph
 	if err := json.Unmarshal([]byte(run.Graph), &g); err != nil {
-		return err
+		return nil, err
 	}
 	lctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	it, err := s.loadItem(lctx, ws, run.Kind, run.Item)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rs := &runState{ws: ws, run: run, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}}
+	if run.StartedByID != 0 {
+		rs.by, _ = s.st.User(run.StartedByID)
+	}
 	rs.builtIn["repo:opt_out"] = s.optOut(ws)
 	if c, err := s.st.CaseByNumber(ws.ID, run.Item); err == nil && !run.DryRun { // a dry run reads nothing of the real case
 		if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		rs.builtIn["charter"] = c.Body
 	}
 	rs.builtIn["machines"] = s.machinesSummary(ws)
-
-	s.launch(rs)
-	return nil
+	return rs, nil
 }
 
 // approvalClick takes a click on an approval's button. Anyone who can see the forum may answer

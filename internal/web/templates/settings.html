@@ -34,6 +34,17 @@
 </form>
 </section>
 
+<section class="panel" id="max-runs">
+<h2>Runs at once</h2>
+{{with .MaxRunsError}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.WS.Path}}/settings/max-runs" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label><span class="lbl">Run at most <span class="info" tabindex="0" data-tip="How many workflow runs of this workspace go on at once, dry runs too. A run over the limit waits in the queue, oldest first, and starts when another ends or stops. A run that is only waiting for a person's approval does not count.">ⓘ</span></span>
+    <input type="number" name="max_runs" value="{{.MaxRuns}}" min="{{.MaxRunsMin}}" max="{{.MaxRunsMax}}" step="1" required></label>
+  <button>Save</button>
+</form>
+</section>
+
 <section class="panel">
 <h2>GitHub identity</h2>
 {{if .GH}}

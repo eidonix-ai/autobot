@@ -148,6 +148,12 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	} else {
 		data["OptOut"] = s.optOut(ws)
 	}
+	if _, typed := data["MaxRunsTyped"]; typed {
+		data["MaxRuns"] = data["MaxRunsTyped"]
+	} else {
+		data["MaxRuns"] = s.st.MaxRuns(ws.ID)
+	}
+	data["MaxRunsMin"], data["MaxRunsMax"] = store.MinMaxRuns, store.MaxMaxRuns
 	data["SecretPath"], data["NewSecret"] = SecretPath, newSecret()
 	s.discordSettings(r, ws, data)
 	if st, err := index.StatusOf(s.st, ws.ID); err == nil {

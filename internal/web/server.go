@@ -59,6 +59,7 @@ type Server struct {
 	poll         *poller    // what the poller remembers in memory
 	repos        *repo.Mirrors
 	running      liveRuns // the workflow runs and agent runs going on, to stop them (see stop.go)
+	slots        slots    // the runs that count against their workspace's limit (see queue.go)
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -178,6 +179,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/settings", s.auth(s.settings))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/name", s.admin(s.renameWorkspace))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/opt-out", s.auth(s.saveOptOut))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/max-runs", s.auth(s.saveMaxRuns))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github", s.auth(s.setGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github/remove", s.auth(s.removeGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/members", s.admin(s.setMembers))

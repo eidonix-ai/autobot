@@ -856,12 +856,12 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	case workflow.Approval:
 		a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 		if err == nil {
-			err = a.Check()
+			err = a.CheckRun()
 		}
 		if err != nil {
 			return stepOutcome{err: err}
 		}
-		return s.approvalStep(ctx, rs, n, a, strings.TrimSpace(workflow.Render(a.Request, values)))
+		return s.approvalStep(ctx, rs, n, a, strings.TrimSpace(workflow.Render(a.Request, values)), strings.TrimSpace(workflow.Render(a.Question, values)))
 	}
 	return stepOutcome{err: fmt.Errorf("a %s block cannot run yet", n.Type)}
 }

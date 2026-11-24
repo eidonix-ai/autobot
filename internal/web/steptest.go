@@ -62,9 +62,9 @@ func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, e
 	case workflow.Approval:
 		s, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 		if err == nil {
-			err = s.Check()
+			err = s.CheckRun()
 		}
-		return s, []string{s.Request}, err
+		return s, []string{s.Question, s.Request}, err
 	case workflow.Junction:
 		return nil, nil, errors.New("a Node only connects links: there is nothing to test")
 	case workflow.Condition, workflow.TestRun:
@@ -170,7 +170,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 	case workflow.PostSettings:
 		data["Preview"], data["Where"] = workflow.Render(st.Message, values), "Would post: "+st.Where()
 	case workflow.ApprovalSettings:
-		data["Preview"], data["Where"] = workflow.Render(st.Request, values), "Would ask"
+		data["Preview"], data["Where"] = strings.TrimSpace(workflow.Render(st.Request, values)+"\n\n"+workflow.Render(st.Question, values)), "Would ask"
 	case workflow.DecisionSettings:
 		answer, err := s.decide(r.Context(), ws, st, values)
 		if err != nil {

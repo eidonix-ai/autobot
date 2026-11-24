@@ -374,7 +374,8 @@ func (s EventSettings) Check(typ string) error {
 		return nil
 	}
 	if typ == "pr_activity" {
-		if len(s.Activity) == 0 {
+		// Summoned with no activity ticked runs on a summons only; always-run needs something to run on.
+		if len(s.Activity) == 0 && s.Mode != "summoned" {
 			return errors.New("choose at least one kind of activity")
 		}
 		for _, a := range s.Activity {

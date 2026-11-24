@@ -185,6 +185,7 @@ func (f *packetFixture) items() {
 	save(320, "issue", "Buffers need docs", "", "open", "dave", false, "2026-11-06", "2026-11-15", nil, nil)
 	save(330, "issue", "Unrelated tooling thing", "Nothing to do with it.", "open", "alice", false, "2026-11-07", "2026-11-22", nil, nil)
 	save(340, "pr", "Rework build script", "", "open", "dave", false, "2026-11-08", "2026-11-18", nil, nil, "scripts/run.sh")
+	save(350, "pr", "Abandoned attempt", "", "closed", "dave", false, "2026-10-10", "2026-10-12", nil, nil, "docs/guide.md") // closed, not merged: not a candidate
 	save(460, "issue", "Slow settling", "", "closed", "carol", false, "2026-09-01", "2026-11-01", []string{"performance"}, nil)
 	// The author's history: a merged pull request in two areas, a closed one, and one too old to count.
 	save(101, "pr", "Add compression to helios", "The first compression.", "closed", "alice", true, "2026-10-01", "2026-10-05", nil, nil, "helios/src/compress.rs", "docs/guide.md")
@@ -359,6 +360,9 @@ func TestPacketRelatedItems(t *testing.T) {
 	mustHave(t, "#330 (author only)", line(330), "found by: same author")
 	mustHave(t, "#340 (files only)", line(340), "found by: same files (1 in common)")
 	mustHave(t, "#460 (label only)", line(460), "found by: same label (performance)")
+	if line(350) != "" {
+		t.Errorf("a pull request closed without merging is a candidate: %s", line(350))
+	}
 	if line(500) != "" {
 		t.Errorf("the item is its own candidate: %s", line(500))
 	}

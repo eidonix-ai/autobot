@@ -68,6 +68,8 @@ func TestItemLists(t *testing.T) {
 	if len(briefs) != 2 || briefs[2].Title != "Recent merged" || briefs[4].State != "closed" {
 		t.Fatalf("briefs: %+v", briefs)
 	}
+	saveAs(t, st, a.ID, Item{Number: 6, Kind: "pr", Title: "Closed, not merged", State: "closed", Author: "alice", Created: t0.Add(-3 * day), Updated: t0}) // its files do not count
+	st.SaveFiles(a.ID, 6, []ItemFile{{Path: "unmerged/u.go"}})
 	files, _ := ix.MergedFiles("Alice", t0.Add(-180*day))
 	if len(files) != 1 || len(files[2]) != 2 || files[2][0] != "core/a.go" {
 		t.Fatalf("merged files: %+v", files)

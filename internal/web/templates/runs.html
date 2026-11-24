@@ -8,9 +8,9 @@
 {{range .Rows}}<tr>
   <td><a href="{{.ItemURL}}">#{{.Item}}</a> <span class="muted">{{.Title}}</span></td>
   <td class="nowrap">{{.Author}}</td>
-  <td class="nowrap">{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
-  <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
-  <td class="muted nowrap">{{ts .Started}}</td>
+  <td>{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
+  <td><span class="dot {{.Dot}}"></span> {{.Status}}</td>
+  <td class="muted nowrap" title="{{ts .Started}}">{{tsShort .Started}}</td>
   <td class="nowrap">{{if eq .By "Live"}}<span class="muted">Live</span>{{else}}{{.By}}{{end}}</td>
   <td class="nowrap">{{.Took}}</td>
   <td><a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></td>
@@ -28,7 +28,7 @@
   <td>{{if .Item}}#{{.Item}}{{else}}<span class="muted">none</span>{{end}}</td>
   <td class="muted">{{.Model}}</td>
   <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
-  <td class="muted nowrap">{{ts .Started}}</td>
+  <td class="muted nowrap" title="{{ts .Started}}">{{tsShort .Started}}</td>
   <td>{{.By}}</td>
   <td class="nowrap">{{.Took}}</td>
 </tr>{{else}}<tr><td colspan="7" class="muted">No tests yet.</td></tr>{{end}}

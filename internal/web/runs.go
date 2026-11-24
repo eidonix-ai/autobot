@@ -208,5 +208,5 @@ func (s *Server) runsPage(w http.ResponseWriter, r *http.Request) {
 		trows = append(trows, row)
 	}
 	s.render(w, r, http.StatusOK, "runs.html", map[string]any{"Title": "Runs · " + ws.Name, "WS": ws, "Rows": rows, "Tests": trows,
-		"Running": running, "Recent": recentRuns})
+		"Running": running, "Recent": recentRuns, "Wide": true})
 }

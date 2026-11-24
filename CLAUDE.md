@@ -78,8 +78,21 @@ git only through its environment, never a command line or the mirror's config.
    own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
    fan out and merge; loops are refused for now. Templates use {tags}: built-in ones are a parent and
    its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {charter}),
-   so the Test box asks only for the parent; old names such as {pr_title}, {project_charter} and {repo:charter} still work. A step's "Output to" tag is
-   kept per case (one PR or issue) and replaced by the next write. Shift-click tests one block with
+   so the Test box asks only for the parent; old names such as {pr_title}, {project_charter} and {repo:charter} still work.
+   The colon is for fields Autobot fills from a built-in parent; a dot names a part of a step's output
+   (Derek, 2026-11-23). A step's "Output to" tag (say `gather`) is kept per case (one PR or issue) and
+   replaced by the next write, with its parts: `{gather}` is the whole (an Agent's "## Summary", "## Report"
+   and, when it has notes, "## Notes"), `{gather.summary}`, `{gather.report}` and `{gather.scratchpad}`
+   (the thread's notes in full, high importance first, then medium, then low, each "#N [importance] Title"
+   and its body; the main agent's only) the parts; a block with no closing step has one report, which is its
+   summary too, so `{gather}` is the report plus the Notes. A Decision's output has no parts. `CheckTemplates`
+   refuses an unknown part, a colon on an output, a dot on a built-in or a decision (typo checks, not limits).
+   `{input}` is what the step before produced, in the same shape (`{input.summary}`, `{input.report}`,
+   `{input.scratchpad}`): after an Agent its whole and parts; after any other step its output text, as both
+   summary and report, with no notes; with several links in, each under its step's name. The old
+   `{previous_output}` still means `{input.report}` (the report after an agent) and is not listed. A new GitHub
+   Comment, Discord Post or Case Entry block starts with `{input.report}`; saved blocks keep their text.
+   Shift-click tests one block with
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never
    opened is marked "(not opened)" where it is cited; the plan is the agent's own notes. Only an
@@ -107,10 +120,12 @@ git only through its environment, never a command line or the mirror's config.
    added, with tools scratchpad_write, scratchpad_index, scratchpad_read and scratchpad_search.
    Every run is a new session, starting fresh, in its **thread**: (workspace, kind, the block that
    started it, item). A thread has one scratchpad, shared by all its runs, and every run's final report
-   is also kept in it, as a high-importance entry "Report of <date>, run <id>". Re-run "resume" and a
+   is also kept in it, as a high-importance entry "Report of <date>, run <id>" (the full report as its body,
+   the run's summary kept with it and cut to one line as its description). Re-run "resume" and a
    reference block ("New reference", dashed, "Continue the conversation of") open a session with the
-   block's own Instruction and Done when, the thread's newest report, the scratchpad index and what is
-   new on the pull request since (the commits and comments after the head and time the previous run
+   block's own Instruction and Done when, "Your last summary on this item:" and the thread's newest
+   summary (not the full report: one line says the report is that entry, readable with scratchpad_read),
+   the scratchpad index and what is new on the pull request since (the commits and comments after the head and time the previous run
    saw); their model and tools are the block's own (a reference block starts with the other block's
    model, an ordinary setting). With no earlier report the block skips or starts fresh; Re-run
    "fresh" starts a new thread with an empty scratchpad. A thread takes one run at a time (the others
@@ -120,7 +135,15 @@ git only through its environment, never a command line or the mirror's config.
    "Research summary", it gets one more turn that may only write to the scratchpad, and a new session
    (its own conversation, the preamble, only read-only code and pull request tools, its own turns and
    10 minutes) writes the report from the scratchpad and finishes with it. The research's finish asks
-   for a short summary only (the full report is written next). The run's report is the written one,
+   for a short summary only (the full report is written next). The writing session's finish takes two
+   parts, both required: a summary (at most about 300 words: the 5 to 8 findings that matter most, one
+   line each with its citation, then the open questions) and the full report (opening with a short "Key
+   findings" section); both get the "(not opened)" marks. A finish with no summary is not refused: the
+   summary is made from the report's Key findings section, else its first 300 words, and says so. Every
+   run that has a report has a summary (a block with no closing step: its report; a failed writer, a
+   crash, a run cut off by a restart or a notes report: made the same way), kept in the run's summary
+   JSON as `summary` beside `report`; the run page has a Summary panel above the Report, both live
+   (none for a run whose summary is its report). The run's report is the written one,
    else the research's own, else the high and medium notes in order; its outcome stays the research's,
    and "(not opened)" is judged against the files both sessions read. Conversations are stored with test-run
    logs as gzip files in /var/lib/autobot/runs: test logs 30 days, a conversation while its item is open

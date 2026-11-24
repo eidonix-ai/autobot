@@ -56,8 +56,8 @@ func TestOrphanRunsGetANotesReport(t *testing.T) {
 	}
 	r, _ := st.AgentRun(cut)
 	var sum struct {
-		Report, Error, Outcome string
-		Turns                  int
+		Report, Summary, Error, Outcome string
+		Turns                           int
 	}
 	json.Unmarshal([]byte(r.Summary), &sum)
 	want := "## Finding\n\nthe finding\n\n## Detail\n\na detail"
@@ -67,6 +67,11 @@ func TestOrphanRunsGetANotesReport(t *testing.T) {
 	rep, ok, _ := st.Pad(th2).LastReport()
 	if !ok || rep.Body != want || rep.Title != ReportTitle(cut) || rep.Importance != High {
 		t.Fatalf("its thread's report: %+v %v", rep, ok)
+	}
+	// It has a summary too, in the run's row and kept with the report: a notes report has no writer's
+	// summary, so it is made from the report.
+	if sum.Summary == "" || sum.Summary != FallbackSummary(want) || rep.Summary != sum.Summary || rep.Description != "## Finding" {
+		t.Fatalf("its summary %q, kept %q, described %q", sum.Summary, rep.Summary, rep.Description)
 	}
 	// What the run had saved stays: its summary keeps its turns.
 	r, _ = st.AgentRun(quiet)

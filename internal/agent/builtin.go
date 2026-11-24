@@ -56,7 +56,7 @@ var padSearchSpec = ToolSpec{Name: "scratchpad_search", Description: "Search the
 // writes the report from the scratchpad, which reads it but adds nothing and never compacts.
 var (
 	researchSpecs = []ToolSpec{finishSpec, planSpec, pruneSpec, compactSpec, padWriteSpec, padIndexSpec, padReadSpec, padSearchSpec}
-	writerSpecs   = []ToolSpec{finishSpec, planSpec, pruneSpec, padIndexSpec, padReadSpec, padSearchSpec}
+	writerSpecs   = []ToolSpec{finishWriterSpec, planSpec, pruneSpec, padIndexSpec, padReadSpec, padSearchSpec}
 )
 
 // forcedTools are what the agent is offered on the turn it is told to compact.
@@ -121,9 +121,9 @@ func IndexOf(all []store.PadEntry, importance string) string {
 }
 
 // SubInfo is what the agent knows of a sub-agent of its run: its name, title, how it ended ("running"
-// while it works) and its report, if any.
+// while it works) and its summary, if any.
 type SubInfo struct {
-	Name, Title, Outcome, Report string
+	Name, Title, Outcome, Summary string
 }
 
 // SubView is a run's sub-agents, as an agent that did not run them sees them: their notes can be read,
@@ -133,12 +133,12 @@ type SubView interface {
 	Summaries() []SubInfo
 }
 
-// subLines lists sub-agents one to a line: s1 "title": met, then the first line of the report.
+// subLines lists sub-agents one to a line: s1 "title": met, then the first line of the summary.
 func subLines(infos []SubInfo) string {
 	var b strings.Builder
 	for _, i := range infos {
 		fmt.Fprintf(&b, "%s %q: %s", i.Name, i.Title, i.Outcome)
-		if first := firstLine(i.Report, 200); first != "" {
+		if first := firstLine(i.Summary, 200); first != "" {
 			b.WriteString(" — " + first)
 		}
 		b.WriteString("\n")

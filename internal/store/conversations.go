@@ -274,9 +274,10 @@ func (s *Store) moveAgentRun(id int64) error {
 }
 
 // summaryKept are the parts of an agent run's summary that stay once its conversation is deleted.
-var summaryKept = []string{"turns", "tokens_in", "tokens_out", "tokens_cached", "outcome", "report", "error"}
+var summaryKept = []string{"turns", "tokens_in", "tokens_out", "tokens_cached", "outcome", "summary", "report", "error"}
 
-// maxKeptReport is how much of a report stays in a run's row after its conversation is deleted.
+// maxKeptReport is how much of a report, and of its summary, stays in a run's row after its
+// conversation is deleted.
 const maxKeptReport = 2 << 10
 
 // slimSummary cuts an agent run's summary to what is kept: outcome, turns, tokens, and the report
@@ -292,10 +293,12 @@ func slimSummary(summary string) string {
 			kept[k] = v
 		}
 	}
-	var report string
-	if json.Unmarshal(kept["report"], &report) == nil && len(report) > maxKeptReport {
-		b, _ := json.Marshal(strings.ToValidUTF8(report[:maxKeptReport], "") + " […]")
-		kept["report"] = b
+	for _, k := range []string{"report", "summary"} {
+		var text string
+		if json.Unmarshal(kept[k], &text) == nil && len(text) > maxKeptReport {
+			b, _ := json.Marshal(strings.ToValidUTF8(text[:maxKeptReport], "") + " […]")
+			kept[k] = b
+		}
 	}
 	b, err := json.Marshal(kept)
 	if err != nil {

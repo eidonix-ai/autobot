@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -29,7 +30,7 @@ type CaseEntrySettings struct {
 
 // DefaultCaseEntry is a new case entry node's settings.
 func DefaultCaseEntry() CaseEntrySettings {
-	return CaseEntrySettings{Entry: "{previous_output}", Finalize: true}
+	return CaseEntrySettings{Entry: "{input.report}", Finalize: true}
 }
 
 // CaseEntrySettingsOf reads a case entry node's settings, or the defaults when it has none yet.
@@ -403,13 +404,29 @@ type Tag struct {
 	Auto        bool // filled in by Autobot, never typed or set
 }
 
-// Field reports whether the tag is a field of a parent ({pr:title} of {pr}).
-func (t Tag) Field() bool { return strings.Contains(t.Name, ":") }
+// Field reports whether the tag belongs under a parent: a field of it ({pr:title} of {pr}), or a
+// part of an Agent's output ({gather.report} of {gather}).
+func (t Tag) Field() bool { return strings.ContainsAny(t.Name, ":.") }
+
+// OutputParts are the parts of an Agent block's output, which a template names with a dot after
+// the output tag ({gather.report}). The tag itself holds all of them under headings.
+var OutputParts = []Tag{
+	{"summary", "the summary", false},
+	{"report", "the full report", false},
+	{"scratchpad", "its notes in full", false},
+}
+
+func isOutputPart(name string) bool {
+	return slices.ContainsFunc(OutputParts, func(p Tag) bool { return p.Name == name })
+}
 
 var commonTags = []Tag{
 	{"repo", "the repository, owner/name", true},
 	{"charter", "the project charter (kept in Autobot)", true},
-	{"previous_output", "the output of the step this one follows", false},
+	{"input", "what the step before produced: its summary, report and notes", false},
+	{"input.summary", "the summary", false},
+	{"input.report", "the full report", false},
+	{"input.scratchpad", "its notes in full", false},
 }
 
 var prTags = []Tag{
@@ -441,6 +458,9 @@ var oldTags = map[string]string{
 	"pr_diff": "pr:diff", "pr_files": "pr:files", "pr_new_commits": "pr:new_commits", "pr_new_comments": "pr:new_comments",
 	"issue_link": "issue", "issue_number": "issue:number", "issue_title": "issue:title", "issue_body": "issue:body",
 	"issue_author": "issue:author", "project_charter": "charter", "repo:charter": "charter",
+	// What the step before produced was {previous_output}: its report after an agent, its output
+	// after any other step, each under its name where several merge. That is {input.report} still.
+	"previous_output": "input.report",
 }
 
 // Tags lists the built-in tags of a workflow kind.
@@ -493,9 +513,10 @@ func builtIn(name, kind string) bool {
 	return false
 }
 
-// tagRE finds the tags of a template: a word, or a word:field, in braces. Doubled braces are literal
-// ({{word}} is the text {word}), and braces around anything else, as in JSON, are just text.
-var tagRE = regexp.MustCompile(`\{\{|\}\}|\{([a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*)?)\}`)
+// tagRE finds the tags of a template: a word, a word:field (Autobot fills a parent's fields) or a
+// word.part (a part of a step's output), in braces. Doubled braces are literal ({{word}} is the
+// text {word}), and braces around anything else, as in JSON, are just text.
+var tagRE = regexp.MustCompile(`\{\{|\}\}|\{([a-z][a-z0-9_]*(?:[:.][a-z][a-z0-9_]*)?)\}`)
 
 // TemplateTags lists the tags a template uses, as written, in order, each once.
 func TemplateTags(text string) []string {
@@ -532,9 +553,13 @@ func Render(text string, values map[string]string) string {
 	})
 }
 
+// OutputSet is the output tags a workflow's nodes set: true for an Agent's, which has parts
+// ({gather.report}), false for a Decision's, which is one value.
+type OutputSet map[string]bool
+
 // OutputTags lists the output tags set by the workflow's nodes other than except.
-func (g Graph) OutputTags(kind, except string) map[string]bool {
-	out := map[string]bool{}
+func (g Graph) OutputTags(kind, except string) OutputSet {
+	out := OutputSet{}
 	for _, n := range g.Nodes {
 		if n.ID == except {
 			continue
@@ -546,26 +571,81 @@ func (g Graph) OutputTags(kind, except string) map[string]bool {
 			}
 		case Decision:
 			if s, err := DecisionSettingsOf(n, kind); err == nil && s.OutputTo != "" {
-				out[s.OutputTo] = true
+				if _, taken := out[s.OutputTo]; !taken {
+					out[s.OutputTo] = false
+				}
 			}
 		}
 	}
 	return out
 }
 
+// OutputTagList is what the Tags list shows of the outputs: each tag, with an Agent's parts after
+// it, in order.
+func OutputTagList(outputs OutputSet) []Tag {
+	var list []Tag
+	for _, name := range slices.Sorted(maps.Keys(outputs)) {
+		if !outputs[name] {
+			list = append(list, Tag{name, "another step's output", false})
+			continue
+		}
+		list = append(list, Tag{name, "its summary, report and notes", false})
+		for _, p := range OutputParts {
+			list = append(list, Tag{name + "." + p.Name, p.About, false})
+		}
+	}
+	return list
+}
+
 // CheckTemplates confirms that every tag the templates use is built in or set by another node of
 // the workflow (outputs). It is checked when a node's settings are saved, not on every save of the
 // canvas, so removing a node is never refused because another uses its output.
-func CheckTemplates(kind string, outputs map[string]bool, templates ...string) error {
+//
+// A colon is for the fields Autobot fills from a built-in parent ({pr:title}); a dot is for a part
+// of an Agent's output ({gather.report}), which no other tag has.
+func CheckTemplates(kind string, outputs OutputSet, templates ...string) error {
 	for _, t := range templates {
 		for _, tag := range TemplateTags(t) {
-			if !builtIn(tag, kind) && !outputs[tag] {
-				if TagField(tag) != "" {
-					return fmt.Errorf("{%s} is not a tag here: see the Tags list for the fields of {%s}", tag, TagField(tag))
-				}
-				return fmt.Errorf("{%s} is not a tag here: use a built-in tag or another step's output tag, or write {{%s}} for the text itself", tag, tag)
+			if err := checkTag(kind, outputs, tag); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+func checkTag(kind string, outputs OutputSet, tag string) error {
+	if builtIn(tag, kind) {
+		return nil
+	}
+	if parent, part, dotted := strings.Cut(tag, "."); dotted {
+		isAgent, isOutput := outputs[parent]
+		switch {
+		case parent == "input":
+			return fmt.Errorf("{%s} is not a part of {input}: see the Tags list for its parts", tag)
+		case builtIn(parent, kind):
+			return fmt.Errorf("{%s} is not a tag here: the fields of the built-in {%s} use a colon; see the Tags list", tag, parent)
+		case !isOutput:
+			return fmt.Errorf("{%s} is not a tag here: {%s} is not another step's output tag; see the Tags list", tag, parent)
+		case !isAgent:
+			return fmt.Errorf("{%s} is not a tag here: a decision's output is one value, written {%s}", tag, parent)
+		case !isOutputPart(part):
+			return fmt.Errorf("{%s} is not a part of an output: see the Tags list for the parts of {%s}", tag, parent)
+		}
+		return nil
+	}
+	if parent := TagField(tag); parent != "" {
+		isAgent, isOutput := outputs[parent]
+		switch {
+		case isAgent || parent == "input":
+			return fmt.Errorf("{%s} is not a tag here: the parts of a step's output use a dot, such as {%s.report}", tag, parent)
+		case isOutput:
+			return fmt.Errorf("{%s} is not a tag here: a decision's output is one value, written {%s}", tag, parent)
+		}
+		return fmt.Errorf("{%s} is not a tag here: see the Tags list for the fields of {%s}", tag, parent)
+	}
+	if _, ok := outputs[tag]; !ok {
+		return fmt.Errorf("{%s} is not a tag here: use a built-in tag or another step's output tag, or write {{%s}} for the text itself", tag, tag)
 	}
 	return nil
 }

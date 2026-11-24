@@ -45,5 +45,5 @@
 </html>{{end}}
 {{define "tags"}}<details class="tags"><summary>Tags</summary>
 <dl>{{range .Tags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{if .Auto}}<span class="auto" title="Filled in by Autobot; it cannot be set">auto</span> {{end}}{{.About}}</dd>{{end}}
-{{range .OutputTags}}<dt><code>{{"{"}}{{.}}{{"}"}}</code></dt><dd>another step's output</dd>{{end}}</dl>
+{{range .OutputTags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{.About}}</dd>{{end}}</dl>
 </details>{{end}}

@@ -257,7 +257,7 @@ func TestContinuationOpensFreshFromTheLastReport(t *testing.T) {
 		t.Fatalf("the continuation's first request has %d messages: %.600s", len(msgs), reqs[1])
 	}
 	opening := msgs[1].Content
-	wantStart := "Recheck PR 1.\n\nDone when: goal of B\n\nYour last report on this item:\nReport 1.\n\nYour notes so far, readable with scratchpad_read and scratchpad_search:\n#1 [high] Report of "
+	wantStart := "Recheck PR 1.\n\nDone when: goal of B\n\nYour last summary on this item:\nReport 1.\n\nThe full report is entry #1 of your notes: read it with scratchpad_read.\n\nYour notes so far, readable with scratchpad_read and scratchpad_search:\n#1 [high] Report of "
 	if !strings.HasPrefix(opening, wantStart) {
 		t.Fatalf("the opening message:\n%s", opening)
 	}
@@ -308,10 +308,10 @@ func TestEachReportIsAnEntryAndTheNewestOpensTheNext(t *testing.T) {
 	}
 	// The second run's opening had the first report; the third's has the second, and not the first.
 	reqs := c.llm.requests()
-	if got := section(messagesOf(t, reqs[1])[1].Content, "Your last report on this item:\n", "\n\nYour notes so far"); got != "Report 1." {
+	if got := section(messagesOf(t, reqs[1])[1].Content, "Your last summary on this item:\n", "\n\nThe full report is entry"); got != "Report 1." {
 		t.Fatalf("the second run opened with %q", got)
 	}
-	if got := section(messagesOf(t, reqs[2])[1].Content, "Your last report on this item:\n", "\n\nYour notes so far"); got != "Report 2." {
+	if got := section(messagesOf(t, reqs[2])[1].Content, "Your last summary on this item:\n", "\n\nThe full report is entry"); got != "Report 2." {
 		t.Fatalf("the third run opened with %q", got)
 	}
 }
@@ -375,7 +375,7 @@ func TestNoEarlierReportSkipOrStartFresh(t *testing.T) {
 		if fresh {
 			// A thread of its own, opening with its instruction and no report.
 			if len(reqs) != 1 || steps["B"].Output != "Report 1." || steps["B"].Error != "" ||
-				!strings.Contains(lastMessage(t, reqs[0]), "Recheck PR 1, this is B.") || strings.Contains(reqs[0], "Your last report") {
+				!strings.Contains(lastMessage(t, reqs[0]), "Recheck PR 1, this is B.") || strings.Contains(reqs[0], "Your last summary") {
 				t.Fatalf("fresh: %d requests, %+v", len(reqs), steps["B"])
 			}
 			if th, err := c.st.LatestThread(c.ws.ID, workflow.PR, "B", 1); err != nil || th.NodeID != "B" {
@@ -411,7 +411,7 @@ func TestThreadWithoutAReport(t *testing.T) {
 	}
 	steps := c.run("ev1")
 	opening := lastMessage(t, c.llm.requests()[0])
-	if c.agentRun(steps, "A").Thread != th || strings.Contains(opening, "Your last report") || !strings.Contains(opening, "#1 [high] a finding — d") {
+	if c.agentRun(steps, "A").Thread != th || strings.Contains(opening, "Your last summary") || !strings.Contains(opening, "#1 [high] a finding — d") {
 		t.Fatalf("thread %d, opening:\n%s", c.agentRun(steps, "A").Thread, opening)
 	}
 }
@@ -435,13 +435,13 @@ func TestRerunResumesOrStartsAnEmptyThread(t *testing.T) {
 	r2 := c.agentRun(c.run("ev1"), "A")
 	reqs := c.llm.requests()
 	msgs := messagesOf(t, reqs[1])
-	if r2.Thread != r1.Thread || len(msgs) != 2 || !strings.HasPrefix(msgs[1].Content, "Anything new? No new comments.\n\nDone when: goal of A\n\nYour last report on this item:\nReport 1.") {
+	if r2.Thread != r1.Thread || len(msgs) != 2 || !strings.HasPrefix(msgs[1].Content, "Anything new? No new comments.\n\nDone when: goal of A\n\nYour last summary on this item:\nReport 1.") {
 		t.Fatalf("resumed (thread %d, then %d):\n%q", r1.Thread, r2.Thread, msgs[len(msgs)-1].Content)
 	}
 	set(func(s *workflow.AgentSettings) { s.Rerun = "fresh" })
 	r3 := c.agentRun(c.run("ev1"), "A")
 	reqs = c.llm.requests()
-	if r3.Thread == r1.Thread || strings.Contains(reqs[2], "Your last report") || strings.Contains(reqs[2], "Your notes so far") || requestField(t, reqs[2], "user") == requestField(t, reqs[1], "user") {
+	if r3.Thread == r1.Thread || strings.Contains(reqs[2], "Your last summary") || strings.Contains(reqs[2], "Your notes so far") || requestField(t, reqs[2], "user") == requestField(t, reqs[1], "user") {
 		t.Fatalf("a fresh start used the earlier thread:\n%.500s", reqs[2])
 	}
 	if pad := c.pad(r3.Thread); len(pad) != 1 || pad[0].Body != "Report 3." {
@@ -453,7 +453,7 @@ func TestRerunResumesOrStartsAnEmptyThread(t *testing.T) {
 	// Fresh again: the next resume is of the newest thread.
 	set(nil)
 	r4 := c.agentRun(c.run("ev1"), "A")
-	if r4.Thread != r3.Thread || !strings.Contains(lastMessage(t, c.llm.requests()[3]), "Your last report on this item:\nReport 3.") {
+	if r4.Thread != r3.Thread || !strings.Contains(lastMessage(t, c.llm.requests()[3]), "Your last summary on this item:\nReport 3.") {
 		t.Fatalf("thread %d, want %d", r4.Thread, r3.Thread)
 	}
 }
@@ -492,7 +492,7 @@ func TestContinuationWaitsForARunInProgress(t *testing.T) {
 		c.finish(runA)
 		steps := c.finish(runB)
 		reqs := c.llm.requests()
-		if len(reqs) != 2 || steps[second].Status != "done" || !strings.Contains(lastMessage(t, reqs[1]), "Your last report on this item:\nReport 1.") {
+		if len(reqs) != 2 || steps[second].Status != "done" || !strings.Contains(lastMessage(t, reqs[1]), "Your last summary on this item:\nReport 1.") {
 			t.Fatalf("resume %v: %d requests, %+v", resume, len(reqs), steps[second])
 		}
 	}
@@ -587,7 +587,7 @@ func TestPollerFoldsEventsWhileAThreadRuns(t *testing.T) {
 	c.round()
 	c.wantRuns(1, 1)
 	reqs := c.llm.requests()
-	if len(reqs) != 2 || !strings.Contains(lastMessage(t, reqs[1]), "Your last report on this item:\nReport 1.") {
+	if len(reqs) != 2 || !strings.Contains(lastMessage(t, reqs[1]), "Your last summary on this item:\nReport 1.") {
 		t.Fatalf("the second run did not resume the thread: %d requests", len(reqs))
 	}
 	if pending, _ := c.st.PollPending(c.ws.ID, workflow.PR, "ev"); len(pending) != 0 {
@@ -616,7 +616,7 @@ func TestThreadSurvivesAMissingConversationFile(t *testing.T) {
 	os.Remove(filepath.Join(c.st.RunsDir(), fmt.Sprintf("conv-%d.jsonl.gz", first.Conversation)))
 	steps := c.run("ev1")
 	second := c.agentRun(steps, "A")
-	if steps["A"].Status != "done" || second.Thread != first.Thread || second.Status != "met" || !strings.Contains(lastMessage(t, c.llm.requests()[1]), "Your last report on this item:\nReport 1.") {
+	if steps["A"].Status != "done" || second.Thread != first.Thread || second.Status != "met" || !strings.Contains(lastMessage(t, c.llm.requests()[1]), "Your last summary on this item:\nReport 1.") {
 		t.Fatalf("step %+v, run %+v", steps["A"], second)
 	}
 }

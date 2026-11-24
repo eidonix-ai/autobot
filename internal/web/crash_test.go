@@ -17,17 +17,18 @@ func TestCrashKeepsTheLastGoodTranscript(t *testing.T) {
 	for name, tc := range map[string]struct {
 		crashAt func(*agent.Transcript) bool
 		report  string
+		summary string
 		status  string
 		turns   int
 		writing bool
 	}{
 		"after the report was written": {func(tr *agent.Transcript) bool { return tr.Writing != nil && tr.Writing.Outcome == agent.Met },
-			"WRITTEN REPORT: the findings, high ones first.", "met", 3, true},
+			"WRITTEN REPORT: the findings, high ones first.", "WRITTEN SUMMARY: the key findings.", "met", 3, true},
 		"after the research finished": {func(tr *agent.Transcript) bool {
 			return tr.Outcome == agent.Met && tr.Writing == nil && tr.Report == "RESEARCH REPORT" && tr.Turns == 2
-		}, "RESEARCH REPORT", "met", 2, false},
+		}, "RESEARCH REPORT", "RESEARCH REPORT", "met", 2, false},
 		"with only notes": {func(tr *agent.Transcript) bool { return tr.Outcome == "" && tr.Turns == 1 },
-			"## Found\n\nbody of the main finding", "failed", 1, false},
+			"## Found\n\nbody of the main finding", "## Found\n\nbody of the main finding", "failed", 1, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := newContEnv(t, nil)
@@ -47,7 +48,7 @@ func TestCrashKeepsTheLastGoodTranscript(t *testing.T) {
 			saveHook = nil
 			var tr agent.Transcript
 			json.Unmarshal([]byte(run.Summary), &tr)
-			if !crashed || run.Status != tc.status || tr.Report != tc.report || !strings.Contains(tr.Error, "agent run") || !strings.Contains(tr.Error, "crashed: a bug somewhere") ||
+			if !crashed || run.Status != tc.status || tr.Report != tc.report || tr.Summary != tc.summary || !strings.Contains(tr.Error, "agent run") || !strings.Contains(tr.Error, "crashed: a bug somewhere") ||
 				tr.Turns != tc.turns || (tr.Writing != nil) != tc.writing {
 				t.Fatalf("crashed %v, status %s, summary %s", crashed, run.Status, run.Summary)
 			}
@@ -72,7 +73,7 @@ func TestCrashKeepsTheLastGoodTranscript(t *testing.T) {
 				t.Fatalf("the continuation had nothing to continue from: %+v", steps["B"])
 			}
 			reqs := c.llm.requests()
-			if got := section(messagesOf(t, reqs[len(reqs)-1])[1].Content, "Your last report on this item:\n", "\n\nYour notes so far"); got != tc.report {
+			if got := section(messagesOf(t, reqs[len(reqs)-1])[1].Content, "Your last summary on this item:\n", "\n\nThe full report is entry"); got != tc.summary {
 				t.Fatalf("it opened with %q", got)
 			}
 		})

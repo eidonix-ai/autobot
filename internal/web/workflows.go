@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -457,12 +456,7 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			}
 			data["Models"] = models
 		}
-		var outs []string
-		for tag := range g.OutputTags(kind, n.ID) {
-			outs = append(outs, tag)
-		}
-		sort.Strings(outs)
-		data["Tags"], data["OutputTags"] = workflow.Tags(kind), outs
+		data["Tags"], data["OutputTags"] = workflow.Tags(kind), workflow.OutputTagList(g.OutputTags(kind, n.ID))
 	}
 	s.renderFragment(w, r, status, page, data)
 }

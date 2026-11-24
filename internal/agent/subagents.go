@@ -177,7 +177,8 @@ func (sa *SubAgents) Summaries() []SubInfo {
 		if r.Status == "running" {
 			outcome = "running"
 		}
-		out = append(out, SubInfo{Name: r.Name, Title: r.Title, Outcome: outcome, Report: tr.Report})
+		tr.EnsureSummary() // a run from before summaries has only its report
+		out = append(out, SubInfo{Name: r.Name, Title: r.Title, Outcome: outcome, Summary: tr.Summary})
 	}
 	return out
 }

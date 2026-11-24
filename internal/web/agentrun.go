@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -273,9 +274,10 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	reportKept := false
 	finish := func(tr *agent.Transcript) {
 		if strings.TrimSpace(tr.Report) != "" {
+			tr.EnsureSummary()
 			if !reportKept {
 				reportKept = true
-				if _, err := pad.Add(store.PadEntry{Author: "main", Title: store.ReportTitle(id), Importance: store.High, Description: oneLineOf(tr.Report, 160), Body: tr.Report, Report: true}); err != nil {
+				if _, err := pad.Add(store.PadEntry{Author: "main", Title: store.ReportTitle(id), Importance: store.High, Description: oneLineOf(tr.Summary, 160), Body: tr.Report, Summary: tr.Summary, Report: true}); err != nil {
 					log.Printf("agent run %d: saving its report to the scratchpad: %v", id, err)
 				}
 			}
@@ -300,11 +302,12 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 				tr = *last
 			}
 			if w := tr.Writing; w != nil && strings.TrimSpace(w.Report) != "" {
-				tr.Report = w.Report
+				tr.Report, tr.Summary = w.Report, w.Summary
 			}
 			if strings.TrimSpace(tr.Report) == "" {
-				tr.Report = agent.NotesReport(pad)
+				tr.Report, tr.Summary = agent.NotesReport(pad), ""
 			}
+			tr.EnsureSummary()
 			if tr.Outcome == "" {
 				tr.Outcome = agent.Failed
 			}
@@ -359,13 +362,16 @@ func oneLineOf(s string, n int) string {
 	return first
 }
 
-// opening is what follows the instruction in a session that continues a thread: the last report, the
-// scratchpad's index, and what is new on the item since.
+// opening is what follows the instruction in a session that continues a thread: the last summary
+// (the full report is a scratchpad entry, and is named), the scratchpad's index, and what is new on
+// the item since.
 func (s *Server) opening(th *store.Thread, fresh string) string {
 	pad := s.st.Pad(th.ID)
 	var b strings.Builder
 	if rep, ok, err := pad.LastReport(); err == nil && ok {
-		b.WriteString("\n\nYour last report on this item:\n" + rep.Body)
+		summary := cmp.Or(strings.TrimSpace(rep.Summary), store.FallbackSummary(rep.Body)) // a report kept before summaries has none
+		b.WriteString("\n\nYour last summary on this item:\n" + summary)
+		fmt.Fprintf(&b, "\n\nThe full report is entry #%d of your notes: read it with scratchpad_read.", rep.N)
 	}
 	b.WriteString("\n\nYour notes so far, readable with scratchpad_read and scratchpad_search:\n" + agent.Index(pad, ""))
 	if strings.TrimSpace(fresh) != "" {

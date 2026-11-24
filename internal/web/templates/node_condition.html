@@ -12,6 +12,7 @@
         <option value="any"{{if eq .S.Match "any"}} selected{{end}}>any of these holds</option>
       </select></label>
   </div>
+  {{template "tagline" .}}
   <fieldset class="rules">
     {{if eq .Kind "pr"}}
     <div class="rule"><label class="check"><input type="checkbox" name="on_files"{{if .S.Files}} checked{{end}}> A changed file matches</label><input name="files" value="{{.S.Files}}" placeholder="kernels/* or *.cu" autocomplete="off"></div>

@@ -53,9 +53,11 @@ type Server struct {
 	md        goldmark.Markdown
 	mux       *http.ServeMux
 	ready     atomic.Bool // set once a user exists; users are never deleted, so it never goes back
-	fails     loginFails  // failed sign-ins by account
-	poll      *poller     // what the poller remembers in memory
-	repos     *repo.Mirrors
+	// addressKnown is set once the site's public address is known (see noteSiteAddress).
+	addressKnown atomic.Bool
+	fails        loginFails // failed sign-ins by account
+	poll         *poller    // what the poller remembers in memory
+	repos        *repo.Mirrors
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -69,7 +71,6 @@ type GitHub interface {
 	PullRequest(ctx context.Context, token, name string, number int) (*github.PullRequest, error)
 	Item(ctx context.Context, token, name string, number int) (*github.Item, error)
 	Comment(ctx context.Context, token, name string, number int, body string) (int64, string, error)
-	EditComment(ctx context.Context, token, name string, id int64, body string) (string, error)
 	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
 	Compare(ctx context.Context, token, name, base, head string) ([]github.Commit, []github.ChangedFile, error)
 	// What the poller reads to see what changed.
@@ -135,7 +136,11 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		}
 		s.pages[strings.TrimPrefix(n, "templates/")] = t
 	}
+	if err := st.SeedPresets(seedRows()); err != nil { // the built-in presets, once; the database is the authority after
+		return nil, err
+	}
 	s.routes()
+	s.MigrateWorkflows() // blocks' tags are their names now: older workflows are brought up to date
 	return s, nil
 }
 
@@ -159,6 +164,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/charter", s.auth(s.charterSave))
 	s.mux.Handle("GET /w/{owner}/{repo}/settings", s.auth(s.settings))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/name", s.admin(s.renameWorkspace))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/opt-out", s.auth(s.saveOptOut))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github", s.auth(s.setGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github/remove", s.auth(s.removeGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/members", s.admin(s.setMembers))
@@ -202,15 +208,25 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/cases/{number}", s.auth(s.caseSave))
 	// Read by contributors' agents: public repositories' cases by uuid; private ones with the secret.
 	s.mux.HandleFunc("GET /api/v1/cases/{uuid}", s.apiCase)
+	s.mux.HandleFunc("GET /p/{name}", s.publishedPage)
 
 	s.mux.Handle("GET /admin/users", s.admin(s.users))
 	s.mux.Handle("POST /discord/interactions/{owner}/{repo}", http.HandlerFunc(s.interaction))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord", s.auth(s.setForum))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord/bot", s.auth(s.saveBot))
 	s.mux.Handle("POST /admin/users", s.admin(s.createUser))
+	s.mux.Handle("POST /admin/site-address", s.admin(s.saveSiteAddress))
 	s.mux.Handle("GET /admin/users/{id}", s.admin(s.userPage))
 	s.mux.Handle("POST /admin/users/{id}", s.admin(s.updateUser))
 
+	s.mux.Handle("GET /presets", s.auth(s.presetList))
+	s.mux.Handle("GET /presets/new", s.auth(s.presetNew))
+	s.mux.Handle("POST /presets", s.auth(s.presetCreate))
+	s.mux.Handle("GET /presets/{id}", s.auth(s.presetPage))
+	s.mux.Handle("POST /presets/{id}", s.auth(s.presetSave))
+	s.mux.Handle("POST /presets/{id}/copy", s.auth(s.presetCopy))
+	s.mux.Handle("GET /presets/{id}/remove", s.auth(s.presetRemovePage))
+	s.mux.Handle("POST /presets/{id}/remove", s.auth(s.presetRemove))
 	s.mux.Handle("GET /providers", s.auth(s.providerList))
 	s.mux.Handle("POST /providers", s.auth(s.createProvider))
 	s.mux.Handle("POST /providers/trusted", s.admin(s.saveTrusted))
@@ -296,6 +312,7 @@ func (s *Server) auth(next http.HandlerFunc) http.Handler {
 				return
 			}
 		}
+		s.noteSiteAddress(r)
 		// A signed-in page is for this person only: no browser or proxy keeps a copy.
 		w.Header().Set("Cache-Control", "no-store")
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &session{u, csrf, c.Value})))

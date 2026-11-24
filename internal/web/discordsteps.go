@@ -16,6 +16,9 @@ import (
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
+// errPrivateRepo is why a private repository's run posts nothing on Discord.
+var errPrivateRepo = errors.New("a private repository's cases stay out of Discord")
+
 // toDiscord returns the bot and the case's forum post when the run may post to Discord: the
 // workspace has a forum, its repository is public (a private repository's cases never reach
 // Discord), and the run is not dry. The case's post is opened, titled after the item, if it has none.
@@ -28,7 +31,7 @@ func (s *Server) toDiscord(ctx context.Context, rs *runState) (*discord.Bot, str
 	case b == nil || forum == "":
 		return nil, "", "", errors.New("the workspace posts to no Discord forum: choose one in its Settings")
 	case s.facts(ctx, rs.ws).private:
-		return nil, "", "", errors.New("a private repository's cases stay out of Discord")
+		return nil, "", "", errPrivateRepo
 	}
 	cs, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
 	if errors.Is(err, store.ErrNotFound) {
@@ -56,25 +59,19 @@ func (s *Server) toDiscord(ctx context.Context, rs *runState) (*discord.Bot, str
 	return b, p.Channel, p.ID, nil
 }
 
-// discordStep posts in the case's forum post, or replaces its summary.
-func (s *Server) discordStep(ctx context.Context, rs *runState, d workflow.DiscordPostSettings, text string) stepOutcome {
-	if text == "" {
-		return stepOutcome{err: errors.New("the message came out empty")}
-	}
-	if rs.run.DryRun {
-		return stepOutcome{port: "out", output: text, note: "dry run: not posted"}
-	}
-	b, thread, summary, err := s.toDiscord(ctx, rs)
+// discordStep posts in the case's forum post, or, with summary, replaces the post's first message.
+func (s *Server) discordStep(ctx context.Context, rs *runState, summary bool, text string) stepOutcome {
+	b, thread, first, err := s.toDiscord(ctx, rs)
 	if err != nil {
 		return stepOutcome{err: err}
 	}
-	if d.Summary {
+	if summary {
 		what := "PR"
 		if rs.it.kind == workflow.Issue {
 			what = "Issue"
 		}
 		head := fmt.Sprintf("**%s #%d: %s**\n%s\n\n", what, rs.it.number, rs.it.title, rs.it.url)
-		if err := b.Edit(ctx, thread, summary, discord.Message{Text: head + text}); err != nil {
+		if err := b.Edit(ctx, thread, first, discord.Message{Text: head + text}); err != nil {
 			return stepOutcome{err: fmt.Errorf("updating the summary on Discord: %v", err)}
 		}
 		return stepOutcome{port: "out", output: text, note: "summary updated on Discord"}
@@ -212,6 +209,7 @@ func (s *Server) resume(ctx context.Context, id int64) error {
 		return err
 	}
 	rs := &runState{ws: ws, run: run, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}}
+	rs.builtIn["repo:opt_out"] = s.optOut(ws)
 	if c, err := s.st.CaseByNumber(ws.ID, run.Item); err == nil {
 		if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
 			return err

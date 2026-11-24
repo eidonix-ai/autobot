@@ -8,7 +8,7 @@ import (
 // A block that continues another's conversation needs no model of its own; the tags of what is new
 // are for pull requests, and may be used by any template there.
 func TestContinuationSettings(t *testing.T) {
-	a := DefaultAgent(PR)
+	a := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	if err := a.Check(PR); err == nil || !strings.Contains(err.Error(), "choose a model") {
 		t.Fatalf("a block with no model: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestContinuationSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The block's line on the canvas does not ask for a model it does not have.
-	if got := stepSummary(Node{Type: Agent, Settings: []byte(`{"continue_of":"x","persona":"custom","output_to":"again"}`)}, PR, func(ModelRef) string { return "m" }); got != "→ {again}" {
+	if got := stepSummary(Node{Type: Agent, Settings: []byte(`{"continue_of":"x","persona":"custom","output_to":"again"}`)}, PR, "again", func(ModelRef) string { return "m" }); got != "→ {again}" {
 		t.Fatalf("summary %q", got)
 	}
 }

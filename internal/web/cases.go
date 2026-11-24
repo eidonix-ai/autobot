@@ -115,8 +115,12 @@ const minSecret = 32
 // without the right secret, gets a 401 with instructions an agent can follow to fix it; the uuid
 // is unguessable, so that confirms the case only to someone who already holds its link. The
 // instructions never name the repository.
+//
+// The same address ending in .html is the case file as a page for people to read, with the same rule
+// of access.
 func (s *Server) apiCase(w http.ResponseWriter, r *http.Request) {
-	c, err := s.st.Case(r.PathValue("uuid"))
+	id, page := strings.CutSuffix(r.PathValue("uuid"), ".html")
+	c, err := s.st.Case(id)
 	if err != nil {
 		http.Error(w, "No such case.", http.StatusNotFound)
 		return
@@ -126,13 +130,11 @@ func (s *Server) apiCase(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No such case.", http.StatusNotFound)
 		return
 	}
-	ok, f := s.caseReadable(r, ws)
-	if !ok {
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Header().Set("WWW-Authenticate", `Bearer realm="autobot case file"`)
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(secretHelp(f)))
+	if !s.mayRead(w, r, ws) {
+		return
+	}
+	if page {
+		s.publicPage(w, r, c.Label()+": "+c.Title, c.Contents, "Raw Markdown for agents: "+s.addressOf(r)+"/api/v1/cases/"+c.UUID)
 		return
 	}
 	h := w.Header()
@@ -140,6 +142,57 @@ func (s *Server) apiCase(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex")
 	w.Write([]byte(c.Contents))
+}
+
+// mayRead applies the case API's rule of access to a request for something of a workspace, and when
+// it is not met answers with the instructions for setting it up. The uuid in the address is
+// unguessable, so that confirms the thing only to someone who already holds its link. It reports
+// whether the request may go on.
+func (s *Server) mayRead(w http.ResponseWriter, r *http.Request, ws *store.Workspace) bool {
+	ok, f := s.caseReadable(r, ws)
+	if ok {
+		return true
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("WWW-Authenticate", `Bearer realm="autobot case file"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusUnauthorized)
+	w.Write([]byte(secretHelp(f)))
+	return false
+}
+
+// addressOf is where to say this site is reached at: its public address, or the request's own when
+// it has none yet. Only text for a person to read is built from it, never anything Autobot stores.
+func (s *Server) addressOf(r *http.Request) string {
+	if a := s.siteAddress(); a != "" {
+		return a
+	}
+	return publicURL(r)
+}
+
+// publicPage writes Markdown as a page of its own, for people who follow a link to it: no sign-in
+// navigation, and the same Markdown rendering and escaping as a case page.
+func (s *Server) publicPage(w http.ResponseWriter, r *http.Request, title, markdown, note string) {
+	var html bytes.Buffer
+	if err := s.md.Convert([]byte(markdown), &html); err != nil {
+		s.fail(w, err)
+		return
+	}
+	t, ok := s.pages["public.html"]
+	if !ok {
+		s.fail(w, errors.New("no page public.html"))
+		return
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "public", map[string]any{"Title": title, "Note": note, "HTML": template.HTML(html.String())}); err != nil {
+		s.fail(w, err)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Robots-Tag", "noindex")
+	buf.WriteTo(w)
 }
 
 // openCase resolves the case in a workspace page's URL.

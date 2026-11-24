@@ -12,6 +12,7 @@
         {{range .Machines}}<option value="{{.ID}}"{{if eq $.S.Machine .ID}} selected{{end}}>{{.Name}}</option>{{end}}
       </select></label>
   </div>
+  {{template "tagline" .}}
   <label><span class="lbl">Script <span class="info" tabindex="0" data-tip="Bash, run with -e and -x in the pull request's code, with no network. Cargo.lock and uv.lock dependencies are fetched first. It passes when it exits 0.">ⓘ</span></span>
     <textarea name="script" rows="6" class="code" spellcheck="false" required>{{.S.Script}}</textarea></label>
   {{template "tags" .}}

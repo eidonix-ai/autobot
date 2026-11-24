@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strconv"
@@ -28,6 +29,57 @@ func loadGraph(stored *store.StoredWorkflow) (workflow.Graph, error) {
 	var g workflow.Graph
 	err := json.Unmarshal([]byte(stored.Graph), &g)
 	return g, err
+}
+
+// loadWorkflow reads a workspace's workflow of a kind. One saved before a block's tag was always its
+// name is first brought up to date (workflow.MigrateNames): once, as a new version, with the values
+// kept for the cases moved to the new names.
+func (s *Server) loadWorkflow(ws *store.Workspace, kind string) (*store.StoredWorkflow, workflow.Graph, error) {
+	stored, err := s.st.Workflow(ws.ID, kind)
+	if err != nil {
+		return nil, workflow.Graph{}, err
+	}
+	g, err := loadGraph(stored)
+	if err != nil {
+		return nil, g, err
+	}
+	migrated, renames, changed := g.MigrateNames(kind)
+	if !changed {
+		return stored, g, nil
+	}
+	b, err := json.Marshal(migrated)
+	if err != nil {
+		return nil, g, err
+	}
+	var moves []store.KeyRename
+	for _, r := range renames {
+		moves = append(moves, store.KeyRename{Old: r.Old, New: r.New})
+	}
+	if _, err := s.st.SaveWorkflowRenaming(ws.ID, kind, stored.Version, string(b), nil, moves); err != nil && !errors.Is(err, store.ErrStaleWorkflow) {
+		return nil, g, err
+	}
+	if stored, err = s.st.Workflow(ws.ID, kind); err != nil {
+		return nil, g, err
+	}
+	g, err = loadGraph(stored)
+	return stored, g, err
+}
+
+// MigrateWorkflows brings every workspace's workflows up to date (see loadWorkflow); it runs when
+// Autobot starts, so no run sees a workflow from before.
+func (s *Server) MigrateWorkflows() {
+	all, err := s.st.Workspaces(&store.User{IsAdmin: true})
+	if err != nil {
+		log.Printf("migrating workflows: %v", err)
+		return
+	}
+	for i := range all {
+		for _, kind := range workflow.Kinds {
+			if _, _, err := s.loadWorkflow(&all[i], kind); err != nil {
+				log.Printf("migrating %s's %s workflow: %v", all[i].Name, kind, err)
+			}
+		}
+	}
 }
 
 // canvasFacts is what the canvas shows of each node besides its type: its name and outputs.
@@ -56,11 +108,66 @@ func continuesFacts(g workflow.Graph, kind string) map[string]string {
 	return out
 }
 
-// summaries is each node's one-line summary, for the canvas.
+// summaries is each node's one-line summary, for the canvas. A block whose templates use a tag of a
+// step that does not run before it (a link was removed, or the step was) says so instead.
 func (s *Server) summaries(ws *store.Workspace, g workflow.Graph, kind string) map[string]string {
 	out := map[string]string{}
+	tags := g.OutputNames(kind)
+	problems := s.templateProblems(g, kind)
+	optOut := s.optOut(ws)
 	for _, n := range g.Nodes {
-		out[n.ID] = workflow.Summary(n, kind, func(m workflow.ModelRef) string { return m.Model })
+		out[n.ID] = workflow.Summary(n, kind, tags[n.ID], optOut, func(m workflow.ModelRef) string { return m.Model })
+		if p, bad := problems[n.ID]; bad {
+			out[n.ID] = "⚠ " + p
+		}
+	}
+	return out
+}
+
+// nodeTemplates are the templates a block is saved with, which its tags are checked in.
+func (s *Server) nodeTemplates(n workflow.Node, kind string) []string {
+	switch n.Type {
+	case workflow.Agent:
+		if a, err := s.agentSettings(n, kind); err == nil {
+			return a.Templates(kind)
+		}
+	case workflow.Decision:
+		if d, err := workflow.DecisionSettingsOf(n, kind); err == nil {
+			return d.Templates()
+		}
+	case workflow.CaseEntry:
+		if c, err := workflow.CaseEntrySettingsOf(n); err == nil {
+			return []string{c.Entry}
+		}
+	case workflow.Post:
+		if p, err := workflow.SettingsOf(n, workflow.DefaultPost()); err == nil {
+			return []string{p.Message}
+		}
+	case workflow.Approval:
+		if a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind)); err == nil {
+			return []string{a.Request}
+		}
+	case workflow.TestRun:
+		if t, err := workflow.SettingsOf(n, workflow.DefaultTestRun()); err == nil {
+			return []string{t.Script}
+		}
+	}
+	return nil
+}
+
+// templateProblems finds the blocks whose saved templates (or Condition rule) now use a tag that is
+// not a built-in one or an upstream step's: a link or a step was removed after they were saved. The
+// canvas still saves; these blocks are marked, with what is wrong.
+func (s *Server) templateProblems(g workflow.Graph, kind string) map[string]string {
+	out := map[string]string{}
+	for _, n := range g.Nodes {
+		err := g.CheckNodeTemplates(kind, n.ID, s.nodeTemplates(n, kind)...)
+		if c, e := workflow.SettingsOf(n, workflow.DefaultCondition()); err == nil && n.Type == workflow.Condition && e == nil && c.Tag != "" {
+			err = g.CheckOutputRef(kind, n.ID, c.Tag)
+		}
+		if err != nil {
+			out[n.ID] = err.Error()
+		}
 	}
 	return out
 }
@@ -83,12 +190,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	g, err := loadGraph(stored)
+	stored, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -133,12 +235,7 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "The canvas sent something unreadable; reload the page.")
 		return
 	}
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	old, err := loadGraph(stored)
+	_, old, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -148,6 +245,7 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 		kept[n.ID] = n
 	}
 	g := workflow.Graph{Links: req.Links}
+	var added []int // the new blocks, which are given their output tags below
 	for _, n := range req.Nodes {
 		node := workflow.Node{ID: n.ID, Type: n.Type, X: n.X, Y: n.Y}
 		if k, ok := kept[n.ID]; ok && k.Type == n.Type {
@@ -166,7 +264,25 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 			}
 			node.Settings, _ = json.Marshal(a)
 		}
+		if k, ok := kept[n.ID]; !ok || k.Type != n.Type {
+			added = append(added, len(g.Nodes))
+		}
 		g.Nodes = append(g.Nodes, node)
+	}
+	// A new block takes the first of its type's name, then that name and 2, 3 … which no block of the
+	// workflow has (names are unique, since a name is a tag).
+	for k, i := range added {
+		// The blocks placed together are named in order: the later ones do not have a name yet.
+		before := workflow.Graph{Nodes: slices.DeleteFunc(slices.Clone(g.Nodes), func(n workflow.Node) bool {
+			return slices.ContainsFunc(added[k:], func(j int) bool { return g.Nodes[j].ID == n.ID })
+		})}
+		name := before.DefaultName(g.Nodes[i].Type, "")
+		if t, _ := workflow.TypeOf(g.Nodes[i].Type); name != t.Label {
+			g.Nodes[i].Name = name
+		}
+		if node, err := workflow.WithOutputTo(g.Nodes[i], kind, workflow.Slug(workflow.DisplayName(g.Nodes[i]))); err == nil {
+			g.Nodes[i] = node
+		}
 	}
 	if g.Links == nil {
 		g.Links = []workflow.Link{}
@@ -283,6 +399,12 @@ func (s *Server) checkModel(ws *store.Workspace, m workflow.ModelRef, decisions 
 
 // storeGraph checks and saves a workflow and answers with its new version and summaries.
 func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind string, base int, g workflow.Graph, actor *store.User) {
+	s.storeGraphWith(w, ws, kind, base, g, actor, nil, "")
+}
+
+// storeGraphWith is storeGraph, moving the values kept under the tags renamed to their new names in the
+// same save, and answering with a note to show on the canvas's bar.
+func (s *Server) storeGraphWith(w http.ResponseWriter, ws *store.Workspace, kind string, base int, g workflow.Graph, actor *store.User, renames []store.KeyRename, note string) {
 	if err := g.Check(kind); err != nil {
 		jsonError(w, http.StatusBadRequest, "Not saved: "+err.Error()+".")
 		return
@@ -292,7 +414,7 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 		s.fail(w, err)
 		return
 	}
-	version, err := s.st.SaveWorkflow(ws.ID, kind, base, string(b), actor)
+	version, err := s.st.SaveWorkflowRenaming(ws.ID, kind, base, string(b), actor, renames)
 	if errors.Is(err, store.ErrStaleWorkflow) {
 		jsonError(w, http.StatusConflict, "Someone else changed this workflow while you were editing it. Reload to see their changes.")
 		return
@@ -303,7 +425,9 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 	}
 	names, outputs := canvasFacts(g)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": s.summaries(ws, g, kind), "names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "links": g.Links})
+	problems := s.templateProblems(g, kind)
+	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": s.summaries(ws, g, kind), "names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "links": g.Links,
+		"problems": problems, "note": note})
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
@@ -322,12 +446,7 @@ func (s *Server) findNode(w http.ResponseWriter, r *http.Request) (*store.Worksp
 	if !ok {
 		return nil, "", nil, workflow.Graph{}, 0, false
 	}
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		s.fail(w, err)
-		return nil, "", nil, workflow.Graph{}, 0, false
-	}
-	g, err := loadGraph(stored)
+	stored, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		s.fail(w, err)
 		return nil, "", nil, workflow.Graph{}, 0, false
@@ -352,19 +471,17 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch n.Type {
 	case workflow.Agent:
-		settings, err = workflow.AgentSettingsOf(n, kind)
+		settings, err = s.agentSettings(n, kind)
 	case workflow.Decision:
 		settings, err = workflow.DecisionSettingsOf(n, kind)
 	case workflow.CaseEntry:
 		settings, err = workflow.CaseEntrySettingsOf(n)
-	case workflow.GitHubComment:
-		settings, err = workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+	case workflow.Post:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultPost())
 	case workflow.Condition:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultCondition())
 	case workflow.TestRun:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultTestRun())
-	case workflow.DiscordPost:
-		settings, err = workflow.SettingsOf(n, workflow.DefaultDiscordPost())
 	case workflow.Approval:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 	default:
@@ -397,15 +514,17 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			s.fail(w, err)
 			return
 		}
-		type preset struct{ Key, Label, Instruction, Goal, Closing string }
-		var presets []preset
-		for _, p := range workflow.Personas {
-			presets = append(presets, preset{p.Key, p.Label, p.InstructionFor(kind), p.GoalFor(kind), p.Closing})
+		groups, foreign, err := s.presetChoices(me(r), kind, st)
+		if err != nil {
+			s.fail(w, err)
+			return
 		}
-		data["Presets"], data["Machines"], data["Verifiers"] = presets, machines, verify
+		data["PresetGroups"], data["Foreign"], data["Machines"], data["Verifiers"] = groups, foreign, machines, verify
 		data["Instruction"], data["Goal"], data["Closing"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind), st.EffectiveClosing(kind)
+		data["SummaryFormat"] = st.EffectiveSummaryFormat(kind)
 		data["ReportTurns"], data["TimeWarn"] = st.EffectiveReportTurns(), st.EffectiveTimeWarn()
-		data["Locked"] = workflow.PersonaOf(st.Persona) != nil
+		data["Locked"] = st.OnPreset()
+		data["Missing"] = st.Persona != "custom" && !st.OnPreset()
 		data["Preamble"] = preambleText(ws.Name, st.EffectiveClosing(kind) == workflow.ClosingReport)
 		// The blocks whose conversation this one may continue: the others that start their own.
 		type source struct {
@@ -428,12 +547,10 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
 		page = "node_case.html"
-	case workflow.GitHubCommentSettings:
-		page = "node_github.html"
+	case workflow.PostSettings:
+		page = "node_post.html"
 	case workflow.ConditionSettings:
 		page = "node_condition.html"
-	case workflow.DiscordPostSettings:
-		page = "node_discordpost.html"
 	case workflow.ApprovalSettings:
 		page = "node_approval.html"
 	case workflow.TestRunSettings:
@@ -446,6 +563,7 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		data["Machines"] = machines
 	default:
 		data["Activities"] = workflow.Activities
+		data["OptOut"] = s.optOut(ws)
 	}
 	if page != "node_event.html" {
 		if n.Type == workflow.Agent || n.Type == workflow.Decision {
@@ -457,6 +575,8 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			data["Models"] = models
 		}
 		data["Tags"], data["OutputTags"] = workflow.Tags(kind), workflow.OutputTagList(g.OutputTags(kind, n.ID))
+		data["OtherTags"] = workflow.OutputTagList(g.OtherEventTags(kind, n.ID))
+		data["Tag"] = g.OutputNames(kind)[n.ID] // the block's tag, its name in snake case: "" for a block with none
 	}
 	s.renderFragment(w, r, status, page, data)
 }
@@ -470,11 +590,11 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	n := &g.Nodes[i]
 	f := r.PostForm
+	oldTag := g.OutputNames(kind)[n.ID] // its tag now: if its name changes, so does its tag
 	n.Name = strings.TrimSpace(f.Get("name"))
 	if t, _ := workflow.TypeOf(n.Type); n.Name == t.Label {
 		n.Name = "" // the default needs no storing
 	}
-	outputs := g.OutputTags(kind, n.ID)
 	var settings any
 	var err error
 	switch n.Type {
@@ -491,11 +611,19 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil {
+			// The preset's text is read from the database now; a person may give a block a preset only if it
+			// is shared or their own, or the block already follows it.
+			old, _ := workflow.AgentSettingsOf(*n, kind)
+			if a, err = s.resolved(a); err == nil {
+				err = s.checkPresetChoice(me(r), a, old)
+			}
+		}
+		if err == nil {
 			if err = a.Check(kind); err == nil {
-				if workflow.PersonaOf(a.Persona) != nil { // a preset's own text is not stored on the block
-					a.Instruction, a.Goal, a.Closing = "", "", ""
+				if a.OnPreset() { // a preset's own text is not stored on the block
+					a.Instruction, a.Goal, a.SummaryFormat, a.Closing = "", "", "", ""
 				}
-				if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil && a.Model.Set() {
+				if err = g.CheckNodeTemplates(kind, n.ID, a.Templates(kind)...); err == nil && a.Model.Set() {
 					err = s.checkModel(ws, a.Model, false)
 				}
 			}
@@ -511,7 +639,7 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		d := workflow.DecisionFromForm(f.Get)
 		d.Model = parseModel(f.Get("model"))
 		if err = d.Check(kind); err == nil {
-			if err = workflow.CheckTemplates(kind, outputs, d.Templates()...); err == nil {
+			if err = g.CheckNodeTemplates(kind, n.ID, d.Templates()...); err == nil {
 				err = s.checkModel(ws, d.Model, true)
 			}
 		}
@@ -519,46 +647,47 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	case workflow.CaseEntry:
 		c := workflow.CaseEntryFromForm(f.Get)
 		if err = c.Check(); err == nil {
-			err = workflow.CheckTemplates(kind, outputs, c.Entry)
+			err = g.CheckNodeTemplates(kind, n.ID, c.Entry)
 		}
 		settings = c
-	case workflow.GitHubComment:
-		c := workflow.GitHubCommentFromForm(f.Get)
-		if err = c.Check(); err == nil {
-			err = workflow.CheckTemplates(kind, outputs, c.Message)
+	case workflow.Post:
+		p := workflow.PostFromForm(f.Get)
+		if err = p.Check(); err == nil {
+			err = g.CheckNodeTemplates(kind, n.ID, p.Message)
 		}
-		settings = c
+		settings = p
 	case workflow.Condition:
 		c := workflow.ConditionFromForm(f.Get)
-		if err = c.Check(kind); err == nil && c.Tag != "" && !outputs[c.Tag] {
-			err = fmt.Errorf("{%s} is no step's output tag in this workflow", c.Tag)
+		err = c.Check(kind)
+		if err == nil && c.Tag != "" {
+			err = g.CheckOutputRef(kind, n.ID, c.Tag)
 		}
 		settings = c
 	case workflow.TestRun:
 		t := workflow.TestRunFromForm(f.Get)
 		if err = t.Check(); err == nil {
-			if err = workflow.CheckTemplates(kind, outputs, t.Script); err == nil {
+			if err = g.CheckNodeTemplates(kind, n.ID, t.Script); err == nil {
 				err = s.checkMachines(ws, []int64{t.Machine})
 			}
 		}
 		settings = t
-	case workflow.DiscordPost:
-		d := workflow.DiscordPostSettings{Message: strings.TrimSpace(f.Get("message")), Summary: f.Get("summary") == "on"}
-		if err = d.Check(); err == nil {
-			err = workflow.CheckTemplates(kind, outputs, d.Message)
-		}
-		settings = d
 	case workflow.Approval:
-		a := workflow.ApprovalSettings{Request: strings.TrimSpace(f.Get("request"))}
+		a := workflow.ApprovalSettings{Request: strings.TrimSpace(f.Get("request")), OutputTo: f.Get("output_to")}
 		a.Hours, _ = strconv.Atoi(f.Get("hours"))
 		if err = a.Check(); err == nil {
-			err = workflow.CheckTemplates(kind, outputs, a.Request)
+			err = g.CheckNodeTemplates(kind, n.ID, a.Request)
 		}
 		settings = a
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)
+		if tag := s.optOut(ws); err == nil && workflow.Stops(e.SummonPhrase, tag) {
+			err = fmt.Errorf("the summon phrase matches the workspace's opt-out tag “%s”, so every summons would opt out", tag)
+		}
 		settings = e
+	}
+	if err == nil {
+		err = g.CheckName(kind, *n, workflow.DisplayName(*n))
 	}
 	if err != nil {
 		s.nodeForm(w, r, http.StatusBadRequest, ws, kind, g, *n, settings, err.Error()+".")
@@ -570,6 +699,20 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.Settings = b
+	newTag := g.OutputNames(kind)[n.ID]
+	if workflow.HasOutput(n.Type) {
+		*n, _ = workflow.WithOutputTo(*n, kind, newTag) // the tag as saved, which is the name's
+	}
+	var renames []store.KeyRename
+	note := ""
+	if oldTag != "" && newTag != oldTag {
+		// The block's tag is its name: renaming it rewrites the references in the others, in this save.
+		var changed []string
+		g, changed = g.Rename(kind, n.ID, oldTag, newTag)
+		n = &g.Nodes[i]
+		renames = []store.KeyRename{{Old: oldTag, New: newTag}}
+		note = fmt.Sprintf("Renamed {%s} to {%s} in %d %s", oldTag, newTag, len(changed), "block"+plural(len(changed)))
+	}
 	ports := workflow.Outputs(*n)
 	links := g.Links[:0]
 	for _, l := range g.Links {
@@ -579,7 +722,7 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	g.Links = links
 	base, _ := strconv.Atoi(f.Get("version"))
-	s.storeGraph(w, ws, kind, base, g, me(r))
+	s.storeGraphWith(w, ws, kind, base, g, me(r), renames, note)
 }
 
 // renderFragment executes a page's "content" without the layout, for HTML loaded into a modal.

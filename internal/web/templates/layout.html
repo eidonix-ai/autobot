@@ -30,6 +30,7 @@
   <nav>
     <a href="/">Workspaces</a>
     <a href="/providers">Providers</a>
+    <a href="/presets">Presets</a>
     {{if .IsAdmin}}<a href="/admin/users">Users</a>{{end}}
     <a href="/account">{{.Name}}</a>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="link">Sign out</button></form>
@@ -45,5 +46,9 @@
 </html>{{end}}
 {{define "tags"}}<details class="tags"><summary>Tags</summary>
 <dl>{{range .Tags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{if .Auto}}<span class="auto" title="Filled in by Autobot; it cannot be set">auto</span> {{end}}{{.About}}</dd>{{end}}
-{{range .OutputTags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{.About}}</dd>{{end}}</dl>
+{{range .OutputTags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{.About}}</dd>{{end}}
+<dt><code>[[name]]</code></dt><dd>a link to a page that keeps that tag's value as it is when the text is filled in; <code>[[name|Label]]</code> sets the link's text</dd></dl>
+{{if .OtherTags}}<p class="muted other">From other events (their last run on this item)</p>
+<dl class="other-tags">{{range .OtherTags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{.About}}</dd>{{end}}</dl>{{end}}
 </details>{{end}}
+{{define "tagline"}}{{with .Tag}}<p class="blocktag">Tag <code>{{"{"}}{{.}}{{"}"}}</code> <span class="info" tabindex="0" data-tip="This block's output is kept under its name in lower case with underscores, and later steps use it as {{"{"}}{{.}}{{"}"}}{{if eq $.Type.Type "agent"}} ({{"{"}}{{.}}.summary}, {{"{"}}{{.}}.report}, {{"{"}}{{.}}.scratchpad}){{end}}{{if eq $.Type.Type "decision"}} ({{"{"}}{{.}}.confidence}, {{"{"}}{{.}}.reason}){{end}}. Renaming the block renames the tag in the other blocks' templates too.">ⓘ</span></p>{{end}}{{end}}

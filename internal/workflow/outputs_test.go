@@ -9,17 +9,20 @@ import (
 // The parts of an Agent block's output are named with a dot: {gather.report}. A colon is for the
 // fields Autobot fills from a built-in parent. Misspellings are refused when a block is saved.
 func TestCheckTemplatesOutputParts(t *testing.T) {
-	outs := OutputSet{"gather": true, "verdict": false} // an Agent's output, and a Decision's
-	for _, ok := range []string{"{gather} {gather.summary} {gather.report} {gather.scratchpad}", "{verdict}", "{{gather.report}}"} {
+	outs := OutputSet{"gather": Agent, "verdict": Decision, "plain": CaseEntry} // an Agent's output, a Decision's and a plain step's
+	for _, ok := range []string{"{gather} {gather.summary} {gather.report} {gather.scratchpad}", "{verdict} {verdict.confidence} {verdict.reason}", "{plain}", "{{gather.report}}"} {
 		if err := CheckTemplates(PR, outs, ok); err != nil {
 			t.Errorf("%s refused: %v", ok, err)
 		}
 	}
 	for _, tc := range []struct{ tpl, want string }{
-		{"{verdict.report}", "decision's output is one value"},
+		{"{plain.report}", "this one is one value"},
+		{"{verdict.report}", "not a part of an output"},
+		{"{gather.confidence}", "not a part of an output"},
 		{"{gather.notes}", "see the Tags list"},
 		{"{gather:report}", "use a dot, such as {gather.report}"},
-		{"{verdict:report}", "decision's output is one value"},
+		{"{verdict:confidence}", "use a dot, such as {verdict.reason}"},
+		{"{plain:report}", "this one is one value"},
 		{"{nope.report}", "not another step's output tag"},
 		{"{pr.title}", "use a colon"},
 		{"{pr:titel}", "fields of {pr}"},
@@ -40,8 +43,9 @@ func TestCheckTemplatesOutputParts(t *testing.T) {
 	}
 }
 
-// {input} is what the step before produced, in every kind of workflow, with its parts; the old
-// name {previous_output} is still accepted and still means the report, but is not listed.
+// {input} is what the step before produced, in every kind of workflow, with its parts; it and the
+// old name {previous_output} are still accepted and still mean the same, but neither is listed
+// any more: every step's output is kept under its own tag.
 func TestInputTag(t *testing.T) {
 	for _, kind := range []string{PR, Issue} {
 		if err := CheckTemplates(kind, nil, "{input} {input.summary} {input.report} {input.scratchpad} {previous_output}"); err != nil {
@@ -54,13 +58,17 @@ func TestInputTag(t *testing.T) {
 		if _, ok := listed["previous_output"]; ok {
 			t.Errorf("%s: the old name is listed", kind)
 		}
-		if listed["input"].Name == "" || listed["input"].Field() || listed["input"].Auto {
-			t.Errorf("%s: {input} %+v", kind, listed["input"])
-		}
-		for part, about := range map[string]string{"input.summary": "the summary", "input.report": "the full report", "input.scratchpad": "its notes in full"} {
-			if tag := listed[part]; tag.Name == "" || !tag.Field() || tag.Auto || tag.About != about {
-				t.Errorf("%s: {%s} %+v", kind, part, tag)
+		for _, name := range []string{"input", "input.summary", "input.report", "input.scratchpad"} {
+			if _, ok := listed[name]; ok {
+				t.Errorf("%s: {%s} is listed", kind, name)
 			}
+		}
+		all := map[string]Tag{}
+		for _, tag := range AllTags(kind) {
+			all[tag.Name] = tag
+		}
+		if all["input"].Name == "" || all["input"].Field() || all["input"].Auto {
+			t.Errorf("%s: {input} %+v", kind, all["input"])
 		}
 	}
 	if CanonicalTag("previous_output", PR) != "input.report" {
@@ -71,17 +79,17 @@ func TestInputTag(t *testing.T) {
 		t.Errorf("rendered %q", got)
 	}
 	// No output tag may be named like it.
-	n := DefaultAgent(PR)
+	n := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	n.OutputTo, n.Model = "input", ModelRef{Provider: 1, Model: "m"}
 	if err := n.Check(PR); err == nil || !strings.Contains(err.Error(), "built-in") {
 		t.Errorf("an output named input: %v", err)
 	}
 }
 
-// The templates of a new GitHub Comment, Discord Post and Case Entry block use {input.report}.
+// The template of a new Case Entry block uses {input.report}; a new Post block has no text yet.
 func TestNewBlocksDefaultToTheReport(t *testing.T) {
-	if DefaultGitHubComment().Message != "{input.report}" || DefaultDiscordPost().Message != "{input.report}" || DefaultCaseEntry().Entry != "{input.report}" {
-		t.Fatalf("%q %q %q", DefaultGitHubComment().Message, DefaultDiscordPost().Message, DefaultCaseEntry().Entry)
+	if DefaultCaseEntry().Entry != "{input.report}" || DefaultPost().Message != "" {
+		t.Fatalf("%q %q", DefaultCaseEntry().Entry, DefaultPost().Message)
 	}
 	// A block saved with its own text keeps it.
 	n := Node{ID: "c", Type: CaseEntry, Settings: json.RawMessage(`{"entry":"old: {previous_output}","finalize":true}`)}
@@ -91,15 +99,14 @@ func TestNewBlocksDefaultToTheReport(t *testing.T) {
 }
 
 // What the Tags list shows of the outputs: an Agent's tag with its three parts under it, a
-// Decision's alone; tags and parts are not marked as filled in by Autobot.
+// Decision's with its two, any other step's alone; tags and parts are not marked as filled in by Autobot.
 func TestOutputTagList(t *testing.T) {
-	a, d := DefaultAgent(PR), DefaultDecision(PR)
-	a.OutputTo, d.OutputTo = "gather", "verdict"
-	ab, _ := json.Marshal(a)
-	db, _ := json.Marshal(d)
-	g := Graph{Nodes: []Node{{ID: "e", Type: "pr_ready"}, {ID: "a", Type: Agent, Settings: ab}, {ID: "d", Type: Decision, Settings: db}, {ID: "z", Type: Agent}}}
+	// The steps before z: e → a, e → d, e → c, a → z, d → z, c → z.
+	g := Graph{Nodes: []Node{{ID: "e", Type: "pr_ready"}, {ID: "a", Type: Agent, Name: "Gather"}, {ID: "d", Type: Decision, Name: "Verdict"},
+		{ID: "c", Type: CaseEntry, Name: "Note"}, {ID: "z", Type: Agent}},
+		Links: []Link{{"e", "out", "a", "in"}, {"e", "out", "d", "in"}, {"e", "out", "c", "in"}, {"a", "out", "z", "in"}, {"d", "yes", "z", "in"}, {"c", "out", "z", "in"}}}
 	outs := g.OutputTags(PR, "z")
-	if !outs["gather"] || outs["verdict"] || len(outs) != 2 {
+	if outs["gather"] != Agent || outs["verdict"] != Decision || outs["note"] != CaseEntry || len(outs) != 3 {
 		t.Fatalf("%v", outs)
 	}
 	var got []string
@@ -109,12 +116,22 @@ func TestOutputTagList(t *testing.T) {
 		}
 		got = append(got, tag.Name+"|"+tag.About+"|"+map[bool]string{true: "field", false: ""}[tag.Field()])
 	}
-	want := "gather|its summary, report and notes|;gather.summary|the summary|field;gather.report|the full report|field;gather.scratchpad|its notes in full|field;verdict|another step's output|"
+	want := "gather|its summary, report and notes|;gather.summary|the summary|field;gather.report|the full report|field;gather.scratchpad|its notes in full|field;" +
+		"note|another step's output|;verdict|the choice|;verdict.confidence|the chosen answer's probability, as a percentage|field;verdict.reason|the description given to the chosen choice|field"
 	if strings.Join(got, ";") != want {
 		t.Fatalf("got  %s\nwant %s", strings.Join(got, ";"), want)
 	}
-	// A node's own output is not offered back to it.
-	if len(g.OutputTags(PR, "a")) != 1 {
-		t.Error("a node's own output is offered to it")
+	// A node is offered the output of the steps before it only: not its own, and not a step after it.
+	if got := g.OutputTags(PR, "a"); len(got) != 0 {
+		t.Errorf("a is offered %v", got)
+	}
+	if got := g.OutputTags(PR, "d"); len(got) != 0 {
+		t.Errorf("d is offered %v", got)
+	}
+	// z has no tag saved: it is offered as its name's once something runs after it.
+	g.Nodes = append(g.Nodes, Node{ID: "y", Type: Agent, Name: "Last"})
+	g.Links = append(g.Links, Link{"z", "out", "y", "in"})
+	if got := g.OutputTags(PR, "y"); len(got) != 4 || got["agent"] != Agent || got["gather"] != Agent || got["verdict"] != Decision || got["note"] != CaseEntry {
+		t.Errorf("y is offered %v", got)
 	}
 }

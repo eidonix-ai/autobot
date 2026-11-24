@@ -1,0 +1,23 @@
+{{define "presetRows"}}<div class="scroll"><table class="list">
+<thead><tr><th>Name</th><th>Description</th>{{if .Owners}}<th>Owner</th>{{end}}<th>Used by</th><th></th></tr></thead>
+<tbody>{{range .Rows}}<tr>
+  <td>{{.Name}}</td><td>{{.Description}}</td>{{if $.Owners}}<td>{{.Owner}}</td>{{end}}<td>{{.Use}}</td>
+  <td><a class="button secondary" href="/presets/{{.ID}}">Open</a></td>
+</tr>{{end}}</tbody>
+</table></div>{{end}}
+{{define "content"}}
+<h1>Presets</h1>
+<div class="row">
+  <a class="button" href="/presets/new">New preset</a>
+  {{if .Me.IsAdmin}}<a class="button secondary" href="/presets/new?shared=1">New shared preset</a>{{end}}
+</div>
+<section class="panel"><h2>Shared</h2>
+{{if .Shared.Rows}}{{template "presetRows" .Shared}}{{else}}<p class="muted">No shared presets.</p>{{end}}
+</section>
+<section class="panel"><h2>Mine</h2>
+{{if .Mine.Rows}}{{template "presetRows" .Mine}}{{else}}<p class="muted">You have none yet.</p>{{end}}
+</section>
+{{if .Others.Rows}}<section class="panel"><h2>Other users' presets</h2>
+{{template "presetRows" .Others}}
+</section>{{end}}
+{{end}}

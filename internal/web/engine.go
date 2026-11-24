@@ -154,8 +154,12 @@ func (it *item) values(ws *store.Workspace) map[string]string {
 
 // verdict says whether the event's conditions would have started the workflow on the item, and
 // how each stood. A manual run goes ahead either way; this says what the poller would have done.
-func verdict(n workflow.Node, it *item, caseExists bool) (bool, []string) {
+//
+// optOut is the workspace's opt-out tag, and counts says whether a comment by someone can opt the item
+// out (its author, or a maintainer); the tag in the description always does.
+func verdict(n workflow.Node, it *item, caseExists bool, optOut string, counts func(author string) bool) (bool, []string) {
 	ev, _ := workflow.EventSettingsOf(n)
+	ev = ev.WithOptOut(optOut)
 	ok := true
 	var lines []string
 	check := func(pass bool, yes, no string) {
@@ -181,11 +185,15 @@ func verdict(n workflow.Node, it *item, caseExists bool) (bool, []string) {
 	}
 	stopped, by := workflow.Stops(it.body, ev.StopTag), "its description"
 	for _, c := range it.comments {
-		if !stopped && workflow.Stops(c.Body, ev.StopTag) {
+		if !stopped && workflow.Stops(c.Body, ev.StopTag) && counts(c.Author) {
 			stopped, by = true, "a comment by "+c.Author
 		}
 	}
-	check(!stopped, "no stop tag “"+ev.StopTag+"”", "the stop tag “"+ev.StopTag+"” is in "+by)
+	if ev.StopTag == "" {
+		note("the workspace has no opt-out tag")
+	} else {
+		check(!stopped, "no opt-out tag “"+ev.StopTag+"”", "the opt-out tag “"+ev.StopTag+"” is in "+by)
+	}
 	summoned := false
 	for _, c := range it.comments {
 		summoned = summoned || workflow.Summons(c.Body, ev.SummonPhrase, ev.StopTag)
@@ -225,11 +233,7 @@ type runState struct {
 
 // startWorkflow starts a run of a kind's workflow on an item from an event node, and returns its id.
 func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, eventNode string, number int, dry bool, by *store.User) (int64, error) {
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		return 0, err
-	}
-	g, err := loadGraph(stored)
+	_, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		return 0, err
 	}
@@ -250,6 +254,7 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	rs := &runState{ws: ws, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}, by: by}
+	rs.builtIn["repo:opt_out"] = s.optOut(ws)
 	var caseFile *store.Case
 	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
 		caseFile = c
@@ -262,7 +267,8 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		rs.builtIn["charter"] = c.Body
 	}
-	pass, lines := verdict(*ev, it, caseFile != nil)
+	token, _ := s.token(ws)
+	pass, lines := verdict(*ev, it, caseFile != nil, s.optOut(ws), s.stopRule(ctx, ws, token, it))
 	head := "The event would have started it."
 	if !pass {
 		head = "The event would not have started it; run by hand anyway."
@@ -378,11 +384,14 @@ func (s *Server) drive(rs *runState) {
 				for _, l := range fired {
 					sources = append(sources, source{nodes[l.From], steps[l.From]})
 				}
+				// The tags every step that has finished has kept, so far: this step sees them all, whether
+				// they came down its own branch or another, and the run goes on adding to the map.
+				tags := maps.Clone(rs.tags)
 				go func(n workflow.Node, sources []source) {
 					o := stepOutcome{err: errors.New("the step crashed")}
 					defer func() { results <- finished{n.ID, o} }()
 					defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
-					o = s.runStep(rs, n, sources)
+					o = s.runStep(rs, n, sources, tags)
 				}(n, sources)
 			}
 		}
@@ -452,7 +461,7 @@ func (s *Server) inputValues(rs *runState, sources []source) map[string]string {
 // that they survive a restart of Autobot between the steps.
 func (s *Server) stepParts(rs *runState, src source) map[string]string {
 	if src.node.Type == workflow.Agent && src.step.AgentRun != 0 {
-		a, err := workflow.AgentSettingsOf(src.node, rs.run.Kind)
+		a, err := s.agentSettings(src.node, rs.run.Kind)
 		run, rerr := s.st.AgentRun(src.step.AgentRun)
 		if err == nil && rerr == nil {
 			_, parts := s.agentParts(a.EffectiveClosing(rs.run.Kind) == workflow.ClosingReport, run)
@@ -463,25 +472,13 @@ func (s *Server) stepParts(rs *runState, src source) map[string]string {
 	return map[string]string{"": out, ".summary": out, ".report": out, ".scratchpad": ""}
 }
 
-// outputTo is a node's output tag, or "".
-func outputTo(n workflow.Node, kind string) string {
-	switch n.Type {
-	case workflow.Agent:
-		a, _ := workflow.AgentSettingsOf(n, kind)
-		return a.OutputTo
-	case workflow.Decision:
-		d, _ := workflow.DecisionSettingsOf(n, kind)
-		return d.OutputTo
-	}
-	return ""
-}
-
-// keepTag stores a finished step's output under its output tag: for the rest of the run, and for
-// the case unless the run is dry. An Agent's output has parts (parts, by suffix: "" is the tag
-// itself, ".summary" and so on), each kept under the tag's name and the suffix; any other step
-// has just its output. Every one replaces the value the last write left.
+// keepTag stores a finished step's output under its output tag (its own, or its name's: see
+// OutputNames): for the rest of the run, and for the case unless the run is dry. An Agent's output
+// has parts (parts, by suffix: "" is the tag itself, ".summary" and so on), each kept under the
+// tag's name and the suffix; any other step has just its output. Every one replaces the value the
+// last write left.
 func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map[string]string) {
-	name := outputTo(n, rs.run.Kind)
+	name := rs.g.OutputNames(rs.run.Kind)[n.ID]
 	if name == "" {
 		return
 	}
@@ -527,15 +524,16 @@ type stepOutcome struct {
 	port, output, note string
 	agentRun           int64
 	err                error
-	// tags are the values an Agent's output tag takes, by suffix (see agentTags); nil for a step
-	// whose output is the tag's value.
+	// tags are the values an Agent's or a Decision's output tag takes, by suffix (see agentParts); nil
+	// for a step whose output is the tag's value.
 	tags map[string]string
 }
 
-// runStep runs one step with the run's tags and the output of the steps before it.
-func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOutcome {
+// runStep runs one step with the tags kept so far (those of the case and of the steps of this run
+// that have finished) and the output of the steps linked into it.
+func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
 	values := map[string]string{}
-	for k, v := range rs.tags {
+	for k, v := range tags {
 		values[k] = v
 	}
 	for k, v := range rs.builtIn {
@@ -544,8 +542,11 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 	maps.Copy(values, s.inputValues(rs, sources))
 	kind := rs.run.Kind
 	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
-		values[workflow.ItemTag(kind)+":case_file"] = c.Contents
+		maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}
 	}
+	// A [[tag]] in a template becomes a link to a page that keeps the tag's value as it is now; a dry
+	// run publishes nothing.
+	s.fillLinks(rs.ws, rs.it.number, s.nodeTemplates(n, kind), values, s.runPublisher(rs))
 	limit := 4 * time.Hour
 	if n.Type == workflow.Approval {
 		limit = 15 * 24 * time.Hour // a person may take up to two weeks
@@ -571,7 +572,19 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 				out += fmt.Sprintf("\n%s: %.1f%%", c.Name, 100*c.P)
 			}
 		}
-		return stepOutcome{port: ans.Choice, output: out}
+		// The tag is the choice; its parts are how sure the model was and why the choice means what it does.
+		parts := map[string]string{"": out, ".confidence": "", ".reason": ""}
+		for _, c := range ans.Choices {
+			if c.Name == ans.Choice {
+				parts[".confidence"] = fmt.Sprintf("%.0f%%", 100*c.P)
+			}
+		}
+		for _, c := range d.Choices {
+			if c.Name == ans.Choice {
+				parts[".reason"] = c.Description
+			}
+		}
+		return stepOutcome{port: ans.Choice, output: out, tags: parts}
 	case workflow.CaseEntry:
 		c, err := workflow.CaseEntrySettingsOf(n)
 		if err == nil {
@@ -589,7 +602,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 		}
 		return stepOutcome{port: "out", output: text}
 	case workflow.Agent:
-		a, err := workflow.AgentSettingsOf(n, kind)
+		a, err := s.agentSettings(n, kind)
 		if err == nil {
 			err = a.Check(kind)
 		}
@@ -597,15 +610,15 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 			return stepOutcome{err: err}
 		}
 		return s.agentStep(ctx, rs, n, a, values)
-	case workflow.GitHubComment:
-		c, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+	case workflow.Post:
+		p, err := workflow.SettingsOf(n, workflow.DefaultPost())
 		if err == nil {
-			err = c.Check()
+			err = p.Check()
 		}
 		if err != nil {
 			return stepOutcome{err: err}
 		}
-		return s.commentStep(ctx, rs, n, c, strings.TrimSpace(workflow.Render(c.Message, values)))
+		return s.postStep(ctx, rs, n, p, strings.TrimSpace(workflow.Render(p.Message, values)))
 	case workflow.Condition:
 		c, err := workflow.SettingsOf(n, workflow.DefaultCondition())
 		if err == nil {
@@ -614,7 +627,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 		if err != nil {
 			return stepOutcome{err: err}
 		}
-		f := workflow.ItemFacts{Author: rs.it.author, Association: rs.it.assoc, Labels: rs.it.labels, Title: rs.it.title, Body: rs.it.body, Tags: rs.tags}
+		f := workflow.ItemFacts{Author: rs.it.author, Association: rs.it.assoc, Labels: rs.it.labels, Title: rs.it.title, Body: rs.it.body, Tags: tags}
 		for _, cf := range rs.it.files {
 			f.Files, f.Lines = append(f.Files, cf.Path), f.Lines+cf.Additions+cf.Deletions
 		}
@@ -633,15 +646,6 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 			return stepOutcome{err: err}
 		}
 		return s.testStep(ctx, rs, t, workflow.Render(t.Script, values))
-	case workflow.DiscordPost:
-		d, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost())
-		if err == nil {
-			err = d.Check()
-		}
-		if err != nil {
-			return stepOutcome{err: err}
-		}
-		return s.discordStep(ctx, rs, d, strings.TrimSpace(workflow.Render(d.Message, values)))
 	case workflow.Approval:
 		a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 		if err == nil {
@@ -655,16 +659,46 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 	return stepOutcome{err: fmt.Errorf("a %s block cannot run yet", n.Type)}
 }
 
-// commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
-// file. Keeping one comment, a later run edits the node's earlier comment.
-func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, c workflow.GitHubCommentSettings, text string) stepOutcome {
+// postStep says the text in each destination the block has ticked, GitHub then Discord: the one text,
+// rendered once, so a [[link]] in it is the same in both. A destination that cannot be reached for a
+// reason that is not a failure (a private repository stays out of Discord) is skipped and noted; one
+// that fails does not stop the other from being tried, and fails the step, which reports both.
+func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p workflow.PostSettings, text string) stepOutcome {
 	if text == "" {
-		return stepOutcome{err: errors.New("the comment came out empty")}
+		return stepOutcome{err: errors.New("the message came out empty")}
 	}
 	if rs.run.DryRun {
 		return stepOutcome{port: "out", output: text, note: "dry run: not posted"}
 	}
-	if c.Trial {
+	var reports []string
+	failed := false
+	report := func(where string, o stepOutcome) {
+		switch {
+		case errors.Is(o.err, errPrivateRepo):
+			reports = append(reports, where+": skipped, "+o.err.Error())
+		case o.err != nil:
+			failed = true
+			reports = append(reports, where+": "+o.err.Error())
+		default:
+			reports = append(reports, where+": "+o.note)
+		}
+	}
+	if p.GitHub {
+		report("GitHub", s.commentStep(ctx, rs, n, p.Trial, text))
+	}
+	if p.Discord {
+		report("Discord", s.discordStep(ctx, rs, p.Summary, text))
+	}
+	if failed {
+		return stepOutcome{err: errors.New(strings.Join(reports, "; "))}
+	}
+	return stepOutcome{port: "out", output: text, note: strings.Join(reports, "; ")}
+}
+
+// commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
+// file. Every run adds a comment; none is ever edited.
+func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, trial bool, text string) stepOutcome {
+	if trial {
 		if err := s.writeEntry(rs, n, "**Would post on GitHub:**\n\n"+text, true); err != nil {
 			return stepOutcome{err: err}
 		}
@@ -677,31 +711,9 @@ func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node,
 	if token == "" {
 		return stepOutcome{err: errors.New("posting needs the workspace's GitHub identity: set it in the workspace's Settings")}
 	}
-	cs, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
-	if errors.Is(err, store.ErrNotFound) {
-		cs, err = s.caseForRun(rs)
-	}
+	_, url, err := s.gh.Comment(ctx, token, rs.ws.Name, rs.it.number, text)
 	if err != nil {
 		return stepOutcome{err: err}
-	}
-	if c.KeepOne {
-		if id, _ := s.st.GitHubComment(cs.UUID, n.ID); id != 0 {
-			url, err := s.gh.EditComment(ctx, token, rs.ws.Name, id, text)
-			if err == nil {
-				s.st.SetGitHubComment(cs.UUID, n.ID, id, url)
-				return stepOutcome{port: "out", output: text, note: "edited " + url}
-			}
-			if !errors.Is(err, github.ErrNoRepo) { // deleted on GitHub: post a new one
-				return stepOutcome{err: fmt.Errorf("editing the earlier comment: %v", err)}
-			}
-		}
-	}
-	id, url, err := s.gh.Comment(ctx, token, rs.ws.Name, rs.it.number, text)
-	if err != nil {
-		return stepOutcome{err: err}
-	}
-	if err := s.st.SetGitHubComment(cs.UUID, n.ID, id, url); err != nil {
-		log.Printf("workflow run %d: %v", rs.run.ID, err)
 	}
 	return stepOutcome{port: "out", output: text, note: "posted " + url}
 }

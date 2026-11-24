@@ -11,7 +11,7 @@ var t0 = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 // settings is a node's defaults with the filters the defaults switch on turned off, so that a case
 // tests the one rule it names, and then the case's changes.
 func settings(typ string, change func(*EventSettings)) EventSettings {
-	s := DefaultEvent(typ)
+	s := DefaultEvent(typ).WithOptOut("Autobot: ignore") // the workspace's opt-out tag
 	s.Authors, s.OverLimit, s.WaitCI, s.ReviewRequest = "all", "skip", "no", false
 	if change != nil {
 		change(&s)
@@ -66,8 +66,12 @@ func TestDecide(t *testing.T) {
 		{"stop tag in the description", "pr_ready", nil, func(f *Facts) { f.Body = "Autobot: ignore" }, []Event{ready}, Skip, "its description"},
 		{"stop tag from a trusted commenter", "pr_ready", nil, func(f *Facts) { f.Comments = []Comment{{"carol", "Autobot: ignore", true}} }, []Event{ready}, Skip, "a comment by carol"},
 		{"stop tag from an untrusted commenter does not stop", "pr_ready", nil, func(f *Facts) { f.Comments = []Comment{{"mallory", "Autobot: ignore", false}} }, []Event{ready}, Fire, ""},
-		{"stop tag from anyone when trust is off", "pr_ready", func(s *EventSettings) { s.TrustedOnly = false }, func(f *Facts) { f.Comments = []Comment{{"mallory", "Autobot: ignore", false}} }, []Event{ready}, Skip, "mallory"},
-		{"stop tag beats a summons", "pr_ready", func(s *EventSettings) { s.Mode = "summoned" }, func(f *Facts) { f.Comments = []Comment{{"carol", "Autobot: ignore", true}} }, []Event{summon(true)}, Skip, "stop tag"},
+		{"stop tag from a stranger does not stop even when trust is off", "pr_ready", func(s *EventSettings) { s.TrustedOnly = false }, func(f *Facts) { f.Comments = []Comment{{"mallory", "Autobot: ignore", false}} }, []Event{ready}, Fire, ""},
+		{"stop tag from the author stops", "pr_ready", nil, func(f *Facts) { f.Comments = []Comment{{"alice", "Autobot: ignore", false}} }, []Event{ready}, Skip, "a comment by alice"},
+		{"stop tag from the author stops whatever the block trusts", "pr_ready", func(s *EventSettings) { s.TrustedOnly = false }, func(f *Facts) { f.Comments = []Comment{{"Alice", "Autobot: ignore", false}} }, []Event{ready}, Skip, "a comment by Alice"},
+		{"no opt-out tag, no opt-out", "pr_ready", func(s *EventSettings) { s.StopTag = "" }, func(f *Facts) { f.Body = "Autobot: ignore" }, []Event{ready}, Fire, ""},
+		{"an old tag of the block is ignored", "pr_ready", func(s *EventSettings) { s.StopTag = "Autobot: ignore" }, func(f *Facts) { f.Body = "Old: stop" }, []Event{ready}, Fire, ""},
+		{"stop tag beats a summons", "pr_ready", func(s *EventSettings) { s.Mode = "summoned" }, func(f *Facts) { f.Comments = []Comment{{"carol", "Autobot: ignore", true}} }, []Event{summon(true)}, Skip, "opt-out tag"},
 
 		// Filters.
 		{"other branch", "pr_ready", nil, func(f *Facts) { f.Base = "dev" }, []Event{ready}, Skip, "targets dev, not main"},

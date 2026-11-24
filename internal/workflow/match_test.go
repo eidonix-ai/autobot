@@ -35,10 +35,8 @@ func TestPhraseMatching(t *testing.T) {
 	if !Summons("ping (bot) now", "(bot)", "stop") || Summons("ping bot now", "(bot)", "stop") {
 		t.Error("special characters")
 	}
-	// A stop tag that matches the summon phrase itself is refused.
-	s := DefaultEvent("pr_ready")
-	s.SummonPhrase, s.StopTag = "#autobot ignore-me", "#autobot ignore*"
-	if s.Check("pr_ready") == nil {
-		t.Error("accepted a stop tag that stops every summons")
+	// A tag that matches the summon phrase itself would make every summons an opt-out: Summons says no.
+	if Summons("#autobot ignore-me", "#autobot ignore-me", "#autobot ignore*") {
+		t.Error("a summons that is also an opt-out summoned")
 	}
 }

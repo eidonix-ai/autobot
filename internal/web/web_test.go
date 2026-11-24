@@ -98,17 +98,15 @@ func (fakeGitHub) FileAt(_ context.Context, _, _, _, path string) (string, error
 	return "", github.ErrNoRepo
 }
 
-// fakeComments records what the fake GitHub was asked to post or edit.
+// fakeComments records what the fake GitHub was asked to post.
 var fakeComments []string
 
 func (fakeGitHub) Comment(_ context.Context, token, name string, n int, body string) (int64, string, error) {
+	if strings.Contains(body, "FAILPOST") {
+		return 0, "", errors.New("GitHub refused the comment")
+	}
 	fakeComments = append(fakeComments, fmt.Sprintf("post #%d by %s: %s", n, token, body))
 	return int64(100 + len(fakeComments)), fmt.Sprintf("https://github.com/%s/pull/%d#issuecomment-%d", name, n, 100+len(fakeComments)), nil
-}
-
-func (fakeGitHub) EditComment(_ context.Context, token, name string, id int64, body string) (string, error) {
-	fakeComments = append(fakeComments, fmt.Sprintf("edit %d by %s: %s", id, token, body))
-	return fmt.Sprintf("https://github.com/%s/pull/7#issuecomment-%d", name, id), nil
 }
 
 func (fakeGitHub) Tree(context.Context, string, string, string) ([]string, error) {

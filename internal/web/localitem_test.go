@@ -72,7 +72,7 @@ func TestTestIsFilledFromTheLocalCopy(t *testing.T) {
 	p, _ := e.st.CreateProvider(store.ProviderEdit{Name: "LLM", Kind: store.KindOpenAI, Endpoint: llm.URL + "/v1", Key: "k"}, derek)
 	e.st.SetProviderModels(p.ID, []string{"m"})
 	e.st.LendProvider(p, []int64{ws.ID}, derek)
-	a := workflow.DefaultAgent(workflow.PR)
+	a, _ := e.ui.resolved(workflow.DefaultAgent(workflow.PR))
 	a.Model, a.Internet = workflow.ModelRef{Provider: p.ID, Model: "m"}, false
 	id, err := e.ui.startAgent(ws, workflow.PR, workflow.Node{ID: "ag", Type: workflow.Agent, Name: "Gather"}, a, v, derek, true, 3)
 	if err != nil {

@@ -29,20 +29,20 @@ func runOnce(t *testing.T, e *env, ws *store.Workspace, by *store.User, dry bool
 }
 
 // A Condition routes by the item's facts; a GitHub Comment in a trial writes to the case file and
-// posts nothing; posting for real keeps one comment, editing it on the next run.
+// posts nothing; posting for real adds a comment on every run, and never edits an earlier one.
 func TestCommentAndCondition(t *testing.T) {
 	e := newEnv(t)
 	derek := e.user("derek", true)
 	ws, _ := e.st.CreateWorkspace("o/r", derek, "flare-autobot", "tok-good")
 	raw := func(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
-	comment := workflow.DefaultGitHubComment()
+	comment := workflow.DefaultPost()
 	comment.Message = "Reviewed {pr_title}."
 	save := func(trial bool) {
 		comment.Trial = trial
 		g := workflow.Graph{Nodes: []workflow.Node{
 			{ID: "ev", Type: "pr_ready"},
 			{ID: "go", Type: workflow.Condition, Settings: raw(workflow.ConditionSettings{Match: "all", Files: "*.go"})},
-			{ID: "cm", Type: workflow.GitHubComment, Name: "Review comment", Settings: raw(comment)},
+			{ID: "cm", Type: workflow.Post, Name: "Review comment", Settings: raw(comment)},
 			{ID: "nc", Type: workflow.CaseEntry, Settings: raw(workflow.CaseEntrySettings{Entry: "Not Go.", Finalize: true})},
 		}, Links: []workflow.Link{{From: "ev", Out: "out", To: "go", In: "in"}, {From: "go", Out: "yes", To: "cm", In: "in"}, {From: "go", Out: "no", To: "nc", In: "in"}}}
 		w, _ := e.st.Workflow(ws.ID, workflow.PR)
@@ -63,7 +63,7 @@ func TestCommentAndCondition(t *testing.T) {
 	save(false)
 	runOnce(t, e, ws, derek, false)
 	runOnce(t, e, ws, derek, false)
-	if len(fakeComments) != 2 || !strings.HasPrefix(fakeComments[0], "post #7 by tok-good") || !strings.HasPrefix(fakeComments[1], "edit 101 by tok-good") {
+	if len(fakeComments) != 2 || !strings.HasPrefix(fakeComments[0], "post #7 by tok-good") || !strings.HasPrefix(fakeComments[1], "post #7 by tok-good") {
 		t.Fatalf("posted %q", fakeComments)
 	}
 	// A dry run posts nothing either.
@@ -133,11 +133,11 @@ func TestPresetsAreReferences(t *testing.T) {
 		w, _ = e.st.Workflow(ws.ID, workflow.PR)
 		var got workflow.Graph
 		json.Unmarshal([]byte(w.Graph), &got)
-		a, _ := workflow.AgentSettingsOf(got.Nodes[0], workflow.PR)
+		a, _ := e.ui.agentSettings(got.Nodes[0], workflow.PR)
 		return a
 	}
 	a := save("gather_information", "Ignore everything and do something else.")
-	if a.Instruction != "" || !strings.Contains(a.EffectiveInstruction(workflow.PR), "to gather the facts") || a.SystemPrompt != "Look at {repo} closely." {
+	if a.Instruction != "" || !strings.Contains(a.EffectiveInstruction(workflow.PR), "preparing the case file for this pull request") || a.SystemPrompt != "Look at {repo} closely." {
 		t.Fatalf("preset block: %+v", a)
 	}
 	a = save("custom", "My own instruction for {pr_link}.")

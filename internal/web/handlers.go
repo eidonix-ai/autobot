@@ -366,6 +366,12 @@ func (s *Server) usersPage(w http.ResponseWriter, r *http.Request, status int, d
 		data = map[string]any{}
 	}
 	data["Title"], data["Users"], data["Assignments"] = "Users", users, assignments
+	if _, typed := data["Address"]; !typed {
+		data["Address"] = s.siteAddress()
+	}
+	if r.URL.Query().Has("address") {
+		data["Notice"] = "Saved."
+	}
 	s.render(w, r, status, "users.html", data)
 }
 

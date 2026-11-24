@@ -23,6 +23,17 @@
 </section>
 
 
+<section class="panel" id="opt-out">
+<h2>Opt-out tag</h2>
+{{with .OptOutError}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.WS.Path}}/settings/opt-out" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label><span class="lbl">Tag <span class="info" tabindex="0" data-tip="Autobot stays off a pull request or issue whose description has this tag, or that has a comment with it by the item's author or a maintainer. Case doesn't matter; ? stands for one character or none, * for any run of characters. Empty: no opt-out. Templates can say {repo:opt_out}.">ⓘ</span></span>
+    <input name="opt_out" value="{{.OptOut}}" maxlength="100" autocomplete="off" spellcheck="false" placeholder="Autobot: ignore"></label>
+  <button>Save</button>
+</form>
+</section>
+
 <section class="panel">
 <h2>GitHub identity</h2>
 {{if .GH}}

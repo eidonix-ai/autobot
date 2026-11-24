@@ -19,7 +19,7 @@ func TestTemplates(t *testing.T) {
 	if err := CheckTemplates(PR, nil, tpl); err == nil || !strings.Contains(err.Error(), "{value_summary}") {
 		t.Fatalf("unknown tag: %v", err)
 	}
-	if err := CheckTemplates(PR, map[string]bool{"value_summary": true}, tpl); err != nil {
+	if err := CheckTemplates(PR, OutputSet{"value_summary": Agent}, tpl); err != nil {
 		t.Fatal(err)
 	}
 	// Issue workflows have no pull request.
@@ -58,7 +58,7 @@ func TestParentAndFieldTags(t *testing.T) {
 		}
 	}
 	// Every preset uses the new names only.
-	for _, p := range Personas {
+	for _, p := range SeedPresets {
 		for _, text := range []string{p.Instruction, p.Goal, p.IssueInstruction, p.Issue} {
 			for _, tag := range TemplateTags(text) {
 				if CanonicalTag(tag, PR) != tag {
@@ -70,7 +70,7 @@ func TestParentAndFieldTags(t *testing.T) {
 }
 
 func TestStepSettings(t *testing.T) {
-	a := DefaultAgent(PR)
+	a := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	if a.Check(PR) == nil {
 		t.Fatal("an agent with no model passed")
 	}
@@ -112,11 +112,17 @@ func TestStepSettings(t *testing.T) {
 	if g.Check(PR) == nil {
 		t.Fatal("a link from a choice the decision lacks passed")
 	}
-	// Other steps' output tags are known; a node's own is not offered back to it.
+	// A step's tag is offered to the steps after it only: not to itself, nor to a step before it.
 	a.OutputTo = "value_summary"
 	ab, _ := json.Marshal(a)
 	g.Nodes[2].Settings = ab
-	if !g.OutputTags(PR, "d")["value_summary"] || g.OutputTags(PR, "a")["value_summary"] {
-		t.Fatal("output tags")
+	if _, offered := g.OutputTags(PR, "d")["value_summary"]; offered {
+		t.Fatal("a step is offered the tag of one after it")
+	}
+	if _, offered := g.OutputTags(PR, "a")["value_summary"]; offered {
+		t.Fatal("a step is offered its own tag")
+	}
+	if _, offered := g.OutputTags(PR, "a")["decision"]; !offered {
+		t.Fatal("a step is not offered the tag of the one before it")
 	}
 }

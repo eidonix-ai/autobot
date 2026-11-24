@@ -39,6 +39,17 @@ func (s *Store) Workflow(workspaceID int64, kind string) (*StoredWorkflow, error
 // SaveWorkflow stores a workflow made from version base and returns the new version. If someone
 // else saved it after base, nothing is stored and ErrStaleWorkflow is returned.
 func (s *Store) SaveWorkflow(workspaceID int64, kind string, base int, graph string, actor *User) (int, error) {
+	return s.SaveWorkflowRenaming(workspaceID, kind, base, graph, actor, nil)
+}
+
+// KeyRename says that the output kept under the name Old (and its parts, Old.report and so on) is
+// kept under New from now on.
+type KeyRename struct{ Old, New string }
+
+// SaveWorkflowRenaming is SaveWorkflow, and in the same transaction the values kept for the cases of
+// this kind of item (pull requests, or issues) under the old names of renamed tags move to the new
+// ones, so the next run finds them. A nil actor is Autobot itself.
+func (s *Store) SaveWorkflowRenaming(workspaceID int64, kind string, base int, graph string, actor *User, renames []KeyRename) (int, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -53,10 +64,19 @@ func (s *Store) SaveWorkflow(workspaceID int64, kind string, base int, graph str
 		return 0, ErrStaleWorkflow
 	}
 	next := cur + 1
+	var by sql.NullInt64
+	if actor != nil {
+		by = sql.NullInt64{Int64: actor.ID, Valid: true}
+	}
 	if _, err := tx.Exec(`INSERT INTO workflows (workspace_id, kind, graph, version, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (workspace_id, kind) DO UPDATE SET graph = excluded.graph, version = excluded.version,
-		updated_by = excluded.updated_by, updated_at = excluded.updated_at`, workspaceID, kind, graph, next, actor.ID, now()); err != nil {
+		updated_by = excluded.updated_by, updated_at = excluded.updated_at`, workspaceID, kind, graph, next, by, now()); err != nil {
 		return 0, err
+	}
+	for _, r := range renames {
+		if err := renameCaseKeys(tx, workspaceID, kind, r.Old, r.New); err != nil {
+			return 0, err
+		}
 	}
 	return next, tx.Commit()
 }

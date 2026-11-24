@@ -2,15 +2,25 @@ package workflow
 
 import "testing"
 
+// seed is a built-in preset, which a test hands to a block as the web layer does with the stored one.
+func seed(key string) *Persona {
+	for i := range SeedPresets {
+		if SeedPresets[i].Key == key {
+			return &SeedPresets[i]
+		}
+	}
+	return nil
+}
+
 // Gather Information writes its report from the scratchpad; the other presets do not, for now; a
 // Custom block has its own closing step. Report turns default to 15, also in old saved blocks.
 func TestClosingStep(t *testing.T) {
-	for _, p := range Personas {
+	for i, p := range SeedPresets {
 		want := ""
 		if p.Key == "gather_information" {
 			want = ClosingReport
 		}
-		if got := (AgentSettings{Persona: p.Key, Closing: ClosingReport}).EffectiveClosing(PR); got != want {
+		if got := (AgentSettings{Persona: p.Key, Closing: ClosingReport}).WithPreset(&SeedPresets[i]).EffectiveClosing(PR); got != want {
 			t.Errorf("preset %s: closing %q, want %q (a preset's own, whatever the block stored)", p.Key, got, want)
 		}
 	}
@@ -23,7 +33,7 @@ func TestClosingStep(t *testing.T) {
 	if (AgentSettings{}).EffectiveReportTurns() != 15 || (AgentSettings{ReportTurns: 7}).EffectiveReportTurns() != 7 {
 		t.Error("report turns")
 	}
-	base := DefaultAgent(PR)
+	base := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	base.Model = ModelRef{Provider: 1, Model: "m"}
 	if err := base.Check(PR); err != nil {
 		t.Fatal(err)

@@ -1,0 +1,19 @@
+{{define "public"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{.Title}} · Eidonix Autobot</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+{{with .Note}}<p class="hint">{{.}}</p>{{end}}
+<article class="panel markdown">{{.HTML}}</article>
+</main>
+</body>
+</html>{{end}}
+{{define "content"}}{{end}}

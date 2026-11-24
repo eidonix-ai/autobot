@@ -240,6 +240,8 @@ func newPollEnv(t *testing.T) *pollEnv {
 func (p *pollEnv) saveGraph(typ string, change func(*workflow.EventSettings)) {
 	p.t.Helper()
 	s := workflow.DefaultEvent(typ)
+	// The stop tag blocks used to start with: the workspace takes it from them (unless a test sets its own first).
+	s.StopTag = "Autobot: ignore"
 	s.Authors, s.OverLimit, s.WaitCI, s.ReviewRequest = "all", "skip", "no", false
 	if change != nil {
 		change(&s)

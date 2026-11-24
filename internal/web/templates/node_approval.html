@@ -8,6 +8,7 @@
     <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
     <label>Time limit (hours) <input type="number" name="hours" min="1" max="336" value="{{.S.Hours}}"></label>
   </div>
+  {{template "tagline" .}}
   <label><span class="lbl">Request <span class="info" tabindex="0" data-tip="Asked in the case's Discord post with Approve and Deny buttons, and on the run's page. Anyone who can see the forum may answer; the first answer counts.">ⓘ</span></span>
     <textarea name="request" rows="4" class="code" spellcheck="false" required>{{.S.Request}}</textarea></label>
   {{template "tags" .}}

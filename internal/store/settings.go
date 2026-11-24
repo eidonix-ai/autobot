@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -61,21 +62,6 @@ func (s *Store) TrustedHosts() ([]string, error) {
 	return out, nil
 }
 
-// GitHubComment returns the comment a node posted on a case's item, or 0.
-func (s *Store) GitHubComment(caseUUID, node string) (int64, string) {
-	var id int64
-	var url string
-	s.db.QueryRow(`SELECT comment_id, url FROM github_comments WHERE case_uuid = ? AND node_id = ?`, caseUUID, node).Scan(&id, &url)
-	return id, url
-}
-
-// SetGitHubComment records the comment a node posted on a case's item.
-func (s *Store) SetGitHubComment(caseUUID, node string, id int64, url string) error {
-	_, err := s.db.Exec(`INSERT INTO github_comments (case_uuid, node_id, comment_id, url) VALUES (?, ?, ?, ?)
-		ON CONFLICT (case_uuid, node_id) DO UPDATE SET comment_id = excluded.comment_id, url = excluded.url`, caseUUID, node, id, url)
-	return err
-}
-
 // DiscordPost returns a case's forum post and its summary message, or "" when it has none.
 func (s *Store) DiscordPost(caseUUID string) (thread, summary string) {
 	s.db.QueryRow(`SELECT thread_id, summary_id FROM discord_posts WHERE case_uuid = ?`, caseUUID).Scan(&thread, &summary)
@@ -87,4 +73,36 @@ func (s *Store) SetDiscordPost(caseUUID, thread, summary string) error {
 	_, err := s.db.Exec(`INSERT INTO discord_posts (case_uuid, thread_id, summary_id) VALUES (?, ?, ?)
 		ON CONFLICT (case_uuid) DO UPDATE SET thread_id = excluded.thread_id, summary_id = excluded.summary_id`, caseUUID, thread, summary)
 	return err
+}
+
+// SetSettingIfEmpty stores an instance setting only when it has none (or an empty one), as one
+// step, so of several requests racing to fill it exactly one wins. It reports whether this call stored it.
+func (s *Store) SetSettingIfEmpty(key, value string) (bool, error) {
+	res, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE settings.value = ''`, key, value)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func optOutKey(workspaceID int64) string { return "opt_out/" + strconv.FormatInt(workspaceID, 10) }
+
+// OptOutTag returns a workspace's opt-out tag: what the author of a pull request or issue, or a
+// maintainer, writes to keep Autobot off it. "" means no opt-out. ErrNotFound means it was never set.
+func (s *Store) OptOutTag(workspaceID int64) (string, error) {
+	return s.Setting(optOutKey(workspaceID))
+}
+
+// SetOptOutTag sets a workspace's opt-out tag ("" for none).
+func (s *Store) SetOptOutTag(ws *Workspace, tag string, actor *User) error {
+	tag = strings.TrimSpace(tag)
+	if err := s.SetSetting(optOutKey(ws.ID), tag); err != nil {
+		return err
+	}
+	what := "removed the opt-out tag"
+	if tag != "" {
+		what = "set the opt-out tag to “" + tag + "”"
+	}
+	return addEvent(s.db, ws.ID, actor, what)
 }

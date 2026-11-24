@@ -39,6 +39,7 @@ type NodeType struct {
 	Kind    string   `json:"kind"` // the workflow it belongs to; "" for steps, which go in any
 	Label   string   `json:"label"`
 	Event   bool     `json:"event"`   // starts a chain: no input
+	Hidden  bool     `json:"-"`       // no longer offered when placing a block
 	Outputs []string `json:"outputs"` // a new node's outputs, filled by TypesFor
 }
 
@@ -51,18 +52,21 @@ var Types = []NodeType{
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
 	{Type: CaseEntry, Label: "Case Entry"},
-	{Type: GitHubComment, Label: "GitHub Comment"},
+	{Type: Post, Label: "Post"},
 	{Type: Condition, Label: "Condition"},
 	{Type: TestRun, Label: "Test Run"},
-	{Type: DiscordPost, Label: "Post to Discord"},
 	{Type: Approval, Label: "Human Approval"},
+	// The two blocks Post replaced: graphs saved with them load as Post nodes, but a run from before
+	// that kept one in its snapshot still names it, and the palette does not offer them.
+	{Type: githubComment, Label: "GitHub Comment", Hidden: true},
+	{Type: discordPost, Label: "Post to Discord", Hidden: true},
 }
 
 // TypesFor lists the node types a kind's canvas offers.
 func TypesFor(kind string) []NodeType {
 	var out []NodeType
 	for _, t := range Types {
-		if t.Kind == kind || t.Kind == "" {
+		if (t.Kind == kind || t.Kind == "") && !t.Hidden {
 			t.Outputs = Outputs(Node{Type: t.Type})
 			out = append(out, t)
 		}
@@ -84,6 +88,18 @@ func TypeOf(typ string) (NodeType, bool) {
 type Graph struct {
 	Nodes []Node `json:"nodes"`
 	Links []Link `json:"links"`
+}
+
+// UnmarshalJSON reads a graph, turning nodes of the two posting blocks Post replaced into Post nodes.
+func (g *Graph) UnmarshalJSON(b []byte) error {
+	type plain Graph // without this method
+	if err := json.Unmarshal(b, (*plain)(g)); err != nil {
+		return err
+	}
+	for i, n := range g.Nodes {
+		g.Nodes[i] = upgrade(n)
+	}
+	return nil
 }
 
 // Node is one node on the canvas.
@@ -203,14 +219,12 @@ func (g Graph) Check(kind string) error {
 			_, err = DecisionSettingsOf(n, kind)
 		case CaseEntry:
 			_, err = CaseEntrySettingsOf(n)
-		case GitHubComment:
-			_, err = SettingsOf(n, DefaultGitHubComment())
+		case Post:
+			_, err = SettingsOf(n, DefaultPost())
 		case Condition:
 			_, err = SettingsOf(n, DefaultCondition())
 		case TestRun:
 			_, err = SettingsOf(n, DefaultTestRun())
-		case DiscordPost:
-			_, err = SettingsOf(n, DefaultDiscordPost())
 		case Approval:
 			_, err = SettingsOf(n, DefaultApproval(kind))
 		}
@@ -283,8 +297,11 @@ type EventSettings struct {
 	Mode          string `json:"mode"`           // "summoned": only when summoned; "always": whenever the event happens
 	SummonPhrase  string `json:"summon_phrase"`  // a comment containing it summons Autobot
 	ReviewRequest bool   `json:"review_request"` // PRs: a review request to the workspace's GitHub user also summons
-	StopTag       string `json:"stop_tag"`       // the item or any comment containing it stops the run
-	TrustedOnly   bool   `json:"trusted_only"`   // honor summons and the stop tag only from the author and collaborators
+	// StopTag was the block's own opt-out tag. The workspace has one now (its Settings), which every
+	// block uses; the old field stays in saved blocks, unused, and the callers of Decide and Summons
+	// put the workspace's in it.
+	StopTag     string `json:"stop_tag,omitempty"`
+	TrustedOnly bool   `json:"trusted_only"` // honor summons only from the author and collaborators
 
 	// PR Activity only: what activity on an open pull request runs it, and how long to wait for a
 	// burst of activity to settle first.
@@ -314,7 +331,7 @@ var Activities = []struct{ Key, Label string }{
 
 // DefaultEvent is a new event node's settings.
 func DefaultEvent(typ string) EventSettings {
-	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", StopTag: "Autobot: ignore", TrustedOnly: true}
+	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", TrustedOnly: true}
 	t, _ := TypeOf(typ)
 	if t.Kind == Issue {
 		s.SummonPhrase = "@autobot"
@@ -349,12 +366,8 @@ func (s EventSettings) Check(typ string) error {
 	switch {
 	case s.Mode != "summoned" && s.Mode != "always":
 		return errors.New("choose when it runs: only if summoned, or always")
-	case strings.TrimSpace(s.StopTag) == "" || len(s.StopTag) > 100:
-		return errors.New("the stop tag must be 1 to 100 characters")
 	case strings.TrimSpace(s.SummonPhrase) == "" || len(s.SummonPhrase) > 100:
 		return errors.New("the summon phrase must be 1 to 100 characters")
-	case Stops(s.SummonPhrase, s.StopTag):
-		return errors.New("the stop tag matches the summon phrase itself, so every summons would stop the run")
 	}
 	if kind == Issue {
 		return nil
@@ -409,7 +422,15 @@ func (s EventSettings) HasActivity(key string) bool {
 	return false
 }
 
-// Summary is the one line an event node shows on the canvas.
+// WithOptOut is the settings with the workspace's opt-out tag, which is what stops a run whatever the
+// block saved.
+func (s EventSettings) WithOptOut(tag string) EventSettings {
+	s.StopTag = strings.TrimSpace(tag)
+	return s
+}
+
+// Summary is the one line an event node shows on the canvas; its StopTag is the workspace's opt-out tag
+// (WithOptOut).
 func (s EventSettings) Summary() string {
 	parts := []string{"Always runs"}
 	if s.Mode == "summoned" {
@@ -418,7 +439,9 @@ func (s EventSettings) Summary() string {
 	if s.CaseExists {
 		parts = append(parts, "with a case file")
 	}
-	parts = append(parts, "stops on “"+s.StopTag+"”")
+	if s.StopTag != "" {
+		parts = append(parts, "stops on “"+s.StopTag+"”")
+	}
 	return strings.Join(parts, " · ")
 }
 
@@ -430,7 +453,6 @@ func EventFromForm(typ string, get func(string) string, all func(string) []strin
 	s := EventSettings{
 		Mode:         get("mode"),
 		SummonPhrase: strings.TrimSpace(get("summon_phrase")),
-		StopTag:      strings.TrimSpace(get("stop_tag")),
 		TrustedOnly:  get("trusted_only") == "on",
 	}
 	if kind == Issue {

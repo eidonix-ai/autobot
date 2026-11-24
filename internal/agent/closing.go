@@ -16,21 +16,44 @@ const (
 	// saveTurnPrompt is the one more turn the research session gets once its work is over.
 	saveTurnPrompt = "Before your report is written: save to your scratchpad anything the report needs that is not there yet. Only scratchpad_write is available on this turn."
 
-	// writerPrompt follows the instruction and Done when in the writing session's first message.
-	writerPrompt = "Your research is done and its notes are in your scratchpad. Write the final report now, from your notes: " +
+	// The writing session's first message follows the instruction and Done when with the writer prompt
+	// (see writerPromptFor): the report's wording, then the summary's, which is a format when the block has one.
+	writerLead = "Your research is done and its notes are in your scratchpad. Write the final report now, from your notes: " +
 		"organized and detailed, the high-importance findings first, every claim with its citation (file and lines, pull request " +
 		"or issue numbers, links), then the open questions and what could not be found. Open the report with a short \"Key findings\" section. " +
 		"Read the index, then the entries you need; check a citation in the code when you are unsure. " +
-		"Call finish with two parts. The summary is at most about 300 words: one line on what the change is, then the 5 to 8 findings " +
-		"that matter most, one line each with its citation, then the most important open questions; no inventory of files. " +
-		"The findings that matter most are what a reader could not learn from the description: what the change does that it does not " +
-		"say, where the description and the code disagree, behaviour it changes or breaks, and claims with no evidence behind them. " +
-		"Put those first, in the summary and in Key findings, before anything that only describes the change. The report is the full report."
+		"Call finish with two parts. "
+	defaultSummary = "The summary is at most about 300 words: one line on what the change is, then the 5 to 8 findings " +
+		"that matter most, one line each with its citation, then the most important open questions; no inventory of files. "
+	formatSummary = "The summary follows this format exactly, filling every field; keep the labels; write 'None.' where a field allows it and there is nothing:\n"
+	whatMatters   = "The findings that matter most are what a reader could not learn from the description: what the change does that it does not " +
+		"say, where the description and the code disagree, behaviour it changes or breaks, and claims with no evidence behind them. "
+	putFirst       = "Put those first, in the summary and in Key findings, before anything that only describes the change. "
+	putFirstFormat = "Put those first in Key findings, and in the summary wherever its format has room for them, before anything that only describes the change. "
+	byAngles       = "The report is organized by the angles the instruction names, if it names them: after Key findings, one section per angle, in the " +
+		"instruction's order. Group your notes by the angle at the start of their titles, and write \"Nothing found\" under an angle that has " +
+		"no notes rather than leaving it out. "
+	summaryByAngles = "The summary then gives each angle one or two lines, with links, where there is something to say, " +
+		"after the opening line and the findings that matter most, and still stays within about 300 words. "
+	reportIsFull = "The report is the full report."
 
 	saveTurnTime = 3 * time.Minute // the save turn's own time, whatever the research had left
 
 	researchSummary = "Research summary"
 )
+
+// writerPrompt is the writing session's prompt for a block with no summary format.
+var writerPrompt = writerPromptFor("")
+
+// writerPromptFor is the prompt that follows the instruction in the writing session's first message.
+// With a summary format the summary follows it exactly; without one it is the short summary of about
+// 300 words, one or two lines to each angle. The report's own wording is the same either way.
+func writerPromptFor(format string) string {
+	if strings.TrimSpace(format) == "" {
+		return writerLead + defaultSummary + whatMatters + putFirst + byAngles + summaryByAngles + reportIsFull
+	}
+	return writerLead + formatSummary + strings.TrimSpace(format) + "\n" + whatMatters + putFirstFormat + byAngles + reportIsFull
+}
 
 // Writer is the session that writes a run's report from the scratchpad.
 type Writer struct {
@@ -41,6 +64,8 @@ type Writer struct {
 	Conv *Conversation
 	// Intro is the block's rendered Instruction and Done when.
 	Intro string
+	// SummaryFormat is the block's rendered summary format: the summary follows it exactly. "" for the default.
+	SummaryFormat string
 	// Time is its own time, and WarnPercent how much of it is left when it is warned (0: not).
 	Time        time.Duration
 	WarnPercent int
@@ -48,8 +73,8 @@ type Writer struct {
 
 // WriterTask is the writing session's first message: the block's instruction and Done when, what
 // to do, and the scratchpad index.
-func WriterTask(intro string, pad Pad, subs SubView) string {
-	task := intro + "\n\n" + writerPrompt + "\n\nYour notes so far:\n" + Index(pad, "")
+func WriterTask(intro, summaryFormat string, pad Pad, subs SubView) string {
+	task := intro + "\n\n" + writerPromptFor(summaryFormat) + "\n\nYour notes so far:\n" + Index(pad, "")
 	if subs != nil {
 		if infos := subs.Summaries(); len(infos) > 0 {
 			task += "\n\nYour sub-agents' reports (read their notes with scratchpad_index, scratchpad_read and scratchpad_search, agent \"s1\" and so on):\n" + subLines(infos)
@@ -129,7 +154,7 @@ func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer)
 	cfg := w.Config
 	cfg.WithSummary = true                                             // its finish takes a summary as well as the report
 	cfg.Pad, cfg.Subs, cfg.Read = research.Pad, research.Subs, tr.Read // it may cite what the research read, and read its sub-agents' notes
-	cfg.Task = WriterTask(w.Intro, research.Pad, research.Subs)
+	cfg.Task = WriterTask(w.Intro, w.SummaryFormat, research.Pad, research.Subs)
 	cfg.Verify = nil
 	cfg.Save = func(wt *Transcript) {
 		tr.Writing = wt

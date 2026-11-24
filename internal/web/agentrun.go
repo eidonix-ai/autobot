@@ -75,7 +75,24 @@ var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)
 // readOnlyTools are the tools of a research session that the session writing its report keeps: the
 // code, pull request and item readers. No shell, no write tools, no web.
 var readOnlyTools = []string{"pr_files", "pr_diff", "pr_comments", "list_files", "read_file", "search_code", "search_history",
-	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob"}
+	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob", "read_charter"}
+
+// charterTool reads the workspace's project charter, as it is now: the orientation packet quotes only
+// the lines that mention the change's areas.
+func (s *Server) charterTool(ws *store.Workspace) agent.Tool {
+	return agent.Tool{Spec: agent.ToolSpec{Name: "read_charter", Description: "Read the project charter in full: the project's vision, goals, non-goals and roadmap, as the people running " + ws.Name + " wrote them in Autobot.",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+		Run: func(context.Context, json.RawMessage) (string, error) {
+			c, err := s.st.Charter(ws.ID, 0)
+			if errors.Is(err, store.ErrNotFound) || (err == nil && strings.TrimSpace(c.Body) == "") {
+				return "This workspace has no charter yet.", nil
+			}
+			if err != nil {
+				return "", err
+			}
+			return c.Body, nil
+		}}
+}
 
 // subAgentTools are the tools a sub-agent has out of its main agent's: the read-only ones, and the web
 // ones only when the block allows the internet. Never a shell, a write tool or spawn_agent.
@@ -122,13 +139,13 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}
 	prTools := false
 	var pull *agent.PR
+	var info *github.PullRequest
+	var files []github.ChangedFile
 	var fresh string   // what is new since the thread's last run, for its opening message
 	seen := time.Now() // what the run reads of the item, it reads from here on
 	if m := prLinkRE.FindStringSubmatch(values["pr"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])
 		// Autobot's own copy first; GitHub only when it does not have the pull request.
-		var info *github.PullRequest
-		var files []github.ChangedFile
 		if it := s.localItem(ctx, ws, workflow.PR, num); it != nil {
 			info, files = it.pr, it.files
 		} else {
@@ -155,6 +172,11 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	if th != nil && !a.Continues() && strings.TrimSpace(a.FollowUp) != "" {
 		instruction = a.FollowUp
 	}
+	// The orientation packet is computed only for a block whose text asks for it.
+	if tag := workflow.ItemTag(kind) + ":packet"; slices.Contains(workflow.TemplateTags(instruction+"\n"+a.SystemPrompt+"\n"+a.EffectiveGoal(kind)), tag) {
+		values = maps.Clone(values)
+		values[tag] = s.orientation(ctx, ws, token, kind, item, values, info, files)
+	}
 	task := strings.TrimSpace(workflow.Render(instruction, values))
 	if extra := strings.TrimSpace(workflow.Render(a.SystemPrompt, values)); extra != "" {
 		task += "\n\n" + extra
@@ -167,6 +189,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}
 	// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
 	cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
+	cfg.Tools = append(cfg.Tools, s.charterTool(ws))
 	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
 	// request's head, or the default branch's) instead of through GitHub.
 	sess, note, err := s.openSandbox(ctx, ws, a, token, commit, by)
@@ -243,7 +266,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		wconv = agent.NewWriterConversation(ref.Model, ref.Provider, base, wtools)
 		wmodel := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model, Session: wconv.Session}
 		writer = agent.Writer{Config: agent.Config{Model: wmodel, System: base, Tools: wtools, MaxTurns: a.EffectiveReportTurns(), RunID: id, Window: cfg.Window},
-			Conv: wconv, Intro: intro, Time: reportMinutes * time.Minute, WarnPercent: a.EffectiveTimeWarn()}
+			Conv: wconv, Intro: intro, SummaryFormat: strings.TrimSpace(workflow.Render(a.EffectiveSummaryFormat(kind), values)), Time: reportMinutes * time.Minute, WarnPercent: a.EffectiveTimeWarn()}
 	}
 	flush := func(row int64, c *agent.Conversation) {
 		if err := c.Write(func(evs ...store.ConvEvent) error { return s.st.AppendConv(row, evs...) }); err != nil {

@@ -33,10 +33,10 @@ type tagField struct {
 var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true}
 
 // stepTemplates is a node's settings and templates, or an error saying why it cannot be tested.
-func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
+func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 	switch n.Type {
 	case workflow.Agent:
-		s, err := workflow.AgentSettingsOf(n, kind)
+		s, err := srv.agentSettings(n, kind)
 		if err == nil {
 			err = s.Check(kind)
 		}
@@ -53,14 +53,8 @@ func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 			err = s.Check()
 		}
 		return s, []string{s.Entry}, err
-	case workflow.GitHubComment:
-		s, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment())
-		if err == nil {
-			err = s.Check()
-		}
-		return s, []string{s.Message}, err
-	case workflow.DiscordPost:
-		s, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost())
+	case workflow.Post:
+		s, err := workflow.SettingsOf(n, workflow.DefaultPost())
 		if err == nil {
 			err = s.Check()
 		}
@@ -95,7 +89,7 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		s.renderFragment(w, r, status, "node_run.html", data)
 		return
 	}
-	_, templates, err := stepTemplates(n, kind)
+	_, templates, err := s.stepTemplates(n, kind)
 	if err != nil {
 		data["Problem"] = err.Error()
 		s.renderFragment(w, r, status, "node_test.html", data)
@@ -105,13 +99,13 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		values = map[string]string{}
 	}
 	about := map[string]string{}
-	for _, tag := range workflow.Tags(kind) {
+	for _, tag := range workflow.AllTags(kind) {
 		about[tag.Name] = tag.About
 	}
 	var fields []tagField
 	// A field is filled from its parent, as a workflow run does: only the parent ({pr}, the link) is
 	// asked, and {repo} is the workspace's.
-	seen := map[string]bool{"repo": true, "case_link": true}
+	seen := map[string]bool{"repo": true, "case": true} // filled from the workspace and the item's case file
 	for _, tpl := range templates {
 		for _, tag := range workflow.TemplateTags(tpl) {
 			tag = workflow.CanonicalTag(tag, kind)
@@ -149,7 +143,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := g.Nodes[i]
-	settings, _, err := stepTemplates(n, kind)
+	settings, _, err := s.stepTemplates(n, kind)
 	if err != nil {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, nil, map[string]any{})
 		return
@@ -166,13 +160,13 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, values, data)
 		return
 	}
+	// A test publishes nothing: a [[tag]] shows its link's label and says so.
+	s.fillLinks(ws, itemNumber(values), s.nodeTemplates(n, kind), values, nil)
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
-	case workflow.GitHubCommentSettings:
-		data["Comment"] = workflow.Render(st.Message, values)
-	case workflow.DiscordPostSettings:
-		data["Preview"], data["Where"] = workflow.Render(st.Message, values), "Would post on Discord"
+	case workflow.PostSettings:
+		data["Preview"], data["Where"] = workflow.Render(st.Message, values), "Would post: "+st.Where()
 	case workflow.ApprovalSettings:
 		data["Preview"], data["Where"] = workflow.Render(st.Request, values), "Would ask"
 	case workflow.DecisionSettings:
@@ -502,6 +496,7 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 		}
 	}
 	set("repo", ws.Name)
+	set("repo:opt_out", s.optOut(ws))
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		set("charter", c.Body)
 	}
@@ -531,7 +526,9 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 		set(k, v)
 	}
 	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
-		set(workflow.ItemTag(kind)+":case_file", c.Contents)
+		for k, v := range s.caseTags(kind, c) {
+			set(k, v)
+		}
 	}
 	return nil
 }

@@ -151,6 +151,49 @@ func (s *Store) SetCaseValue(uuid, name, value, node string) error {
 	return err
 }
 
+// renameCaseKeys moves the values kept under the tag old, and its parts (old.report …), of this
+// workspace's cases of a kind to the tag new. A value already under a new name is replaced.
+func renameCaseKeys(tx *sql.Tx, workspaceID int64, kind, old, new string) error {
+	if old == new || old == "" || new == "" {
+		return nil
+	}
+	cases := `case_uuid IN (SELECT uuid FROM cases WHERE workspace_id = ? AND kind = ?)`
+	// Names contain _, which LIKE reads as a wildcard: compare the start of the name instead.
+	for _, part := range []struct{ args string }{{"exact"}, {"prefix"}} {
+		var rows *sql.Rows
+		var err error
+		if part.args == "exact" {
+			rows, err = tx.Query(`SELECT case_uuid, name FROM case_values WHERE `+cases+` AND name = ?`, workspaceID, kind, old)
+		} else {
+			rows, err = tx.Query(`SELECT case_uuid, name FROM case_values WHERE `+cases+` AND substr(name, 1, ?) = ?`, workspaceID, kind, len(old)+1, old+".")
+		}
+		if err != nil {
+			return err
+		}
+		type key struct{ uuid, name string }
+		var keys []key
+		for rows.Next() {
+			var k key
+			if err := rows.Scan(&k.uuid, &k.name); err != nil {
+				rows.Close()
+				return err
+			}
+			keys = append(keys, k)
+		}
+		rows.Close()
+		for _, k := range keys {
+			to := new + k.name[len(old):]
+			if _, err := tx.Exec(`DELETE FROM case_values WHERE case_uuid = ? AND name = ?`, k.uuid, to); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE case_values SET name = ? WHERE case_uuid = ? AND name = ?`, to, k.uuid, k.name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // CaseValues returns a case's output tags.
 func (s *Store) CaseValues(uuid string) (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT name, value FROM case_values WHERE case_uuid = ?`, uuid)

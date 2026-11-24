@@ -66,32 +66,75 @@ git only through its environment, never a command line or the mirror's config.
    model discovery, decision providers for /v1/decisions and System One's /v1/systemone.
    Roles (Derek, 2026-11-22): admin is a super-admin (workspaces, members, users, sees all); a user
    configures everything inside their assigned workspaces but cannot create, rename or delete them.
+   Agent presets (piece 5) follow the same split (Derek, 2026-11-23): shared ones are made and changed by
+   admins and used by everyone; a user's own are changed only by their owner and usable in any workspace
+   they are assigned to; an admin can look at another user's but not change them.
 4. Case files (done): one per issue or PR, a Markdown log opened by intake (workflows, not built
    yet; `autobot case open` meanwhile). Writers add contributions: a draft they may revise until
    finalized, then appended and immutable, with its line range. Human edits are recorded with a
    line note. GET /api/v1/cases/{uuid} serves the Markdown to contributors' agents: public repos by
    uuid alone; private repos also need the secret in .github/autobot-secret.txt (committed by the
    repo's people, read live by Autobot), and a request without it gets instructions to set it up.
+   The same address ending in `.html` is the case file as a page to read (header: "Raw Markdown for
+   agents: …"), with the same rule; `{case:link}` is that `.html` address, built from the site's public
+   address (below), and `{case}` is the case file's text. Published pages (below) are served by the same
+   rule at `/p/<uuid>.html` and `.md`.
 5. Workflows (in progress): a canvas per kind (pull requests, issues), polling only, no webhooks.
-   Event blocks (PR First Ready, PR Draft, PR Activity, Issue Opened) with summon phrase and stop tag
-   (case-insensitive, ? and * wildcards, a stop is never also a summons); step blocks Agent (our
-   own lightweight harness, no shell), Decision (one output per choice) and Case Entry. Links may
+   Event blocks (PR First Ready, PR Draft, PR Activity, Issue Opened) with a summon phrase (per block;
+   case-insensitive, ? and * wildcards) and the workspace's one opt-out tag (below); step blocks Agent
+   (our own lightweight harness, no shell), Decision (one output per choice) and Case Entry.
+   The opt-out tag (Derek, 2026-11-23) is one setting of the workspace, on its Settings page (any member
+   changes it), matched like the summon phrase; a workspace that never had one takes the stop tag its
+   blocks used (the most common). It counts in the item's description, in comments by the item's author
+   and in comments by people with write access (the poller asks GitHub for their role, once in ten
+   minutes), never in Autobot's own comments nor anyone else's; the poller leaves Autobot's own comments
+   out of what it reads. "Trusted only" on a block is for summons only. A summon phrase may not match the
+   tag (a stop is never also a summons). `{repo:opt_out}` is the tag, for templates that tell people how
+   to opt out. The old per-block stop tag stays in saved blocks, unused. Links may
    fan out and merge; loops are refused for now. Templates use {tags}: built-in ones are a parent and
    its fields ({pr} is the link, {pr:title}, {pr:diff}… are filled from it; {repo}, {charter}),
    so the Test box asks only for the parent; old names such as {pr_title}, {project_charter} and {repo:charter} still work.
    The colon is for fields Autobot fills from a built-in parent; a dot names a part of a step's output
-   (Derek, 2026-11-23). A step's "Output to" tag (say `gather`) is kept per case (one PR or issue) and
-   replaced by the next write, with its parts: `{gather}` is the whole (an Agent's "## Summary", "## Report"
+   (Derek, 2026-11-23). Every step's output is kept per case (one PR or issue) under a tag that is its
+   block's name in snake case ("Value Proposition": `value_proposition`; lower case, each run of other
+   characters one `_`, at most 40), shown read-only under the name in the block's dialog and as "→ {tag}"
+   on its card; there is no separate Output to. Names are unique in a workflow (compared by tag, events
+   included; a built-in tag's name is refused for a block with a tag); a new block is "Agent", then
+   "Agent 2"…. Renaming a block rewrites `{x}`, `{x.part}`, `[[x]]`, `[[x.part|L]]` and a Condition's tag in
+   the workflow's other blocks and moves the values kept for that kind's cases, in one save, with a note
+   on the canvas bar. A workflow from before (a block with its own Output to) is migrated once, as a new
+   version at start and on load: the block is renamed to its tag ("Value summary"), or, if another block
+   has that name, keeps its own and the references move. Condition, Test Run, Case Entry and Human
+   Approval keep an output too (what the rules found, the run's summary and end, the entry, the answer);
+   Post is an endpoint and keeps none. A block's templates may use the tags of the steps upstream of it
+   (a path of links into it; this run's values, replacing the case's) and of steps that share no event's
+   chain with it (the case's value from that step's latest run on the item, empty if it never ran; the
+   Tags list shows them apart); a step of a chain it is in that is not upstream is refused, naming the
+   step; the layout saves anyway when links change, and marks a block whose references are no longer
+   allowed. A step's tags are available to every step after it in the same run, across merges and down
+   a Decision's branch (each step's finished tags are copied into the steps it starts). The tag's parts: `{gather}` is the whole (an Agent's "## Summary", "## Report"
    and, when it has notes, "## Notes"), `{gather.summary}`, `{gather.report}` and `{gather.scratchpad}`
    (the thread's notes in full, high importance first, then medium, then low, each "#N [importance] Title"
    and its body; the main agent's only) the parts; a block with no closing step has one report, which is its
-   summary too, so `{gather}` is the report plus the Notes. A Decision's output has no parts. `CheckTemplates`
-   refuses an unknown part, a colon on an output, a dot on a built-in or a decision (typo checks, not limits).
+   summary too, so `{gather}` is the report plus the Notes. A Decision's `{name}` is the choice, with
+   `{name.confidence}` (the choice's probability, "80%") and `{name.reason}` (the description of the
+   choice); any other output has no parts. `CheckTemplates` refuses an unknown part, a colon on an output, a
+   dot on a built-in or on a one-value output (typo checks, not limits).
+   `[[tag]]` and `[[tag|Label]]` in any template become a Markdown link `[Label](URL)` (label derived from
+   the tag, "Discovery report", when none is given; `[[[[` is the text `[[`) to a page that keeps the tag's
+   value as it is at that moment: a published page (table `published`), at `<public address>/p/<uuid>.html`
+   or `.md`, readable by the case file's rule of access, the same content of a tag of a case being one page
+   (no duplicates), deleted 30 days after its item closed (the conversations' retention). A dry run and a
+   Test box publish nothing and say "(not published in a test)". `[[case]]` links the live case file
+   instead (`{case:link}`'s address) and publishes nothing. The public address is an admin setting (the
+   Users page), filled once from the first signed-in request's scheme and Host behind the proxy and
+   changed only by an admin; links are never built from a later request's Host.
    `{input}` is what the step before produced, in the same shape (`{input.summary}`, `{input.report}`,
    `{input.scratchpad}`): after an Agent its whole and parts; after any other step its output text, as both
    summary and report, with no notes; with several links in, each under its step's name. The old
    `{previous_output}` still means `{input.report}` (the report after an agent) and is not listed. A new GitHub
-   Comment, Discord Post or Case Entry block starts with `{input.report}`; saved blocks keep their text.
+   Case Entry block starts with `{input.report}`; `{input}` is not listed any more (every step has its own
+   tag) but works as ever.
    Shift-click tests one block with
    values for its tags and writes nothing. The harness (internal/agent) is goal-driven: it ends only
    through finish, which always takes the report (Derek, 2026-11-23): a cited file the agent never
@@ -137,7 +180,7 @@ git only through its environment, never a command line or the mirror's config.
    10 minutes) writes the report from the scratchpad and finishes with it. The research's finish asks
    for a short summary only (the full report is written next). The writing session's finish takes two
    parts, both required: a summary (at most about 300 words: the 5 to 8 findings that matter most, one
-   line each with its citation, then the open questions) and the full report (opening with a short "Key
+   line each with its citation, then the open questions; or, when the block has a summary format, that format) and the full report (opening with a short "Key
    findings" section); both get the "(not opened)" marks. A finish with no summary is not refused: the
    summary is made from the report's Key findings section, else its first 300 words, and says so. Every
    run that has a report has a summary (a block with no closing step: its report; a failed writer, a
@@ -155,6 +198,63 @@ git only through its environment, never a command line or the mirror's config.
    thread. What the thread has seen of the item (head and time) moves only when a run came to a report.
    A thread or conversation with a run in progress is never dropped by retention, and nothing is written
    to a deleted thread.
+   Gather Information (Derek, 2026-11-23) builds a broad case file: everything relevant to the pull request
+   or issue, gathered, linked and cross-referenced, with no judgement. Its instruction is organized by
+   angles (change, why, related work, recent activity, people, community, project fit, claims and evidence,
+   reach, process; an issue's: the report, why and impact, and the same others), and tells the agent to record
+   every detail to the scratchpad as its own entry the moment it finds it, the title starting with its angle
+   ("Related work: #477 overlaps the same files"), with importance as how soon a reader should see it. Its Done
+   when asks for entries under every angle and every packet lead followed. The closing step then groups the
+   notes by angle prefix into one report section per angle (the writing prompt applies this only when the
+   instruction names angles; an angle with no notes says "Nothing found"), and the summary gives each angle a
+   line or two within about 300 words. The orientation packet (`{pr:packet}`, `{issue:packet}`: built-in, Auto,
+   computed by Autobot with no model in internal/web/packet*.go when a block's text uses the tag, so only
+   Gather Information's heads carry it) opens the first message after the head, under "## Orientation
+   packet (computed by Autobot: a map of where to look, not conclusions)", about 3,000 tokens, never over
+   12,000 characters (a section over 3,000 is cut with "…more"). Every line is a pointer. For a pull request:
+   its facts (state, draft, age, base, head, size, labels, reviews from the index, CI of the head from GitHub
+   with a 5 second limit); the changed files grouped by area (the first two segments of the folder) with
+   whether the description names each area, its folders or its files, whole words in any case; the last 8
+   default-branch commits in each of up to 8 areas within 60 days and the commits that landed since the
+   merge-base on the changed files (git log by path on the mirror, no blobs); possibly related items from
+   the index, found by explicit links, names (changed files' base names and the functions, types, flags and
+   metric-like names on the diff's added and removed lines, 30 terms, longest first, any term that finds 20
+   or more items dropped), the title's words, the author's open items, shared labels and pull requests
+   touching the same files, ranked by how many directions found each then recency, top 15; the author's
+   standing and last 180 days (counts, 10 most recent, areas of merged pull requests); the top 3 committers
+   per area over 180 days; the charter's lines that name an area or a title word (15 at most, with line
+   numbers). An issue's packet is the same without areas, activity and people, unless its text names
+   paths that exist on the default branch. A source that is missing (no code copy or index yet, GitHub
+   down) says "(not available: why)" in its section and never fails the run. A "Community (Discord)" section
+   is left for when the Discord gateway reads exist.
+   Presets (Derek, 2026-11-23) live in the database (`presets` table, internal/store/presets.go), not in code:
+   key (a slug made from the name, never changed; a block stores only the key in `AgentSettings.Persona`),
+   name, one-line description, owner (none: shared), the Instruction, Done when and Summary format for pull
+   requests and again for issues, and the closing step. The built-in ones (internal/workflow/personas.go,
+   `SeedPresets`: their texts include their heads) are put in once, the first time a database is used; after
+   that the database is the authority and a removed one stays removed. A block on a preset follows its current
+   text (the web layer resolves the key with `Server.agentSettings` and hands the preset to the settings with
+   `WithPreset`; `EffectiveInstruction`, `EffectiveGoal`, `EffectiveSummaryFormat` and `EffectiveClosing` read it,
+   and a block whose preset is gone fails its check "the preset no longer exists"). Who may do what, on the
+   server: admins create, edit and remove shared presets; any user creates their own, from nothing or by
+   copying any preset (anyone signed in can open and copy any preset); only the owner edits or removes their
+   own (an admin cannot change another user's); a person may give a block Custom, a shared preset, their own,
+   or the one it already follows (not someone else's). On save the four texts and the formats pass
+   `CheckTemplates` for their kind with no step outputs (built-in tags only). The Presets page (`/presets`, top
+   bar) lists Shared and Mine (an admin also Other users', read-only) with "used by N blocks in M workspaces"
+   and one Open action per row; the form has name, description, pull request and issue Instruction, Done when,
+   Summary format, closing step, Save, Copy to my presets and Remove. Removing is two pages: the first says how
+   many blocks in how many workspaces will switch; the second switches every block that follows it (in every
+   saved workflow and every running run's snapshot, in one transaction, each changed workflow getting a new
+   version) to Custom, copying the preset's text for the block's kind, summary format and closing step into
+   the block. The block's dropdown groups Shared and Mine, plus the block's current preset if it is someone
+   else's, marked "(by user)", read-only with a link to copy it. Editing a shared preset shows how many blocks
+   will follow the new text. A preset's (or a Custom block's) Summary format, with the closing step "report",
+   is what the writing session's summary follows exactly (`writerPromptFor`: "follows this format exactly,
+   filling every field; keep the labels; write 'None.' where a field allows it and there is nothing"); with no
+   format the summary is the short one of about 300 words. Gather Information is seeded with a format for pull
+   requests (Author, Motivation, Scale, Proposal, Touches, Related items, Link, Autobot comments) and one for
+   issues (Reporter, Problem, Affects, Related items, Link, Autobot comments).
    Sub-agents: with "Max sub-agents at a time" above 0 the main agent has `spawn_agent` (title, task),
    which waits for the sub-agent and returns its report, its outcome, an index (no bodies) of its notes
    and the run's totals ("Sub-agents so far: 3 started, 112 turns used."); a call made while that many are
@@ -181,12 +281,18 @@ git only through its environment, never a command line or the mirror's config.
    (shift-click it: number, dry run): steps run when all their inputs have finished and at least
    one link into them fired, so decisions route and forks rejoin; output tags are kept per case;
    runs keep a snapshot of the workflow and each step's state (workflow_runs, workflow_steps).
-   More blocks: GitHub Comment (trial run on by default: writes what it would post to the case
-   file; keep one comment edits its earlier one), Condition (rules on files, size, author's
-   standing, labels, text, tags; no model), Test Run (a script on a machine; passed or failed),
-   Post to Discord (the case's forum post, opened when needed; or its summary) and Human Approval
+   More blocks: Post (Derek, 2026-11-23: it replaced GitHub Comment and Post to Discord, which
+   old graphs load as Posts): one message to the ticked destinations, GitHub (a comment on the item; every
+   run adds one, none is edited; a Trial run, on by default, writes what it would post into the case file
+   instead) then Discord (the case's forum post, opened when needed, or its summary); the text is
+   rendered once; a private repository's cases skip Discord, noted in the step, not failed; one destination
+   failing does not stop the other, and fails the step, which reports both. Condition (rules on files,
+   size, author's standing, labels, text, tags; no model), Test Run (a script on a machine; passed or
+   failed) and Human Approval
    (Discord buttons and the run page; first answer wins; waits survive restarts). Discord is
-   reached over its plain HTTP API (no gateway yet).
+   reached over its plain HTTP API (no gateway yet). In the block dialogs an (i) note opens inside the
+   dialog, and a refused save names the block on the canvas bar until the dialog is closed.
+   Right-clicking a link on the canvas offers Delete link.
    The poller (internal/web/poller.go, internal/workflow/poll.go) starts runs for workflows
    switched Live on the canvas (off by default; switching on baselines what is already open).
    Next: questions in case posts (needs the gateway), sub-agents.

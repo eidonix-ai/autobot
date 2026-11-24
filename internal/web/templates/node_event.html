@@ -20,10 +20,10 @@
   </fieldset>
   <div class="row">
     <label><span class="lbl">Summon phrase <span class="info" tabindex="0" data-tip="Case doesn't matter. ? stands for one character or none, * for any run of characters.">ⓘ</span></span> <input name="summon_phrase" value="{{.S.SummonPhrase}}" maxlength="100" required></label>
-    <label><span class="lbl">Stop tag <span class="info" tabindex="0" data-tip="Case doesn't matter. ? stands for one character or none, * for any run of characters.">ⓘ</span></span> <input name="stop_tag" value="{{.S.StopTag}}" maxlength="100" required></label>
   </div>
+  <p class="optout">Stops on {{if .OptOut}}<code>{{.OptOut}}</code>{{else}}<span class="muted">no tag</span>{{end}} <a href="{{.WS.Path}}/settings#opt-out">(workspace setting)</a> <span class="info" tabindex="0" data-tip="The item's author or a maintainer opts out by writing the workspace's opt-out tag in the description or in a comment. Autobot's own comments and other people's do not count.">ⓘ</span></p>
   {{if eq .Kind "pr"}}<label class="check"><input type="checkbox" name="review_request"{{if .S.ReviewRequest}} checked{{end}}> A review request to the workspace's GitHub user also summons it</label>{{end}}
-  <label class="check"><input type="checkbox" name="trusted_only"{{if .S.TrustedOnly}} checked{{end}}> Honor summons and the stop tag only from the author and collaborators</label>
+  <label class="check"><input type="checkbox" name="trusted_only"{{if .S.TrustedOnly}} checked{{end}}> Honor summons only from the author and collaborators</label>
   {{if eq .Kind "pr"}}
   <details class="more" open><summary>Filters</summary>
     <div class="stack wide">

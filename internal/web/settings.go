@@ -143,6 +143,11 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, status int
 	}
 	data["Title"], data["WS"], data["Users"], data["Assigned"] = "Settings · "+ws.Name, ws, users, assigned
 	data["GH"], data["GHLogin"] = gh, login
+	if _, typed := data["OptOutTyped"]; typed {
+		data["OptOut"] = data["OptOutTyped"]
+	} else {
+		data["OptOut"] = s.optOut(ws)
+	}
 	data["SecretPath"], data["NewSecret"] = SecretPath, newSecret()
 	s.discordSettings(r, ws, data)
 	if st, err := index.StatusOf(s.st, ws.ID); err == nil {

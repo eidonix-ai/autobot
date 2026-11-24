@@ -31,7 +31,8 @@ type Event struct {
 	Trusted bool // Who is the item's author or has write access; set when a decision needs it
 }
 
-// Comment is a comment on an item, with whether its author is trusted.
+// Comment is a comment on an item, with whether its author is trusted: the item's author, or someone
+// with write access. (Autobot's own comments are never in the list.)
 type Comment struct {
 	Author  string
 	Body    string
@@ -186,7 +187,7 @@ func Decide(ev EventSettings, typ string, f Facts) Result {
 		return Result{Skip, "it has no case file yet"}
 	}
 	if by := f.stoppedBy(ev); by != "" {
-		return Result{Skip, "the stop tag “" + ev.StopTag + "” is in " + by}
+		return Result{Skip, "the opt-out tag “" + ev.StopTag + "” is in " + by}
 	}
 	if typ != "issue_opened" {
 		newSummons, _, _ := summons(ev, f.Events, true)
@@ -216,14 +217,16 @@ func (f Facts) summoned(ev EventSettings) bool {
 	return false
 }
 
-// stoppedBy names where a stop tag is, or "". The description is the item author's, so it always
-// counts; a comment counts only from a trusted person when the node asks for that.
+// stoppedBy names where the opt-out tag (ev.StopTag, the workspace's) is, or "". It counts in the
+// item's description, which is its author's, and in a comment by the item's author or by someone with
+// write access; never in anyone else's, and never in Autobot's own, which are not in the list. It does
+// not depend on the block's "trusted only", which is for summons.
 func (f Facts) stoppedBy(ev EventSettings) string {
 	if Stops(f.Body, ev.StopTag) {
 		return "its description"
 	}
 	for _, c := range f.Comments {
-		if Stops(c.Body, ev.StopTag) && (c.Trusted || !ev.TrustedOnly) {
+		if Stops(c.Body, ev.StopTag) && (c.Trusted || strings.EqualFold(c.Author, f.Author)) {
 			return "a comment by " + c.Author
 		}
 	}

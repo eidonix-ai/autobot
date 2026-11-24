@@ -27,6 +27,7 @@
       <option value=""{{if eq .F.Closing ""}} selected{{end}}>None: finish delivers the output</option>
       <option value="report"{{if eq .F.Closing "report"}} selected{{end}}>Write the report from the scratchpad</option>
     </select></label>
+  <label class="check"><input type="checkbox" name="citation_marks" value="1"{{if not .F.NoCitationMarks}} checked{{end}}{{if not .CanChange}} disabled{{end}}> Mark files cited but not opened <span class="info" tabindex="0" data-tip="Adds “(not opened)” after a file the agent cites but never read. Untick for presets that rewrite text rather than research code.">ⓘ</span></label>
   {{if .CanChange}}<div class="row"><button>Save</button>{{if .P}}<a class="button secondary" href="/presets/{{.P.ID}}/remove">Remove</a>{{end}}</div>{{end}}
 </form>
 {{if .P}}<form method="post" action="/presets/{{.P.ID}}/copy" class="row">

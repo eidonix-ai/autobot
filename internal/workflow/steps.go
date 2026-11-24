@@ -201,6 +201,12 @@ func (s AgentSettings) EffectiveClosing(kind string) string {
 	return s.Closing
 }
 
+// EffectiveCitationMarks says whether the agent's report and summary mark a file it cites but never
+// opened: always, unless the block follows a preset that turns the marks off.
+func (s AgentSettings) EffectiveCitationMarks() bool {
+	return s.preset == nil || !s.preset.NoCitationMarks
+}
+
 // EffectiveReportTurns is how many turns the writing session has.
 func (s AgentSettings) EffectiveReportTurns() int {
 	if s.ReportTurns <= 0 {

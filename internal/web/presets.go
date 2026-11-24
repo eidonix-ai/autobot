@@ -25,7 +25,7 @@ func presetRows(list []workflow.Persona) []store.Preset {
 	var rows []store.Preset
 	for _, p := range list {
 		rows = append(rows, store.Preset{Key: p.Key, Name: p.Name, Description: p.Description, PRInstruction: p.Instruction, PRGoal: p.Goal, PRSummary: p.Summary,
-			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing})
+			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks})
 	}
 	return rows
 }
@@ -46,6 +46,9 @@ func consequencesRows() []store.Preset {
 	return presetRows([]workflow.Persona{workflow.ConsequencesPreset})
 }
 
+// editorRows is the Editor - Prose Cleanup preset, as rows.
+func editorRows() []store.Preset { return presetRows([]workflow.Persona{workflow.EditorPreset}) }
+
 // presetRenames are the seeded presets that took a code review name.
 func presetRenames() []store.PresetRename {
 	var out []store.PresetRename
@@ -58,7 +61,7 @@ func presetRenames() []store.PresetRename {
 // asPersona is a stored preset as a block uses it.
 func asPersona(p *store.Preset) *workflow.Persona {
 	return &workflow.Persona{Key: p.Key, Name: p.Name, Description: p.Description, Instruction: p.PRInstruction, Goal: p.PRGoal, Summary: p.PRSummary,
-		IssueInstruction: p.IssueInstruction, Issue: p.IssueGoal, IssueSummary: p.IssueSummary, Closing: p.Closing}
+		IssueInstruction: p.IssueInstruction, Issue: p.IssueGoal, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks}
 }
 
 // resolved gives a block's settings the preset their key names, as the database has it now. A key
@@ -250,7 +253,7 @@ func presetFromForm(r *http.Request) store.Preset {
 	f := r.PostForm
 	return store.Preset{Name: f.Get("name"), Description: f.Get("description"), PRInstruction: f.Get("pr_instruction"), PRGoal: f.Get("pr_goal"),
 		PRSummary: strings.TrimSpace(f.Get("pr_summary")), IssueInstruction: f.Get("issue_instruction"), IssueGoal: f.Get("issue_goal"),
-		IssueSummary: strings.TrimSpace(f.Get("issue_summary")), Closing: f.Get("closing")}
+		IssueSummary: strings.TrimSpace(f.Get("issue_summary")), Closing: f.Get("closing"), NoCitationMarks: f.Get("citation_marks") == ""}
 }
 
 // presetForm renders the form: empty for a new preset, or filled with p's fields (the stored ones, or

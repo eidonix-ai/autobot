@@ -35,6 +35,12 @@ CREATE TABLE presets (
 );
 `
 
+// schemaCitationMarks: whether the agent marks a file it cites but never opened. Stored as its
+// inverse, so every preset made before it keeps the marks.
+const schemaCitationMarks = `
+ALTER TABLE presets ADD COLUMN no_citation_marks INTEGER NOT NULL DEFAULT 0;
+`
+
 // Preset is a preset as stored.
 type Preset struct {
 	ID          int64
@@ -45,16 +51,19 @@ type Preset struct {
 	Owner       string // the owner's name; "" when shared
 	PRInstruction, PRGoal, PRSummary,
 	IssueInstruction, IssueGoal, IssueSummary string // a summary format is "" for the default summary
-	Closing   string // "" or "report"
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Closing string // "" or "report"
+	// NoCitationMarks turns off the "(not opened)" mark after a file the agent cites but never read
+	// (for presets that rewrite text rather than research code).
+	NoCitationMarks bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // Shared reports whether the preset belongs to everyone.
 func (p Preset) Shared() bool { return p.OwnerID == 0 }
 
 const presetCols = `p.id, p.key, p.name, p.description, COALESCE(p.owner_id, 0), COALESCE(` + authorName + `, ''), p.pr_instruction, p.pr_goal, p.pr_summary,
-	p.issue_instruction, p.issue_goal, p.issue_summary, p.closing, p.created_at, p.updated_at`
+	p.issue_instruction, p.issue_goal, p.issue_summary, p.closing, p.no_citation_marks, p.created_at, p.updated_at`
 
 const presetFrom = ` FROM presets p LEFT JOIN users u ON u.id = p.owner_id`
 
@@ -62,7 +71,7 @@ func scanPreset(r interface{ Scan(...any) error }) (*Preset, error) {
 	var p Preset
 	var created, updated int64
 	err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Description, &p.OwnerID, &p.Owner, &p.PRInstruction, &p.PRGoal, &p.PRSummary, &p.IssueInstruction, &p.IssueGoal, &p.IssueSummary,
-		&p.Closing, &created, &updated)
+		&p.Closing, &p.NoCitationMarks, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -185,9 +194,9 @@ func (s *Store) CreatePreset(p Preset, actor *User) (*Preset, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, created_at, updated_at, updated_by)
-		VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, key, p.Name, p.Description, p.OwnerID, p.PRInstruction, p.PRGoal, p.PRSummary,
-		p.IssueInstruction, p.IssueGoal, p.IssueSummary, p.Closing, now(), now(), actor.ID)
+	res, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, created_at, updated_at, updated_by)
+		VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, key, p.Name, p.Description, p.OwnerID, p.PRInstruction, p.PRGoal, p.PRSummary,
+		p.IssueInstruction, p.IssueGoal, p.IssueSummary, p.Closing, p.NoCitationMarks, now(), now(), actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,15 +207,15 @@ func (s *Store) CreatePreset(p Preset, actor *User) (*Preset, error) {
 	return s.Preset(id)
 }
 
-// UpdatePreset changes a preset's name, description, texts and closing step. Its key, owner and
+// UpdatePreset changes a preset's name, description, texts, closing step and citation marks. Its key, owner and
 // sharing never change.
 func (s *Store) UpdatePreset(id int64, p Preset, actor *User) error {
 	if err := CheckPreset(&p); err != nil {
 		return err
 	}
 	res, err := s.db.Exec(`UPDATE presets SET name = ?, description = ?, pr_instruction = ?, pr_goal = ?, pr_summary = ?, issue_instruction = ?, issue_goal = ?, issue_summary = ?,
-		closing = ?, updated_at = ?, updated_by = ? WHERE id = ?`, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
-		p.IssueSummary, p.Closing, now(), actor.ID, id)
+		closing = ?, no_citation_marks = ?, updated_at = ?, updated_by = ? WHERE id = ?`, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+		p.IssueSummary, p.Closing, p.NoCitationMarks, now(), actor.ID, id)
 	if err != nil {
 		return err
 	}
@@ -236,9 +245,9 @@ func (s *Store) SeedPresets(seeds []Preset) error {
 		return err
 	}
 	for _, p := range seeds {
-		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, created_at, updated_at)
-			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
-			p.IssueSummary, p.Closing, now(), now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+			p.IssueSummary, p.Closing, p.NoCitationMarks, now(), now()); err != nil {
 			return err
 		}
 	}
@@ -294,6 +303,11 @@ func (s *Store) SeedPresetsV4(adds []Preset) error { return s.seedPresetsOnce("p
 // SeedPresetsV3 adds the Pre-Test Report preset, once, on a database seeded before it.
 func (s *Store) SeedPresetsV3(adds []Preset) error { return s.seedPresetsOnce("presets_v3", nil, adds) }
 
+// SeedPresetsV6 adds the Editor - Prose Cleanup preset, once, on a database seeded before it.
+func (s *Store) SeedPresetsV6(adds []Preset) error {
+	return s.seedPresetsOnce("presets_v6_editor", nil, adds)
+}
+
 // seedPresetsOnce renames untouched seeded presets and adds missing ones, once per marker.
 func (s *Store) seedPresetsOnce(marker string, renames []PresetRename, adds []Preset) error {
 	tx, err := s.db.Begin()
@@ -315,9 +329,9 @@ func (s *Store) seedPresetsOnce(marker string, renames []PresetRename, adds []Pr
 		}
 	}
 	for _, p := range adds {
-		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, created_at, updated_at)
-			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
-			p.IssueSummary, p.Closing, now(), now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+			p.IssueSummary, p.Closing, p.NoCitationMarks, now(), now()); err != nil {
 			return err
 		}
 	}

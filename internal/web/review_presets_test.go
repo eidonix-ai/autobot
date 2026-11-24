@@ -30,7 +30,7 @@ func olderDB(t *testing.T) *store.Store {
 	t.Cleanup(func() { st.Close() })
 	var old []store.Preset
 	for _, p := range seedRows() {
-		if strings.HasPrefix(p.Key, "review_") {
+		if strings.HasPrefix(p.Key, "review_") || p.Key == "editor_prose" {
 			continue
 		}
 		for _, r := range workflow.PresetRenames {
@@ -203,7 +203,7 @@ func TestReviewSeedOnAFreshDatabase(t *testing.T) {
 		"code_quality": "Code Review - Quality", "security": "Code Review - Security", "test_engineer": "Code Review - Testing",
 		"review_all": "Code Review - All Lenses", "review_correctness": "Code Review - Correctness", "review_architecture": "Code Review - Architecture",
 		"review_conventions": "Code Review - Conventions", "review_simplicity": "Code Review - Simplicity", "review_prose": "Code Review - Prose",
-		"review_pretest": "Code Review - Pre-Test Report", "review_consequences": "Code Review - Unintended Consequences"}
+		"review_pretest": "Code Review - Pre-Test Report", "review_consequences": "Code Review - Unintended Consequences", "editor_prose": "Editor - Prose Cleanup"}
 	if len(got) != len(want) {
 		t.Errorf("presets: %v", got)
 	}

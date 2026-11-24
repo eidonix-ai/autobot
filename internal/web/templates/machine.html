@@ -9,6 +9,12 @@
   <label class="check"><input type="checkbox" name="enabled"{{if .M.Enabled}} checked{{end}}> Enabled</label>
   <button class="secondary">Save</button>
 </form>
+<form method="post" action="{{.M.Path}}/notes" class="stack wide">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label><span class="lbl">Notes <span class="info" tabindex="0" data-tip="What its connector cannot report: the GPUs' architecture, the driver, what it pairs with for multi-host tests, what it is good for. Agents and decisions see it in {machines}.">ⓘ</span></span>
+    <textarea name="notes" rows="3">{{.M.Notes}}</textarea></label>
+  <div class="row"><button class="secondary">Save notes</button></div>
+</form>
 
 {{if not .M.Live.Seen.IsZero}}{{with .M.Live}}
 <div class="grid">

@@ -319,6 +319,80 @@ func summarize(ms []machineView) resourceSummary {
 	return r
 }
 
+// setMachineNotes saves what people wrote about a machine.
+func (s *Server) setMachineNotes(w http.ResponseWriter, r *http.Request) {
+	ws, m, ok := s.openMachine(w, r)
+	if !ok {
+		return
+	}
+	if err := s.st.SetMachineNotes(m, r.PostForm.Get("notes"), me(r)); err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("%s/machines/%d", ws.Path(), m.ID), http.StatusSeeOther)
+}
+
+// machinesSummary is the {machines} tag: the workspace's machines as they are now, one block each:
+// whether it can take a run, its GPUs, what a job gets, the models on it, and people's notes.
+func (s *Server) machinesSummary(ws *store.Workspace) string {
+	views, err := s.machineViews(ws)
+	if err != nil || len(views) == 0 {
+		return "This workspace has no test machines."
+	}
+	var b strings.Builder
+	for i, v := range views {
+		if v.Revoked {
+			continue
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "%s: %s\n", v.Name, v.State())
+		l := v.Live
+		if !l.Seen.IsZero() {
+			if len(l.GPUs) > 0 {
+				names := map[string]int{}
+				var order []string
+				mem := map[string]float64{}
+				for _, g := range l.GPUs {
+					if names[g.Name] == 0 {
+						order = append(order, g.Name)
+					}
+					names[g.Name]++
+					if g.MemTotalMiB != nil {
+						mem[g.Name] = *g.MemTotalMiB
+					}
+				}
+				var parts []string
+				for _, n := range order {
+					p := fmt.Sprintf("%d × %s", names[n], n)
+					if mem[n] > 0 {
+						p += fmt.Sprintf(", %.0f GiB each", mem[n]/1024)
+					}
+					parts = append(parts, p)
+				}
+				fmt.Fprintf(&b, "  GPUs: %s · %s\n", strings.Join(parts, "; "), l.Arch)
+			} else {
+				fmt.Fprintf(&b, "  GPUs: none reported · %s\n", l.Arch)
+			}
+			fmt.Fprintf(&b, "  A job gets: %d CPUs, %d GiB RAM, %d GiB scratch\n", l.JobCPUs, l.JobMemoryGiB, l.JobScratchGiB)
+			if len(l.Models) > 0 {
+				var ms []string
+				for _, m := range l.Models {
+					ms = append(ms, fmt.Sprintf("%s (%.0f GiB)", m.Name, float64(m.Bytes)/(1<<30)))
+				}
+				fmt.Fprintf(&b, "  Models on it: %s\n", strings.Join(ms, ", "))
+			}
+		} else {
+			b.WriteString("  (it has not reported its hardware yet)\n")
+		}
+		if n := strings.TrimSpace(v.Notes); n != "" {
+			fmt.Fprintf(&b, "  Notes: %s\n", strings.ReplaceAll(n, "\n", "\n    "))
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // setMachineEnabled takes a machine offline or brings it back.
 func (s *Server) setMachineEnabled(w http.ResponseWriter, r *http.Request) {
 	ws, m, ok := s.openMachine(w, r)

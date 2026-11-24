@@ -58,8 +58,12 @@ func Open(path string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
+// schemaMachineNotes: what people write about a machine that its connector cannot report (its GPUs'
+// architecture, driver, what it pairs with), for the {machines} summary.
+const schemaMachineNotes = `ALTER TABLE machines ADD COLUMN notes TEXT NOT NULL DEFAULT '';`
+
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes}
 
 const schemaV1 = `
 CREATE TABLE users (

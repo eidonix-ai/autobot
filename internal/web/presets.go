@@ -36,6 +36,11 @@ func reviewRows() []store.Preset { return presetRows(workflow.ReviewPresets) }
 // preTestRows is the Pre-Test Report preset, as rows.
 func preTestRows() []store.Preset { return presetRows([]workflow.Persona{workflow.PreTestPreset}) }
 
+// updatePreTest gives a stored, untouched Pre-Test Report preset the {machines} summary, once.
+func updatePreTest(st *store.Store) error {
+	return st.UpdatePresetTextOnce("presets_v5_pretest_machines", workflow.PreTestPreset.Key, workflow.PreTestInstructionV1, workflow.PreTestInstruction)
+}
+
 // consequencesRows is the Unintended Consequences preset, as rows.
 func consequencesRows() []store.Preset {
 	return presetRows([]workflow.Persona{workflow.ConsequencesPreset})

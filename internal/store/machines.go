@@ -19,7 +19,8 @@ type Machine struct {
 	WorkspaceID int64
 	Name        string
 	Revoked     bool
-	Enabled     bool // false while taken offline: it gets no new runs
+	Enabled     bool   // false while taken offline: it gets no new runs
+	Notes       string // what people wrote about it, for agents and decisions
 	CreatedAt   time.Time
 }
 
@@ -30,12 +31,12 @@ func hashToken64(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-const machineCols = `id, workspace_id, name, revoked, enabled, created_at`
+const machineCols = `id, workspace_id, name, revoked, enabled, notes, created_at`
 
 func scanMachine(row scanner) (*Machine, error) {
 	var m Machine
 	var at int64
-	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.Name, &m.Revoked, &m.Enabled, &at); err != nil {
+	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.Name, &m.Revoked, &m.Enabled, &m.Notes, &at); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -117,6 +118,26 @@ func (s *Store) Machines(workspaceID int64) ([]Machine, error) {
 
 // SetMachineEnabled takes a machine offline (no new runs) or brings it back, and records it in the
 // workspace's history. A run in progress is left to finish.
+func (s *Store) SetMachineNotes(m *Machine, notes string, actor *User) error {
+	notes = strings.TrimSpace(strings.ReplaceAll(notes, "\r\n", "\n"))
+	if len(notes) > 4000 {
+		return invalid("Notes are at most 4,000 characters.")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE machines SET notes = ? WHERE id = ?`, notes, m.ID); err != nil {
+		return err
+	}
+	if err := addEvent(tx, m.WorkspaceID, actor, "updated the notes on "+m.Name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetMachineEnabled takes a machine offline or brings it back.
 func (s *Store) SetMachineEnabled(m *Machine, enabled bool, actor *User) error {
 	if m.Enabled == enabled {
 		return nil

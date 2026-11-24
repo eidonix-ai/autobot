@@ -263,6 +263,31 @@ func (s *Store) SeedPresetsV2(renames []PresetRename, adds []Preset) error {
 	return s.seedPresetsOnce(presetsV2, renames, adds)
 }
 
+// UpdatePresetTextOnce replaces a shared preset's PR instruction, once per marker, and only if it is
+// still the text it was seeded with: an admin's own edit is kept.
+func (s *Store) UpdatePresetTextOnce(marker, key, from, to string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var done string
+	err = tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, marker).Scan(&done)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE presets SET pr_instruction = ?, updated_at = ? WHERE key = ? AND owner_id IS NULL AND pr_instruction = ?`, to, now(), key, from); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')`, marker); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // SeedPresetsV4 adds the Unintended Consequences preset, once, on a database seeded before it.
 func (s *Store) SeedPresetsV4(adds []Preset) error { return s.seedPresetsOnce("presets_v4", nil, adds) }
 

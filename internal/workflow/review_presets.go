@@ -1,5 +1,7 @@
 package workflow
 
+import "strings"
+
 // The code review presets (Derek, 2026-11-23): a first reviewer over all five lenses, and one preset per
 // lens. Every one reads a pull request through the orientation packet and the project's own rules, and
 // reports each finding with its severity, place, reason and fix. They are shared presets like the others:
@@ -47,21 +49,30 @@ func review(key, name, description, lens string) Persona {
 		IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
 }
 
-// PreTestPreset gathers the lens reviewers' reports into one checked report for the decision on
-// testing on real hardware (Derek, 2026-11-24). It reads the reviews from {input.report}: link the lens
-// blocks into it, or into a Node in front of it.
-var PreTestPreset = Persona{Key: "review_pretest", Name: "Code Review - Pre-Test Report",
-	Description: "Checks and combines the lens reviewers' findings into one report that says whether to go on to testing on real hardware.",
-	Instruction: gatherPRHead + "## The reviews\n\n{input.report}\n\n" +
-		`You are assembling the Pre-Test Report: the reviewers' findings above, checked and combined, for the decision on whether this pull request goes on to testing on real hardware. You do not review it again from scratch.
+// PreTestInstructionV1 is the Pre-Test Report's first text, kept to recognise an untouched stored copy.
+var PreTestInstructionV1 = gatherPRHead + "## The reviews\n\n{input.report}\n\n" +
+	`You are assembling the Pre-Test Report: the reviewers' findings above, checked and combined, for the decision on whether this pull request goes on to testing on real hardware. You do not review it again from scratch.
 
 1. Check every blocking and should-fix finding against the code yourself. Drop each one you cannot show from the code, and say which you dropped and why. Merge findings that several reviewers made.
 2. For each finding that stands, say whether it would make a hardware test unsafe, meaningless or wasted (it would not build, would crash or corrupt state, or could not give a valid result), or whether it can wait until after testing.
 3. Say what a hardware test should cover: which configurations, models and hardware targets, and what result would show the change works, following the project's own test and benchmark guidance (read_charter, and the repository's docs).
 4. Give a clear recommendation: proceed to hardware testing, fix first, or do not test.
 
-Do not repeat the reviews in full: give the checked result, with file and line for every finding. Record each checked finding in your scratchpad as you go, with "kept" or "dropped" at the start of its title. For GPU kernel code, report defects only.`,
-	Goal: "Every blocking and should-fix finding has been checked in the code and kept or dropped with a reason, and the report gives a clear recommendation on hardware testing, with its reasons and what the test should cover.",
+Do not repeat the reviews in full: give the checked result, with file and line for every finding. Record each checked finding in your scratchpad as you go, with "kept" or "dropped" at the start of its title. For GPU kernel code, report defects only.`
+
+// PreTestInstruction adds the workspace's machines, so the test plan says what can run where.
+var PreTestInstruction = gatherPRHead + "## The reviews\n\n{input.report}\n\n## The test machines available now\n\n{machines}\n\n" +
+	strings.Replace(strings.TrimPrefix(PreTestInstructionV1, gatherPRHead+"## The reviews\n\n{input.report}\n\n"),
+		"following the project's own test and benchmark guidance (read_charter, and the repository's docs).",
+		"following the project's own test and benchmark guidance (read_charter, and the repository's docs). Match the plan against the test machines above: say which machine can run each part, and name what no machine available now can test.", 1)
+
+// PreTestPreset gathers the lens reviewers' reports into one checked report for the decision on
+// testing on real hardware (Derek, 2026-11-24). It reads the reviews from {input.report}: link the lens
+// blocks into it, or into a Node in front of it.
+var PreTestPreset = Persona{Key: "review_pretest", Name: "Code Review - Pre-Test Report",
+	Description: "Checks and combines the lens reviewers' findings into one report that says whether to go on to testing on real hardware.",
+	Instruction: PreTestInstruction,
+	Goal:        "Every blocking and should-fix finding has been checked in the code and kept or dropped with a reason, and the report gives a clear recommendation on hardware testing, with its reasons and what the test should cover.",
 	Summary: `**Recommendation:** <proceed to hardware testing / fix first / do not test>
 **Why:** <two sentences>
 **Blocking before testing:**

@@ -502,6 +502,7 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		set("charter", c.Body)
 	}
+	set("machines", s.machinesSummary(ws))
 	kind, link := workflow.PR, values["pr"]
 	if link == "" {
 		kind, link = workflow.Issue, values["issue"]

@@ -267,6 +267,8 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		rs.builtIn["charter"] = c.Body
 	}
+	rs.builtIn["machines"] = s.machinesSummary(ws)
+
 	token, _ := s.token(ws)
 	pass, lines := verdict(*ev, it, caseFile != nil, s.optOut(ws), s.stopRule(ctx, ws, token, it))
 	head := "The event would have started it."

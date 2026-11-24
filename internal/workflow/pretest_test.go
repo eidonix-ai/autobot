@@ -30,3 +30,14 @@ func TestPreTestPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The Pre-Test Report sees the machines, and its plan is matched against them.
+func TestPreTestSeesTheMachines(t *testing.T) {
+	if !strings.Contains(PreTestInstruction, "{machines}") || !strings.Contains(PreTestInstruction, "Match the plan against the test machines") ||
+		strings.Contains(PreTestInstructionV1, "{machines}") || PreTestPreset.Instruction != PreTestInstruction {
+		t.Fatalf("%s", PreTestInstruction)
+	}
+	if err := CheckTemplates(PR, nil, PreTestInstruction); err != nil {
+		t.Fatal(err)
+	}
+}

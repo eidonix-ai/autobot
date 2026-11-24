@@ -483,6 +483,7 @@ var commonTags = []Tag{
 	{"repo", "the repository, owner/name", true},
 	{"repo:opt_out", "the opt-out tag: what the item's author or a maintainer writes to stop Autobot (a workspace setting)", true},
 	{"charter", "the project charter (kept in Autobot)", true},
+	{"machines", "the workspace's test machines as they are now: state, GPUs, models, notes", true},
 	{"case", "the item's case file so far", true},
 	{"case:link", "the link to the case file as a page (a private repository's needs its secret)", true},
 }
@@ -845,7 +846,7 @@ func (sc tagScope) check(templates []string) error {
 
 // builtInParents are the names a tag may begin with that are Autobot's, not a block's: a tag that begins
 // with one and is not built in has no such tag.
-var builtInParents = []string{"pr", "issue", "repo", "case", "charter", "input", "case_file"}
+var builtInParents = []string{"pr", "issue", "repo", "case", "charter", "machines", "input", "case_file"}
 
 // unknown says why the tag, which is no tag of the block's, is none: written is the tag as it is in the
 // text, {x} or [[x]].

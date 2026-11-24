@@ -145,6 +145,9 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 	if err := st.SeedPresetsV3(preTestRows()); err != nil { // the Pre-Test Report preset, once
 		return nil, err
 	}
+	if err := updatePreTest(st); err != nil { // the Pre-Test Report sees the machines
+		return nil, err
+	}
 	if err := st.SeedPresetsV2(presetRenames(), reviewRows()); err != nil { // the code review presets, once, for a database seeded before them
 		return nil, err
 	}
@@ -185,6 +188,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/runs", s.auth(s.startRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/remove", s.auth(s.removeMachine))
 	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/enabled", s.auth(s.setMachineEnabled))
+	s.mux.Handle("POST /w/{owner}/{repo}/machines/{id}/notes", s.auth(s.setMachineNotes))
 	s.mux.Handle("GET /w/{owner}/{repo}/runs/{id}", s.auth(s.runPage))
 	s.mux.Handle("POST /w/{owner}/{repo}/runs/{id}/stop", s.auth(s.stopRun))
 

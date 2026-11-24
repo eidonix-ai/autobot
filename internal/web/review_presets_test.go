@@ -142,7 +142,7 @@ func TestReviewSeedInsertsOnceWithoutDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	all, _ := st.Presets()
-	if len(all) != 11 {
+	if len(all) != len(workflow.SeedPresets) {
 		t.Fatalf("%d presets after", len(all))
 	}
 	for _, k := range reviewKeys {
@@ -189,7 +189,7 @@ func TestReviewSeedKeepsAPresetThatHasTheKey(t *testing.T) {
 	if p.ID != mine.ID || p.Description != "mine" || p.Shared() {
 		t.Errorf("the existing preset was replaced: %+v", p)
 	}
-	if all, _ := st.Presets(); len(all) != 11 {
+	if all, _ := st.Presets(); len(all) != len(workflow.SeedPresets) {
 		t.Errorf("%d presets", len(all))
 	}
 }
@@ -202,7 +202,8 @@ func TestReviewSeedOnAFreshDatabase(t *testing.T) {
 	want := map[string]string{"gather_information": "Gather Information", "value_analyst": "Value Analyst",
 		"code_quality": "Code Review - Quality", "security": "Code Review - Security", "test_engineer": "Code Review - Testing",
 		"review_all": "Code Review - All Lenses", "review_correctness": "Code Review - Correctness", "review_architecture": "Code Review - Architecture",
-		"review_conventions": "Code Review - Conventions", "review_simplicity": "Code Review - Simplicity", "review_prose": "Code Review - Prose"}
+		"review_conventions": "Code Review - Conventions", "review_simplicity": "Code Review - Simplicity", "review_prose": "Code Review - Prose",
+		"review_pretest": "Code Review - Pre-Test Report"}
 	if len(got) != len(want) {
 		t.Errorf("presets: %v", got)
 	}

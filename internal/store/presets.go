@@ -260,13 +260,21 @@ type PresetRename struct{ Key, From, To string }
 // On a new database the first seed has put all of it in already, and this changes nothing. It runs once:
 // a preset an admin removed afterwards stays removed.
 func (s *Store) SeedPresetsV2(renames []PresetRename, adds []Preset) error {
+	return s.seedPresetsOnce(presetsV2, renames, adds)
+}
+
+// SeedPresetsV3 adds the Pre-Test Report preset, once, on a database seeded before it.
+func (s *Store) SeedPresetsV3(adds []Preset) error { return s.seedPresetsOnce("presets_v3", nil, adds) }
+
+// seedPresetsOnce renames untouched seeded presets and adds missing ones, once per marker.
+func (s *Store) seedPresetsOnce(marker string, renames []PresetRename, adds []Preset) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var done string
-	err = tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, presetsV2).Scan(&done)
+	err = tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, marker).Scan(&done)
 	if err == nil {
 		return nil
 	}
@@ -285,7 +293,7 @@ func (s *Store) SeedPresetsV2(renames []PresetRename, adds []Preset) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')`, presetsV2); err != nil {
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')`, marker); err != nil {
 		return err
 	}
 	return tx.Commit()

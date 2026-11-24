@@ -47,6 +47,33 @@ func review(key, name, description, lens string) Persona {
 		IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
 }
 
+// PreTestPreset gathers the lens reviewers' reports into one checked report for the decision on
+// testing on real hardware (Derek, 2026-11-24). It reads the reviews from {input.report}: link the lens
+// blocks into it, or into a Node in front of it.
+var PreTestPreset = Persona{Key: "review_pretest", Name: "Code Review - Pre-Test Report",
+	Description: "Checks and combines the lens reviewers' findings into one report that says whether to go on to testing on real hardware.",
+	Instruction: gatherPRHead + "## The reviews\n\n{input.report}\n\n" +
+		`You are assembling the Pre-Test Report: the reviewers' findings above, checked and combined, for the decision on whether this pull request goes on to testing on real hardware. You do not review it again from scratch.
+
+1. Check every blocking and should-fix finding against the code yourself. Drop each one you cannot show from the code, and say which you dropped and why. Merge findings that several reviewers made.
+2. For each finding that stands, say whether it would make a hardware test unsafe, meaningless or wasted (it would not build, would crash or corrupt state, or could not give a valid result), or whether it can wait until after testing.
+3. Say what a hardware test should cover: which configurations, models and hardware targets, and what result would show the change works, following the project's own test and benchmark guidance (read_charter, and the repository's docs).
+4. Give a clear recommendation: proceed to hardware testing, fix first, or do not test.
+
+Do not repeat the reviews in full: give the checked result, with file and line for every finding. Record each checked finding in your scratchpad as you go, with "kept" or "dropped" at the start of its title. For GPU kernel code, report defects only.`,
+	Goal: "Every blocking and should-fix finding has been checked in the code and kept or dropped with a reason, and the report gives a clear recommendation on hardware testing, with its reasons and what the test should cover.",
+	Summary: `**Recommendation:** <proceed to hardware testing / fix first / do not test>
+**Why:** <two sentences>
+**Blocking before testing:**
+- <file:line: the issue, in one line>   (up to 5; "None.")
+**Can wait until after testing:**
+- <file:line: the issue, in one line>   (up to 5; "None.")
+**Dropped on checking:** <how many, and up to 3 in one line each, or "None.">
+**Test plan:**
+- <configuration or hardware target: the result that would show it works>   (up to 5)
+**Link:** {pr}`,
+	IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
+
 // ReviewPresets are the six new code review presets.
 var ReviewPresets = []Persona{
 	review("review_all", "Code Review - All Lenses", "The first reviewer: reads a pull request through all five lenses and groups the findings by lens.",

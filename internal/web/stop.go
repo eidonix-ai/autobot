@@ -104,7 +104,12 @@ func (s *Server) launch(rs *runState) {
 	release := s.running.add(liveKey{id: id}, cancel)
 	go func() {
 		defer release()
+		defer s.releaseSlot(id) // after the run is over, whichever way: the next queued run starts
 		defer survive(fmt.Sprintf("workflow run %d", id), func(string) { s.st.FinishWorkflowRun(id, "failed") })
+		// A person may have stopped it while it was being started (it was queued a moment ago).
+		if cur, err := s.st.WorkflowRun(id); err == nil && cur.Status != "running" {
+			return
+		}
 		s.drive(rs)
 	}()
 }

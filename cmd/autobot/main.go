@@ -139,6 +139,7 @@ func serve(args []string) error {
 	go ui.Watch(ctx)
 	go ui.CheckRoutes(ctx)
 	go ui.ResumeWorkflows(ctx) // runs that were waiting for a person when Autobot stopped
+	go ui.RunQueue(ctx)        // starts the queued runs that fit, now and every 30 seconds
 	go ui.Poll(ctx)
 	go ui.Retain(ctx) // deletes run details that have outlived their keeping
 	go ui.Index(ctx)  // the local copy of each workspace's pull requests and issues

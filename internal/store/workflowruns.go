@@ -15,9 +15,10 @@ type WorkflowRun struct {
 	Item        int    // the pull request or issue
 	DryRun      bool   // writes nothing: no case file, no output tags, nothing posted
 	Graph       string // the workflow as it was when the run started
-	Status      string // running, done, failed or stopped
+	Status      string // queued (over the workspace's limit, not started), running, done, failed or stopped
 	Note        string // how the event's conditions stood when it started
-	StartedBy   string
+	StartedBy   string // the name of the person who started it; "" when the poller did
+	StartedByID int64  // that person's id; 0 when the poller started it
 	StartedAt   time.Time
 	FinishedAt  time.Time
 	StoppedBy   string // the name of the person who stopped it
@@ -36,8 +37,12 @@ type WorkflowStep struct {
 	FinishedAt time.Time
 }
 
-// StartWorkflowRun records a run with a pending step for each node and returns its id.
+// StartWorkflowRun records a run with a pending step for each node and returns its id. The run
+// starts as running unless r.Status says queued.
 func (s *Store) StartWorkflowRun(r WorkflowRun, nodes []string, by *User) (int64, error) {
+	if r.Status == "" {
+		r.Status = "running"
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -48,7 +53,7 @@ func (s *Store) StartWorkflowRun(r WorkflowRun, nodes []string, by *User) (int64
 		uid = by.ID
 	}
 	res, err := tx.Exec(`INSERT INTO workflow_runs (workspace_id, kind, event_node, item, dry_run, graph, status, note, started_by, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`, r.WorkspaceID, r.Kind, r.EventNode, r.Item, r.DryRun, r.Graph, r.Note, uid, now())
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.WorkspaceID, r.Kind, r.EventNode, r.Item, r.DryRun, r.Graph, r.Status, r.Note, uid, now())
 	if err != nil {
 		return 0, err
 	}
@@ -80,10 +85,10 @@ func (s *Store) FinishWorkflowRun(id int64, status string) error {
 	return err
 }
 
-// StopWorkflowRun ends a running run as stopped by a person: the run, its steps that were running
+// StopWorkflowRun ends a running or queued run as stopped by a person: the run, its steps that were running
 // or waiting, their agent runs and the approvals still open all become stopped. It returns the
 // approvals it closed, for the caller to say so where they were asked, and does nothing, and
-// returns none, for a run that is not running (a second stop, or a run that just ended).
+// returns none, for a run that is neither (a second stop, or a run that just ended).
 func (s *Store) StopWorkflowRun(id int64, by string) (bool, []Approval, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -91,7 +96,7 @@ func (s *Store) StopWorkflowRun(id int64, by string) (bool, []Approval, error) {
 	}
 	defer tx.Rollback()
 	t := now()
-	res, err := tx.Exec(`UPDATE workflow_runs SET status = 'stopped', stopped_by = ?, stopped_at = ?, finished_at = ? WHERE id = ? AND status = 'running'`, by, t, t, id)
+	res, err := tx.Exec(`UPDATE workflow_runs SET status = 'stopped', stopped_by = ?, stopped_at = ?, finished_at = ? WHERE id = ? AND status IN ('running', 'queued')`, by, t, t, id)
 	if err != nil {
 		return false, nil, err
 	}
@@ -149,13 +154,13 @@ func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
 	return scanWorkflowRun(s.db.QueryRow(workflowRunSelect+` WHERE w.id = ?`, id))
 }
 
-const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, ` + authorName + `,
+const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, ` + authorName + `, COALESCE(w.started_by, 0),
 	w.started_at, w.finished_at, w.stopped_by, w.stopped_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by`
 
 func scanWorkflowRun(row scanner) (*WorkflowRun, error) {
 	var r WorkflowRun
 	var started, finished, stopped int64
-	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &started, &finished, &r.StoppedBy, &stopped)
+	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &r.StartedByID, &started, &finished, &r.StoppedBy, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -189,14 +194,16 @@ func (s *Store) queryWorkflowRuns(where string, args ...any) ([]WorkflowRun, err
 	return out, rows.Err()
 }
 
-// WorkflowRuns lists a workspace's workflow runs for the Runs page: every run still going, newest
-// first, then the most recent recent runs that have ended.
+// WorkflowRuns lists a workspace's workflow runs for the Runs page: every run still going, the
+// running ones newest first and then the queued ones in the order they will start, then the most
+// recent recent runs that have ended.
 func (s *Store) WorkflowRuns(workspaceID int64, recent int) ([]WorkflowRun, error) {
-	going, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status = 'running' ORDER BY w.id DESC`, workspaceID)
+	going, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status IN ('running', 'queued')
+		ORDER BY w.status = 'queued', CASE w.status WHEN 'queued' THEN w.id ELSE -w.id END`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	ended, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status != 'running' ORDER BY w.id DESC LIMIT ?`, workspaceID, recent)
+	ended, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status NOT IN ('running', 'queued') ORDER BY w.id DESC LIMIT ?`, workspaceID, recent)
 	return append(going, ended...), err
 }
 

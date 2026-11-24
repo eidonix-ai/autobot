@@ -258,6 +258,7 @@ func (rs *runState) errStopped() error {
 }
 
 // startWorkflow starts a run of a kind's workflow on an item from an event node, and returns its id.
+// A workspace that already has as many runs going as its settings allow gets a queued run instead.
 func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, eventNode string, number int, dry bool, by *store.User) (int64, error) {
 	_, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
@@ -311,12 +312,17 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	}
 	r := store.WorkflowRun{WorkspaceID: ws.ID, Kind: kind, EventNode: eventNode, Item: number, DryRun: dry, Graph: string(graph),
 		Note: head + "\n" + strings.Join(lines, "\n")}
-	id, err := s.st.StartWorkflowRun(r, ids, by)
+	id, queued, err := s.admit(r, ids, by)
 	if err != nil {
 		return 0, err
 	}
+	if queued { // over the workspace's limit: it starts from its record when a slot is free (see queue.go)
+		return id, nil
+	}
 	run, err := s.st.WorkflowRun(id)
 	if err != nil {
+		s.st.FinishWorkflowRun(id, "failed")
+		s.releaseSlot(id)
 		return 0, err
 	}
 	rs.run = run
@@ -390,10 +396,15 @@ func (s *Server) drive(rs *runState) {
 	}
 	results := make(chan finished)
 	running := 0
+	// A run counts against its workspace's limit (see queue.go) except while everything that goes on
+	// is steps waiting for a person's answer. It gives its slot up then, and waits for one again
+	// before it starts the step that the answer lets go on.
+	holding, approvals := s.holdsSlot(rs.run.ID), 0
 	// A resumed run picks up its steps that were waiting for a person.
 	for _, n := range rs.g.Nodes {
 		if steps[n.ID].Status == "waiting" && n.Type == workflow.Approval {
 			running++
+			approvals++
 			go func(n workflow.Node) {
 				o := stepOutcome{err: errors.New("the step crashed")}
 				defer func() { results <- finished{n.ID, o} }()
@@ -430,6 +441,13 @@ func (s *Server) drive(rs *runState) {
 				if !ready {
 					continue
 				}
+				if len(fired) > 0 && !holding {
+					if !s.acquireSlot(rs.context(), rs.ws.ID, rs.run.ID) { // stopped while it waited
+						progressed = false
+						break
+					}
+					holding = true
+				}
 				progressed = true
 				st.StartedAt = time.Now()
 				if len(fired) == 0 {
@@ -440,6 +458,9 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
+				if n.Type == workflow.Approval {
+					approvals++
+				}
 				sources := inputsFrom(n.ID) // copied here: the steps change while this one runs
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
 				// they came down its own branch or another, and the run goes on adding to the map.
@@ -452,11 +473,18 @@ func (s *Server) drive(rs *runState) {
 				}(nodes[n.ID], sources) // the block as the canvas names it
 			}
 		}
+		if holding && running > 0 && running == approvals {
+			s.releaseSlot(rs.run.ID)
+			holding = false
+		}
 		if running == 0 {
 			break
 		}
 		f := <-results
 		running--
+		if nodes[f.id].Type == workflow.Approval {
+			approvals--
+		}
 		st := steps[f.id]
 		if rs.stopped() { // whatever it came to, it ended after the stop: it writes nothing
 			st.Status, st.FinishedAt, st.Port, st.Output, st.Error = "stopped", time.Now(), "", "", ""
@@ -1207,6 +1235,12 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 		what = "issue"
 	}
 	data := map[string]any{"Title": fmt.Sprintf("Run on #%d · %s", run.Item, ws.Name), "WS": ws, "Run": run, "Steps": views, "What": what}
+	if run.Status == "queued" {
+		data["QueueText"] = "Queued"
+		if place, ok := s.queuePlaces(ws.ID)[run.ID]; ok {
+			data["QueueText"] = fmt.Sprintf("Queued (%s in line)", ordinal(place))
+		}
+	}
 	if run.DryRun { // the dry run's own case file, once it has opened one
 		if c, err := s.st.DryCase(run.ID); err == nil {
 			data["DryCase"] = c

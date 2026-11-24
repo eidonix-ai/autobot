@@ -2,8 +2,10 @@ package web
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
@@ -112,5 +114,85 @@ func TestRunsPageLimit(t *testing.T) {
 	}
 	if !strings.Contains(body, "workflow-runs/"+itoa(going)+`"`) || strings.Contains(body, "#1000<") {
 		t.Error("the oldest runs are listed, or the one in progress is not")
+	}
+}
+
+// The Runs page shows who's who: the item's author (from the local copy, or the poller's record of it),
+// and who started the run: a person, or Live for the poller. A queued run says its place in line, with
+// a grey dot, and stays in the in-progress part. The case page's list has the same columns.
+func TestRunsPageWhoIsWho(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	approvalWorkflow(t, e, ws, derek)
+	w, _ := e.st.Workflow(ws.ID, workflow.PR)
+	if err := e.st.SaveItem(ws.ID, store.Item{Number: 7, Kind: "pr", Title: "Retry uploads", State: "open", Author: "alice-in-index", Created: time.Now(), Updated: time.Now()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.st.SavePollItem(ws.ID, store.PollItem{Number: 8, Kind: "pr", Open: true, Author: "bob-from-poller", Updated: time.Now()})
+	e.st.OpenCase(ws, 7, "pr", "Retry uploads", "Opened")
+	start := func(item int, status string, dry bool, by *store.User) int64 {
+		id, err := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: item, DryRun: dry, Graph: w.Graph, Status: status}, []string{"ev"}, by)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	byHand := start(7, "running", true, derek)
+	live := start(8, "running", false, nil) // the poller's
+	q1 := start(9, "queued", false, nil)
+	q2 := start(9, "queued", false, derek)
+	done := start(7, "running", false, nil)
+	e.st.FinishWorkflowRun(done, "done")
+
+	b := e.signIn("derek")
+	_, body := b.get("/w/o/r/workflow-runs")
+	var got []string
+	for _, h := range regexp.MustCompile(`<th>([^<]*)</th>`).FindAllStringSubmatch(body, 8) {
+		got = append(got, h[1])
+	}
+	if want := "Item Author Block Status Started Started by Took "; strings.Join(got, " ") != want {
+		t.Errorf("columns %q, want %q", strings.Join(got, " "), want)
+	}
+	row := func(id int64) string {
+		t.Helper()
+		for _, r := range strings.Split(body, "</tr>") {
+			if strings.Contains(r, `workflow-runs/`+itoa(id)+`"`) {
+				return r
+			}
+		}
+		t.Fatalf("no row for run %d:\n%s", id, body)
+		return ""
+	}
+	for id, wants := range map[int64][]string{
+		byHand: {`<td class="nowrap">alice-in-index</td>`, `<td class="nowrap">PR First Ready <span class="muted">dry run</span></td>`, `<td class="nowrap">derek</td>`},
+		live:   {`<td class="nowrap">bob-from-poller</td>`, `<span class="muted">Live</span>`},
+		q1:     {`<span class="dot off"></span> queued (1st in line)`, `<span class="muted">Live</span>`},
+		q2:     {`<span class="dot off"></span> queued (2nd in line)`, `<td class="nowrap">derek</td>`},
+		done:   {`<span class="muted">Live</span>`, `<span class="dot on"></span> done`},
+	} {
+		for _, want := range wants {
+			if r := row(id); !strings.Contains(r, want) {
+				t.Errorf("run %d lacks %q:\n%s", id, want, r)
+			}
+		}
+	}
+	if strings.Contains(row(byHand), "Live") {
+		t.Error("a run a person started says Live")
+	}
+	// The queued runs are in progress: after those running, before the ended run.
+	at := func(id int64) int { return strings.Index(body, `workflow-runs/`+itoa(id)+`"`) }
+	if !(at(byHand) > 0 && at(live) < at(byHand) && at(byHand) < at(q1) && at(q1) < at(q2) && at(q2) < at(done)) {
+		t.Errorf("order: live %d, by hand %d, q1 %d, q2 %d, done %d", at(live), at(byHand), at(q1), at(q2), at(done))
+	}
+	if !strings.Contains(body, `/static/live.js`) {
+		t.Error("a page with queued runs does not update itself")
+	}
+	// The same columns on the item's case page.
+	_, page := b.get("/w/o/r/cases/7")
+	for _, want := range []string{"<th>Author</th>", "<th>Started by</th>", "alice-in-index", `<span class="muted">Live</span>`, ">derek</td>"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the case page lacks %q:\n%s", want, page)
+		}
 	}
 }

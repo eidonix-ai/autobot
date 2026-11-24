@@ -177,7 +177,7 @@ const KeepDryCase = 30 * 24 * time.Hour
 // more than 30 days before at (or whose run is gone). It returns how many.
 func (s *Store) PruneDryCases(at time.Time) (int, error) {
 	res, err := s.db.Exec(`DELETE FROM cases WHERE dry_run_of != 0 AND (
-		dry_run_of IN (SELECT id FROM workflow_runs WHERE status != 'running' AND finished_at != 0 AND finished_at < ?)
+		dry_run_of IN (SELECT id FROM workflow_runs WHERE status NOT IN ('running', 'queued') AND finished_at != 0 AND finished_at < ?)
 		OR dry_run_of NOT IN (SELECT id FROM workflow_runs))`, at.Add(-KeepDryCase).Unix())
 	if err != nil {
 		return 0, err

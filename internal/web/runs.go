@@ -23,13 +23,15 @@ type runRow struct {
 	Item      int
 	ItemURL   string // the pull request or issue on GitHub
 	Title     string
+	Author    string // the item's author
 	Kind      string // "pull request" or "issue"
 	Block     string // the event block it started from
-	Status    string
+	State     string // the run's status: queued, running, done, failed or stopped
+	Status    string // State as the page says it: a queued run says its place in line
 	Dot       string // busy, on or off
 	Dry       bool
 	Started   time.Time
-	By        string
+	By        string // who started it: a person's name, or "Live" for the poller
 	Took      string
 	StoppedBy string
 }
@@ -64,10 +66,11 @@ func took(start, end time.Time) string {
 	return end.Sub(start).Round(time.Second).String()
 }
 
-// runRows makes the rows for runs: their items' titles come from the local copy of pull requests and
-// issues, or failing that from the item's case file.
+// runRows makes the rows for runs: their items' titles and authors come from the local copy of pull
+// requests and issues, the title failing that from the item's case file and the author from the
+// poller's record of the item.
 func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow {
-	titles := map[int]string{}
+	titles, authors := map[int]string{}, map[int]string{}
 	var numbers []int
 	for _, r := range runs {
 		if _, ok := titles[r.Item]; !ok {
@@ -77,7 +80,7 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 	}
 	if briefs, err := s.st.ItemIndex(ws.ID).Briefs(numbers); err == nil {
 		for n, b := range briefs {
-			titles[n] = b.Title
+			titles[n], authors[n] = b.Title, b.Author
 		}
 	}
 	for _, n := range numbers {
@@ -86,11 +89,23 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 				titles[n] = c.Title
 			}
 		}
+		if authors[n] == "" {
+			if it, err := s.st.PollItem(ws.ID, n); err == nil {
+				authors[n] = it.Author
+			}
+		}
 	}
+	places := s.queuePlaces(ws.ID)
 	var rows []runRow
 	for _, r := range runs {
-		row := runRow{ID: r.ID, Item: r.Item, ItemURL: itemURL(ws, r.Kind, r.Item), Title: titles[r.Item], Kind: "pull request",
-			Status: r.Status, Dry: r.DryRun, Started: r.StartedAt, By: r.StartedBy, StoppedBy: r.StoppedBy}
+		row := runRow{ID: r.ID, Item: r.Item, ItemURL: itemURL(ws, r.Kind, r.Item), Title: titles[r.Item], Author: authors[r.Item], Kind: "pull request",
+			State: r.Status, Status: r.Status, Dry: r.DryRun, Started: r.StartedAt, By: r.StartedBy, StoppedBy: r.StoppedBy}
+		if r.StartedByID == 0 {
+			row.By = "Live" // the poller started it
+		}
+		if place, ok := places[r.ID]; ok {
+			row.Status = fmt.Sprintf("queued (%s in line)", ordinal(place))
+		}
 		if r.Kind == workflow.Issue {
 			row.Kind = "issue"
 		}
@@ -101,8 +116,9 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 				row.Block = g.NameOf(n)
 			}
 		}
-		end := r.FinishedAt
-		row.Took = took(r.StartedAt, end)
+		if r.Status != "queued" { // a queued run has not started to take any time
+			row.Took = took(r.StartedAt, r.FinishedAt)
+		}
 		row.Dot = map[string]string{"running": "busy", "done": "on"}[r.Status]
 		if row.Dot == "" {
 			row.Dot = "off"
@@ -132,7 +148,7 @@ func (s *Server) runsPage(w http.ResponseWriter, r *http.Request) {
 	rows := s.runRows(ws, runs)
 	running := false
 	for _, row := range rows {
-		running = running || row.Status == "running"
+		running = running || row.State == "running" || row.State == "queued"
 	}
 	var trows []testRow
 	for _, t := range tests {

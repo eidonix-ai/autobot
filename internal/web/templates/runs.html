@@ -3,17 +3,18 @@
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
 <h1>Runs</h1>
 <div class="scroll"><table class="list dense runs">
-<thead><tr><th>Item</th><th>Block</th><th>Status</th><th>Started</th><th>By</th><th>Took</th><th></th></tr></thead>
+<thead><tr><th>Item</th><th>Author</th><th>Block</th><th>Status</th><th>Started</th><th>Started by</th><th>Took</th><th></th></tr></thead>
 <tbody id="runs-list" data-live data-live-list>
 {{range .Rows}}<tr>
   <td><a href="{{.ItemURL}}">#{{.Item}}</a> <span class="muted">{{.Title}}</span></td>
-  <td>{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
+  <td class="nowrap">{{.Author}}</td>
+  <td class="nowrap">{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
   <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
   <td class="muted nowrap">{{ts .Started}}</td>
-  <td>{{.By}}</td>
+  <td class="nowrap">{{if eq .By "Live"}}<span class="muted">Live</span>{{else}}{{.By}}{{end}}</td>
   <td class="nowrap">{{.Took}}</td>
   <td><a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></td>
-</tr>{{else}}<tr><td colspan="7" class="muted">No runs yet.</td></tr>{{end}}
+</tr>{{else}}<tr><td colspan="8" class="muted">No runs yet.</td></tr>{{end}}
 </tbody>
 </table></div>
 <p class="muted">Those in progress first, then the {{.Recent}} most recent.</p>

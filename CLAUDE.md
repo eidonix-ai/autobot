@@ -354,10 +354,26 @@ git only through its environment, never a command line or the mirror's config.
    case; `Case.Number` reads back as the item's. Its page is /w/{owner}/{repo}/dry-cases/{run}, linked from
    the run page; the Cases page lists them after the real ones; the daily retention deletes them, with
    their pages, 30 days after the run ended.
+   Runs at once (Derek, 2026-11-24: "max jobs"; internal/web/queue.go, internal/store/runqueue.go): a
+   workspace setting "Run at most N workflows at once" on its Settings page (1 to 20, default 3; any member
+   may change it). A run counts against it while it goes on, dry runs too, except while its only unfinished
+   work is steps waiting for an approval (the driver gives its slot up then, and waits for a free one before
+   the step the answer lets go on; the answered run goes before queued ones). Every new run goes through
+   `Server.admit`: with a slot free and nothing queued it starts, otherwise it is recorded with status
+   "queued" (its steps pending, its workflow snapshot taken) and does not start; so do the poller's (still
+   at most 3 started per round), the Run forms and shift-click. The slots are in memory (`Server.slots`);
+   `dispatch` fills a workspace's free slots, oldest queued run first (by id), whenever a run ends, is
+   stopped or begins to wait only for approvals, when the limit is raised, and every 30 seconds
+   (`RunQueue`, which also runs once at start, after StopOrphanWorkflows, which leaves queued runs alone).
+   A queued run starts by being claimed in the database (`ClaimQueuedRun`, so a stop cannot be overtaken) and
+   driven from its record (`runState`, as a resumed run is). Stop works on a queued run (it becomes stopped
+   and never starts). A run waiting for approval after a restart resumes without a slot.
    The Runs page, /w/{owner}/{repo}/workflow-runs (linked from the workspace tile and the canvas header):
-   the runs in progress, then the 100 most recent, with item, block, status, dry-run badge, who and when,
-   and below them the recent canvas tests; a case page lists the runs on its item; the lists update in
-   place while anything runs. `{input}` and its parts name, after the steps whose links fired (as before:
+   the runs in progress (running ones, then queued ones in line order, "queued (2nd in line)", grey dot),
+   then the 100 most recent, with columns Item, Author (the item's, from the local copy, else the poller's
+   record), Block (with the dry-run badge, on one line), Status, Started, Started by (a person, or "Live"
+   for the poller) and Took, and below them the recent canvas tests; a case page lists the runs on its item
+   with the same Author and Started by; the lists update in place while anything runs. `{input}` and its parts name, after the steps whose links fired (as before:
    one bare, several under their names), the steps linked in (through Node blocks too) that did not, each as
    "## Name (failed: the start of its error)", "(skipped)" or "(took its “x” output)"; the Tags list shows
    `{input}` again.

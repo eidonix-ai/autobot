@@ -2,7 +2,7 @@ package web
 
 import (
 	"net/http"
-	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +51,7 @@ func TestRunsPage(t *testing.T) {
 	if !(at(runLink(going)) > 0 && at(runLink(going)) < at(runLink(stopped)) && at(runLink(stopped)) < at(runLink(second)) && at(runLink(second)) < at(runLink(first))) {
 		t.Errorf("order: going %d, stopped %d, second %d, first %d\n%s", at(runLink(going)), at(runLink(stopped)), at(runLink(second)), at(runLink(first)), body)
 	}
-	for _, want := range []string{`href="https://github.com/o/r/pull/7">#7</a> <span class="muted">Retry uploads</span>`, `href="https://github.com/o/r/pull/9"`,
+	for _, want := range []string{`href="https://github.com/o/r/pull/7">#7</a> <span class="title">Retry uploads</span>`, `href="https://github.com/o/r/pull/9"`,
 		"PR First Ready", "running", "done", "failed", "stopped", ">dry run<", "derek"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page lacks %q:\n%s", want, body)
@@ -147,16 +147,9 @@ func TestRunsPageWhoIsWho(t *testing.T) {
 
 	b := e.signIn("derek")
 	_, body := b.get("/w/o/r/workflow-runs")
-	var got []string
-	for _, h := range regexp.MustCompile(`<th>([^<]*)</th>`).FindAllStringSubmatch(body, 8) {
-		got = append(got, h[1])
-	}
-	if want := "Item Author Block Status Started Started by Took "; strings.Join(got, " ") != want {
-		t.Errorf("columns %q, want %q", strings.Join(got, " "), want)
-	}
 	row := func(id int64) string {
 		t.Helper()
-		for _, r := range strings.Split(body, "</tr>") {
+		for _, r := range strings.Split(body, "</li>") {
 			if strings.Contains(r, `workflow-runs/`+itoa(id)+`"`) {
 				return r
 			}
@@ -165,11 +158,11 @@ func TestRunsPageWhoIsWho(t *testing.T) {
 		return ""
 	}
 	for id, wants := range map[int64][]string{
-		byHand: {`<td class="nowrap">alice-in-index</td>`, `<td class="nowrap">PR First Ready <span class="muted">dry run</span></td>`, `<td class="nowrap">derek</td>`},
-		live:   {`<td class="nowrap">bob-from-poller</td>`, `<span class="muted">Live</span>`},
-		q1:     {`<span class="dot off"></span> queued (1st in line)`, `<span class="muted">Live</span>`},
-		q2:     {`<span class="dot off"></span> queued (2nd in line)`, `<td class="nowrap">derek</td>`},
-		done:   {`<span class="muted">Live</span>`, `<span class="dot on"></span> done`},
+		byHand: {`Author alice-in-index`, `<span class="tag">dry run</span>`, `by derek`},
+		live:   {`Author bob-from-poller`, `by Live`},
+		q1:     {`<span class="dot off"></span> queued (1st in line)`, `by Live`},
+		q2:     {`<span class="dot off"></span> queued (2nd in line)`, `by derek`},
+		done:   {`by Live`, `<span class="dot on"></span> done`},
 	} {
 		for _, want := range wants {
 			if r := row(id); !strings.Contains(r, want) {
@@ -221,5 +214,65 @@ func TestRunsPageWaitingRuns(t *testing.T) {
 	}
 	if strings.Index(body, `workflow-runs/`+itoa(waiting)+`"`) < strings.Index(body, `workflow-runs/`+itoa(working)+`"`) {
 		t.Fatal("the waiting run is listed before the one at work")
+	}
+}
+
+// The search, the status filter and the sort, on the server; the live list keeps the address's choice.
+func TestRunsPageFilterAndSort(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	approvalWorkflow(t, e, ws, derek)
+	w, _ := e.st.Workflow(ws.ID, workflow.PR)
+	for _, it := range []struct {
+		n             int
+		title, author string
+	}{{7, "Retry uploads", "alice"}, {12, "Add GLM recipe", "bob"}, {9, "Zero copy loads", "carol"}} {
+		e.st.SaveItem(ws.ID, store.Item{Number: it.n, Kind: "pr", Title: it.title, State: "open", Author: it.author, Created: time.Now(), Updated: time.Now()}, nil)
+	}
+	start := func(item int, step string) int64 {
+		id, err := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: item, Graph: w.Graph}, []string{"ev", "ap"}, derek)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: step})
+		return id
+	}
+	r7, r12, r9 := start(7, "waiting"), start(12, "running"), start(9, "done")
+	e.st.FinishWorkflowRun(r9, "done")
+	b := e.signIn("derek")
+	list := func(query string) []int64 {
+		t.Helper()
+		_, body := b.get("/w/o/r/workflow-runs" + query)
+		var out []int64
+		for _, id := range []int64{r7, r12, r9} {
+			if strings.Contains(body, `workflow-runs/`+itoa(id)+`"`) {
+				out = append(out, id)
+			}
+		}
+		slices.SortFunc(out, func(a, c int64) int {
+			return strings.Index(body, `workflow-runs/`+itoa(a)+`"`) - strings.Index(body, `workflow-runs/`+itoa(c)+`"`)
+		})
+		return out
+	}
+	for query, want := range map[string][]int64{
+		"":                   {r12, r7, r9}, // at work, waiting, ended
+		"?q=glm":             {r12},
+		"?q=%2312":           {r12},
+		"?q=carol":           {r9},
+		"?status=waiting":    {r7},
+		"?status=going":      {r12, r7},
+		"?status=done":       {r9},
+		"?sort=number":       {r12, r9, r7},
+		"?sort=title":        {r12, r7, r9},
+		"?sort=author":       {r7, r12, r9},
+		"?q=nothing-like-it": nil,
+	} {
+		if got := list(query); !slices.Equal(got, want) {
+			t.Errorf("%q: %v, want %v", query, got, want)
+		}
+	}
+	if _, body := b.get("/w/o/r/workflow-runs?q=nothing-like-it"); !strings.Contains(body, "Nothing matches.") || !strings.Contains(body, ">Clear</a>") {
+		t.Error("an empty search does not say so")
 	}
 }

@@ -2,21 +2,36 @@
 {{define "content"}}
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
 <h1>Runs</h1>
-<div class="scroll"><table class="list dense runs">
-<thead><tr><th>Item</th><th>Author</th><th>Block</th><th>Status</th><th>Started</th><th>Started by</th><th>Took</th><th></th></tr></thead>
-<tbody id="runs-list" data-live data-live-list>
-{{range .Rows}}<tr>
-  <td class="title" title="{{.Title}}"><a href="{{.ItemURL}}">#{{.Item}}</a> <span class="muted">{{.Title}}</span></td>
-  <td class="nowrap">{{.Author}}</td>
-  <td class="nowrap">{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
-  <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
-  <td class="muted nowrap" title="{{ts .Started}}">{{tsShort .Started}}</td>
-  <td class="nowrap">{{if eq .By "Live"}}<span class="muted">Live</span>{{else}}{{.By}}{{end}}</td>
-  <td class="nowrap">{{.Took}}</td>
-  <td><a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></td>
-</tr>{{else}}<tr><td colspan="8" class="muted">No runs yet.</td></tr>{{end}}
-</tbody>
-</table></div>
+<form method="get" action="{{.WS.Path}}/workflow-runs" class="row search items-filter">
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search number, title, author, block, status or who started it" aria-label="Search">
+  <select name="status" aria-label="Status">
+    <option value="all"{{if eq $.Show "all"}} selected{{end}}>Any status</option>
+    <option value="going"{{if eq $.Show "going"}} selected{{end}}>In progress</option>
+    <option value="running"{{if eq $.Show "running"}} selected{{end}}>Running</option>
+    <option value="waiting"{{if eq $.Show "waiting"}} selected{{end}}>Waiting for a person</option>
+    <option value="queued"{{if eq $.Show "queued"}} selected{{end}}>Queued</option>
+    <option value="done"{{if eq $.Show "done"}} selected{{end}}>Done</option>
+    <option value="failed"{{if eq $.Show "failed"}} selected{{end}}>Failed</option>
+    <option value="stopped"{{if eq $.Show "stopped"}} selected{{end}}>Stopped</option>
+  </select>
+  <label>Sort <select name="sort" aria-label="Sort">
+    <option value=""{{if eq $.Sort ""}} selected{{end}}>In progress first</option>
+    <option value="number"{{if eq $.Sort "number"}} selected{{end}}>PR or issue number</option>
+    <option value="title"{{if eq $.Sort "title"}} selected{{end}}>Title</option>
+    <option value="author"{{if eq $.Sort "author"}} selected{{end}}>Author</option>
+    <option value="status"{{if eq $.Sort "status"}} selected{{end}}>Status</option>
+    <option value="started"{{if eq $.Sort "started"}} selected{{end}}>Started</option>
+  </select></label>
+  <button>Filter</button>
+  {{if .Filtered}}<a href="{{.WS.Path}}/workflow-runs">Clear</a>{{end}}
+</form>
+<ul class="runlist" id="runs-list" data-live data-live-list>
+{{range .Rows}}<li>
+  <div class="l1"><a href="{{.ItemURL}}">#{{.Item}}</a> <span class="title">{{.Title}}</span>{{if .Dry}} <span class="tag">dry run</span>{{end}}
+    <span class="end"><span class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</span> <a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></span></div>
+  <div class="l2 muted">{{if .Author}}Author {{.Author}} · {{end}}{{.Block}} · Started <span title="{{ts .Started}}">{{tsShort .Started}}</span> by {{.By}}{{if .Took}} · {{.Took}}{{end}}</div>
+</li>{{else}}<li class="muted">{{if .Filtered}}Nothing matches.{{else}}No runs yet.{{end}}</li>{{end}}
+</ul>
 <p class="muted">Those in progress first, then the {{.Recent}} most recent.</p>
 
 <h2>Canvas tests</h2>

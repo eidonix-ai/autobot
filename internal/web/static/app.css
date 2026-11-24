@@ -167,10 +167,18 @@ select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 details.more { margin-top: 0.4rem; }
 .scrollbox { max-height: 22rem; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 0 0.8rem; }
 table.dense th, table.dense td { padding: 0.3rem 0.7rem; font-size: 0.9rem; }
-/* Runs: one line a run; the title takes the room the other columns leave, cut with "…" (whole on hover). */
+/* Runs: two lines a run, the title across the width and the details under it. */
 table.runs th, table.runs td { padding: 0.15rem 0.5rem; font-size: 0.86rem; line-height: 1.35; }
 table.runs th { white-space: nowrap; }
-table.runs td.title { width: 100%; max-width: 0; min-width: 6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ul.runlist { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+ul.runlist li { padding: 0.3rem 0.7rem; border-bottom: 1px solid var(--line); }
+ul.runlist li:last-child { border-bottom: 0; }
+ul.runlist .l1 { display: flex; gap: 0.4rem; align-items: baseline; }
+ul.runlist .l1 .title { flex: 1; min-width: 0; }
+ul.runlist .l1 .end { margin-left: auto; padding-left: 0.6rem; white-space: nowrap; }
+ul.runlist .l1 .end > a { margin-left: 0.5rem; }
+ul.runlist .l2 { font-size: 0.82rem; }
+ul.runlist .tag { font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
 table.cases td:nth-child(2) { width: 100%; } /* the title takes the spare width */
 table.members { width: auto; min-width: min(100%, 28rem); }
 table.members td, table.members th { white-space: nowrap; padding-right: 2rem; }

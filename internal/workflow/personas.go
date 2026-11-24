@@ -164,4 +164,4 @@ Propose the missing tests concretely.`,
 		IssueInstruction: issueHead + `Work out how to reproduce this issue. When you have a machine, build the project and try, and report exactly what you ran and what happened.
 Propose a test that would catch it.`,
 		Issue: "The report says whether the issue reproduces, with exactly what was run and what happened, and proposes a test that would catch it."},
-}, append(ReviewPresets, PreTestPreset)...)
+}, append(ReviewPresets, PreTestPreset, ConsequencesPreset)...)

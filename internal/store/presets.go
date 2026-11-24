@@ -263,6 +263,9 @@ func (s *Store) SeedPresetsV2(renames []PresetRename, adds []Preset) error {
 	return s.seedPresetsOnce(presetsV2, renames, adds)
 }
 
+// SeedPresetsV4 adds the Unintended Consequences preset, once, on a database seeded before it.
+func (s *Store) SeedPresetsV4(adds []Preset) error { return s.seedPresetsOnce("presets_v4", nil, adds) }
+
 // SeedPresetsV3 adds the Pre-Test Report preset, once, on a database seeded before it.
 func (s *Store) SeedPresetsV3(adds []Preset) error { return s.seedPresetsOnce("presets_v3", nil, adds) }
 

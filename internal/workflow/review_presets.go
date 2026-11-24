@@ -74,6 +74,11 @@ Do not repeat the reviews in full: give the checked result, with file and line f
 **Link:** {pr}`,
 	IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
 
+// ConsequencesPreset looks for what a change affects that it does not mean to (Derek, 2026-11-24).
+var ConsequencesPreset = review("review_consequences", "Code Review - Unintended Consequences",
+	"What the change affects that it does not mean to: behaviour, formats, defaults, performance, safeguards and other work.",
+	"Your lens is unintended consequences: what does this change affect that it does not set out to? Look for behaviour that changes outside its stated purpose; changed defaults, configuration, file and wire formats, APIs and metrics that other code, tools, operators or users rely on; performance, memory and resource effects on paths it does not target; tests, checks and safeguards it removes or weakens; how it behaves when upgrading, downgrading or running next to older versions; security and privacy side effects; and how it interacts with recent changes and other open pull requests in the same code (the orientation packet lists them). For each, say who or what is affected and how.")
+
 // ReviewPresets are the six new code review presets.
 var ReviewPresets = []Persona{
 	review("review_all", "Code Review - All Lenses", "The first reviewer: reads a pull request through all five lenses and groups the findings by lens.",

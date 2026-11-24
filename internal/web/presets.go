@@ -36,6 +36,11 @@ func reviewRows() []store.Preset { return presetRows(workflow.ReviewPresets) }
 // preTestRows is the Pre-Test Report preset, as rows.
 func preTestRows() []store.Preset { return presetRows([]workflow.Persona{workflow.PreTestPreset}) }
 
+// consequencesRows is the Unintended Consequences preset, as rows.
+func consequencesRows() []store.Preset {
+	return presetRows([]workflow.Persona{workflow.ConsequencesPreset})
+}
+
 // presetRenames are the seeded presets that took a code review name.
 func presetRenames() []store.PresetRename {
 	var out []store.PresetRename

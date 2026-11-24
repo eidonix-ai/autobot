@@ -139,6 +139,9 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 	if err := st.SeedPresets(seedRows()); err != nil { // the built-in presets, once; the database is the authority after
 		return nil, err
 	}
+	if err := st.SeedPresetsV4(consequencesRows()); err != nil { // the Unintended Consequences preset, once
+		return nil, err
+	}
 	if err := st.SeedPresetsV3(preTestRows()); err != nil { // the Pre-Test Report preset, once
 		return nil, err
 	}

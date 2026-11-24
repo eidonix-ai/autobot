@@ -15,11 +15,18 @@ func TestPreTestPreset(t *testing.T) {
 	if err := CheckTemplates(PR, nil, p.Instruction, p.Goal, p.Summary); err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	seeded := map[string]bool{}
 	for _, s := range SeedPresets {
-		found = found || s.Key == "review_pretest"
+		seeded[s.Key] = true
 	}
-	if !found {
+	if !seeded["review_pretest"] || !seeded["review_consequences"] {
 		t.Fatal("not seeded")
+	}
+	c := ConsequencesPreset
+	if c.Name != "Code Review - Unintended Consequences" || !strings.Contains(c.Instruction, "unintended consequences") || c.Closing != ClosingReport {
+		t.Fatalf("%+v", c)
+	}
+	if err := CheckTemplates(PR, nil, c.Instruction, c.Goal, c.Summary); err != nil {
+		t.Fatal(err)
 	}
 }

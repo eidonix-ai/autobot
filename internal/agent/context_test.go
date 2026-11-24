@@ -480,7 +480,7 @@ func TestClosingReport(t *testing.T) {
 		t.Fatalf("the writing session continued the research: %d messages", len(first))
 	}
 	for _, want := range []string{"Instruction: look at it.\n\nDone when: it is all read", "Your research is done and its notes are in your scratchpad. Write the final report now, from your notes:",
-		"Call finish with the report.", "#1 [high] Research summary — Found it in a.go:1.", "#2 [medium] Late find — found late"} {
+		"Call finish with two parts.", "#1 [high] Research summary — Found it in a.go:1.", "#2 [medium] Late find — found late"} {
 		if !strings.Contains(first[1].Content, want) {
 			t.Errorf("the writer's first message lacks %q:\n%s", want, first[1].Content)
 		}

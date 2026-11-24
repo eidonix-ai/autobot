@@ -19,8 +19,10 @@ const (
 	// writerPrompt follows the instruction and Done when in the writing session's first message.
 	writerPrompt = "Your research is done and its notes are in your scratchpad. Write the final report now, from your notes: " +
 		"organized and detailed, the high-importance findings first, every claim with its citation (file and lines, pull request " +
-		"or issue numbers, links), then the open questions and what could not be found. Read the index, then the entries you need; " +
-		"check a citation in the code when you are unsure. Call finish with the report."
+		"or issue numbers, links), then the open questions and what could not be found. Open the report with a short \"Key findings\" section. " +
+		"Read the index, then the entries you need; check a citation in the code when you are unsure. " +
+		"Call finish with two parts. The summary is at most about 300 words: the 5 to 8 findings that matter most, one line each with its " +
+		"citation, then the most important open questions; no inventory of files. The report is the full report."
 
 	saveTurnTime = 3 * time.Minute // the save turn's own time, whatever the research had left
 
@@ -88,8 +90,9 @@ func SaveTurn(ctx context.Context, cfg Config, conv *Conversation, tr *Transcrip
 //   - a new session, with only read-only tools, writes the report from the notes.
 //
 // The transcript returned has the research's outcome and the writing session's transcript in
-// Writing; its Report is the written one, or, when none was written, the scratchpad's high and
-// medium notes in order. A research that failed with an error gets neither the save turn nor a
+// Writing; its Report and Summary are the written ones, or, when none was written, the research's
+// own, or the scratchpad's high and medium notes in order. A report with no summary gets one made
+// from it. A research that failed with an error gets neither the save turn nor a
 // writing session.
 func RunClosing(ctx context.Context, research Config, conv *Conversation, w Writer) *Transcript {
 	tr := Run(ctx, research, conv)
@@ -103,22 +106,25 @@ func RunClosing(ctx context.Context, research Config, conv *Conversation, w Writ
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTurnTime)
 		SaveTurn(sctx, research, conv, tr)
 		cancel()
-		if rep := writeReport(ctx, research, tr, w); strings.TrimSpace(rep) != "" {
-			tr.Report = rep // else the research's own report stays
+		if wt := writeReport(ctx, research, tr, w); strings.TrimSpace(wt.Report) != "" {
+			tr.Report, tr.Summary = wt.Report, wt.Summary // else the research's own report, and its summary, stay
 		}
 	}
 	if strings.TrimSpace(tr.Report) == "" {
-		tr.Report = NotesReport(research.Pad)
+		tr.Report, tr.Summary = NotesReport(research.Pad), ""
 	}
+	tr.EnsureSummary()
 	if research.Save != nil {
 		research.Save(tr)
 	}
 	return tr
 }
 
-// writeReport runs the writing session and returns its report, or "".
-func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer) string {
+// writeReport runs the writing session and returns its transcript, whose Report and Summary are
+// empty when it wrote none.
+func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer) *Transcript {
 	cfg := w.Config
+	cfg.WithSummary = true                                             // its finish takes a summary as well as the report
 	cfg.Pad, cfg.Subs, cfg.Read = research.Pad, research.Subs, tr.Read // it may cite what the research read, and read its sub-agents' notes
 	cfg.Task = WriterTask(w.Intro, research.Pad, research.Subs)
 	cfg.Verify = nil
@@ -138,7 +144,7 @@ func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer)
 	cfg.WarnAt = WarnTime(cfg.Deadline, w.Time, w.WarnPercent)
 	wt := Run(wctx, cfg, w.Conv)
 	tr.Writing = wt
-	return wt.Report
+	return wt
 }
 
 // NotesReport is a report made of the scratchpad's high and medium notes in order: what a run that

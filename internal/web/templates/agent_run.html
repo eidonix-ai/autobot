@@ -6,6 +6,7 @@
 {{with .MainLine}}<p class="status muted">{{.}}</p>{{end}}
 {{with .WriterLine}}<p class="status muted">{{.}}</p>{{end}}
 {{with .T.Error}}<p class="error">{{.}}</p>{{end}}
+{{if .Summary}}<section class="panel" id="run-summary"><h2>Summary</h2><div class="md">{{.Summary}}</div></section>{{end}}
 {{if .Report}}<section class="panel"><h2>Report</h2><div class="md">{{.Report}}</div></section>{{end}}
 {{if .T.Plan}}<section class="panel"><h2>Plan</h2><ul class="plan">{{range .T.Plan}}<li class="{{.Status}}">{{.Step}}{{with .Note}} <span class="muted">({{.}})</span>{{end}}</li>{{end}}</ul></section>{{end}}
 </div>

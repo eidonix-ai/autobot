@@ -225,7 +225,8 @@ func (s *Store) reportOrphans() error {
 		if json.Unmarshal([]byte(o.summary), &sum) != nil || sum == nil {
 			sum = map[string]any{}
 		}
-		sum["report"] = report
+		summary := FallbackSummary(report)
+		sum["report"], sum["summary"] = report, summary
 		if sum["outcome"] == nil {
 			sum["outcome"] = "failed"
 		}
@@ -236,7 +237,7 @@ func (s *Store) reportOrphans() error {
 		if _, err := s.db.Exec(`UPDATE agent_runs SET summary = ? WHERE id = ?`, string(b), o.id); err != nil {
 			return err
 		}
-		if _, err := s.Pad(o.thread).Add(PadEntry{Title: ReportTitle(o.id), Importance: High, Description: firstLineOf(report, 160), Body: report, Report: true}); err != nil && !errors.Is(err, ErrThreadGone) {
+		if _, err := s.Pad(o.thread).Add(PadEntry{Title: ReportTitle(o.id), Importance: High, Description: firstLineOf(summary, 160), Body: report, Summary: summary, Report: true}); err != nil && !errors.Is(err, ErrThreadGone) {
 			return err
 		}
 	}

@@ -30,7 +30,7 @@ type tagField struct {
 	Long               bool // a text box rather than a line
 }
 
-var longTags = map[string]bool{"previous_output": true}
+var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true}
 
 // stepTemplates is a node's settings and templates, or an error saying why it cannot be tested.
 func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
@@ -125,6 +125,9 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 			a, builtIn := about[tag]
 			if !builtIn {
 				a = "another step's output"
+				if strings.Contains(tag, ".") {
+					a = "a part of another step's output"
+				}
 			}
 			fields = append(fields, tagField{tag, a, values[tag], longTags[tag] || !builtIn})
 		}
@@ -432,9 +435,13 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 		}
 		subs = append(subs, v)
 	}
-	var report strings.Builder
+	var report, summary strings.Builder
 	if tr.Report != "" {
 		s.md.Convert([]byte(tr.Report), &report)
+	}
+	// A summary that is the report itself (a block with no closing step) has no panel of its own.
+	if tr.Summary != "" && tr.Summary != tr.Report {
+		s.md.Convert([]byte(tr.Summary), &summary)
 	}
 	outcome := map[string]string{"running": "Running", agent.Met: "Goal met", agent.Blocked: "Blocked",
 		agent.Budget: "Out of budget", agent.Unfinished: "Stopped without finishing", agent.Failed: "Failed"}[run.Status]
@@ -445,10 +452,10 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 	if run.Status == agent.Failed && tr.Error == "" {
 		tr.Error = "Autobot restarted while it ran."
 	}
-	tr.Report = ""
+	tr.Report, tr.Summary = "", ""
 	cache := cacheLine(tr.In, tr.Cached)
 	data := map[string]any{"Title": run.NodeName + " · " + ws.Name, "WS": ws, "Run": run, "T": tr, "Entries": entries,
-		"Outcome": outcome, "Dot": dot, "Report": template.HTML(report.String()), "Cache": cache, "Gone": gone,
+		"Outcome": outcome, "Dot": dot, "Report": template.HTML(report.String()), "Summary": template.HTML(summary.String()), "Cache": cache, "Gone": gone,
 		"Writing": writing, "HasPad": run.Thread != 0, "Pad": pad, "Subs": subs, "MainLine": mainLine,
 		"Took": run.FinishedAt.Sub(run.StartedAt).Round(time.Second).String()}
 	if w := tr.Writing; w != nil {

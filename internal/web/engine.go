@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -24,8 +25,8 @@ import (
 // a link fires when its node finished on that output (a decision fires only its choice's links).
 // A step none of whose links fired is skipped, and so on downstream, which is how a decision routes
 // and how a fork rejoins. Independent steps run at the same time. Each step's output is the
-// {previous_output} of the steps it links to (several, when links merge, each under its node's
-// name), and a step's "Output to" tag is kept for the case. A dry run writes nothing: no case file,
+// {input} of the steps it links to (several, when links merge, each under its node's name), and a
+// step's "Output to" tag is kept for the case. A dry run writes nothing: no case file,
 // no output tags, nothing posted.
 
 const maxDiff = 200_000 // characters of a pull request's diff given to {pr:diff}
@@ -373,13 +374,16 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
-				prev := previousOutput(fired, steps, nodes)
-				go func(n workflow.Node, prev string) {
+				var sources []source // copied here: the steps change while this one runs
+				for _, l := range fired {
+					sources = append(sources, source{nodes[l.From], steps[l.From]})
+				}
+				go func(n workflow.Node, sources []source) {
 					o := stepOutcome{err: errors.New("the step crashed")}
 					defer func() { results <- finished{n.ID, o} }()
 					defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
-					o = s.runStep(rs, n, prev)
-				}(n, prev)
+					o = s.runStep(rs, n, sources)
+				}(n, sources)
 			}
 		}
 		if running == 0 {
@@ -397,7 +401,7 @@ func (s *Server) drive(rs *runState) {
 		}
 		save(st)
 		if st.Status == "done" {
-			s.keepTag(rs, nodes[f.id], st.Output)
+			s.keepTag(rs, nodes[f.id], st.Output, f.o.tags)
 		}
 	}
 	status := "done"
@@ -411,17 +415,52 @@ func (s *Server) drive(rs *runState) {
 	}
 }
 
-// previousOutput is what the links that fired into a step bring it: one output as it is, several
-// each under the name of the node it came from.
-func previousOutput(fired []workflow.Link, steps map[string]store.WorkflowStep, nodes map[string]workflow.Node) string {
-	if len(fired) == 1 {
-		return steps[fired[0].From].Output
+// source is a finished step a link fired from, as the step after it sees it.
+type source struct {
+	node workflow.Node
+	step store.WorkflowStep
+}
+
+// outputParts are the suffixes of the values a step hands on, as keepTag stores an output tag's:
+// "" is the whole, then the summary, the report and the notes.
+var outputParts = []string{"", ".summary", ".report", ".scratchpad"}
+
+// inputValues are the values of {input} and its parts for a step, from the links that fired into
+// it: one step's as they are, several each under the name of the node it came from. A step that is
+// not an agent hands on its output, as both its summary and its report, and has no notes.
+func (s *Server) inputValues(rs *runState, sources []source) map[string]string {
+	all := make([]map[string]string, len(sources))
+	for i, src := range sources {
+		all[i] = s.stepParts(rs, src)
 	}
-	var parts []string
-	for _, l := range fired {
-		parts = append(parts, "## "+workflow.DisplayName(nodes[l.From])+"\n\n"+steps[l.From].Output)
+	out := map[string]string{}
+	for _, suffix := range outputParts {
+		if len(sources) == 1 {
+			out["input"+suffix] = all[0][suffix]
+			continue
+		}
+		var parts []string
+		for i, src := range sources {
+			parts = append(parts, "## "+workflow.DisplayName(src.node)+"\n\n"+all[i][suffix])
+		}
+		out["input"+suffix] = strings.Join(parts, "\n\n")
 	}
-	return strings.Join(parts, "\n\n")
+	return out
+}
+
+// stepParts are what a finished step hands on, by suffix. An agent's are rebuilt from its run, so
+// that they survive a restart of Autobot between the steps.
+func (s *Server) stepParts(rs *runState, src source) map[string]string {
+	if src.node.Type == workflow.Agent && src.step.AgentRun != 0 {
+		a, err := workflow.AgentSettingsOf(src.node, rs.run.Kind)
+		run, rerr := s.st.AgentRun(src.step.AgentRun)
+		if err == nil && rerr == nil {
+			_, parts := s.agentParts(a.EffectiveClosing(rs.run.Kind) == workflow.ClosingReport, run)
+			return parts
+		}
+	}
+	out := src.step.Output
+	return map[string]string{"": out, ".summary": out, ".report": out, ".scratchpad": ""}
 }
 
 // outputTo is a node's output tag, or "".
@@ -438,13 +477,20 @@ func outputTo(n workflow.Node, kind string) string {
 }
 
 // keepTag stores a finished step's output under its output tag: for the rest of the run, and for
-// the case unless the run is dry.
-func (s *Server) keepTag(rs *runState, n workflow.Node, output string) {
+// the case unless the run is dry. An Agent's output has parts (parts, by suffix: "" is the tag
+// itself, ".summary" and so on), each kept under the tag's name and the suffix; any other step
+// has just its output. Every one replaces the value the last write left.
+func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map[string]string) {
 	name := outputTo(n, rs.run.Kind)
 	if name == "" {
 		return
 	}
-	rs.tags[name] = output
+	if parts == nil {
+		parts = map[string]string{"": output}
+	}
+	for suffix, v := range parts {
+		rs.tags[name+suffix] = v
+	}
 	if rs.run.DryRun {
 		return
 	}
@@ -455,8 +501,10 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string) {
 			return
 		}
 	}
-	if err == nil {
-		err = s.st.SetCaseValue(c.UUID, name, output, n.ID)
+	for suffix, v := range parts {
+		if err == nil {
+			err = s.st.SetCaseValue(c.UUID, name+suffix, v, n.ID)
+		}
 	}
 	if err != nil {
 		log.Printf("workflow run %d: keeping {%s}: %v", rs.run.ID, name, err)
@@ -479,10 +527,13 @@ type stepOutcome struct {
 	port, output, note string
 	agentRun           int64
 	err                error
+	// tags are the values an Agent's output tag takes, by suffix (see agentTags); nil for a step
+	// whose output is the tag's value.
+	tags map[string]string
 }
 
 // runStep runs one step with the run's tags and the output of the steps before it.
-func (s *Server) runStep(rs *runState, n workflow.Node, prev string) stepOutcome {
+func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOutcome {
 	values := map[string]string{}
 	for k, v := range rs.tags {
 		values[k] = v
@@ -490,7 +541,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, prev string) stepOutcome
 	for k, v := range rs.builtIn {
 		values[k] = v
 	}
-	values["previous_output"] = prev
+	maps.Copy(values, s.inputValues(rs, sources))
 	kind := rs.run.Kind
 	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
 		values[workflow.ItemTag(kind)+":case_file"] = c.Contents
@@ -794,21 +845,51 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		if run.Status == "running" {
 			continue
 		}
-		var tr agent.Transcript
-		json.Unmarshal([]byte(run.Summary), &tr)
-		switch run.Status {
-		case agent.Met:
-			return stepOutcome{port: "out", output: tr.Report, agentRun: id}
-		case agent.Failed:
+		tr, parts := s.agentParts(a.EffectiveClosing(rs.run.Kind) == workflow.ClosingReport, run)
+		if run.Status == agent.Failed {
 			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent failed: %s", tr.Error)}
-		default:
-			out := tr.Report
-			if out == "" {
-				out = "(The agent ended without a report: " + tr.Error + ".)"
-			}
-			return stepOutcome{port: "out", output: out, agentRun: id, note: "the agent ended " + run.Status + ": " + tr.Error}
+		}
+		// The step's own output is the report; the output tag, and {input} for the next step, have
+		// more: see agentParts.
+		o := stepOutcome{port: "out", output: parts[".report"], agentRun: id, tags: parts}
+		if run.Status != agent.Met {
+			o.note = "the agent ended " + run.Status + ": " + tr.Error
+		}
+		return o
+	}
+}
+
+// agentParts are what an Agent step hands on from its run, by suffix:
+//   - ".summary" and ".report" are the run's summary and its full report, and ".scratchpad" its
+//     thread's notes in full (the main agent's: sub-agents' notes are kept apart);
+//   - "" is the whole, under headings: Summary, Report, and Notes when there are any. A block whose
+//     report is not written from the notes (closing none) has one report, which is also its
+//     summary, so its whole is the report with the Notes after it.
+//
+// It also returns the run's transcript.
+func (s *Server) agentParts(closing bool, run *store.AgentRun) (agent.Transcript, map[string]string) {
+	var tr agent.Transcript
+	json.Unmarshal([]byte(run.Summary), &tr)
+	if tr.Report == "" {
+		tr.Report = "(The agent ended without a report: " + tr.Error + ".)"
+	}
+	tr.EnsureSummary() // a run from before summaries has only its report
+	var notes string
+	if run.Thread != 0 {
+		if list, err := s.st.Pad(run.Thread).List(); err == nil {
+			notes = store.ScratchpadText(list)
+		} else {
+			log.Printf("agent run %d: reading its notes: %v", run.ID, err)
 		}
 	}
+	summary, whole := tr.Summary, "## Summary\n\n"+tr.Summary+"\n\n## Report\n\n"+tr.Report
+	if !closing {
+		summary, whole = tr.Report, tr.Report
+	}
+	if notes != "" {
+		whole += "\n\n## Notes\n\n" + notes
+	}
+	return tr, map[string]string{"": whole, ".summary": summary, ".report": tr.Report, ".scratchpad": notes}
 }
 
 // runWorkflow starts a run from the event node in the URL, on the item in the form.

@@ -130,7 +130,7 @@ func TestBlockTests(t *testing.T) {
 		t.Fatalf("decision %d:\n%s", code, body)
 	}
 	// A case entry shows what it would write, and writes nothing.
-	if code, _, body := b.post(base+"ce/test", url.Values{"csrf": {tok}, "tag_previous_output": {"All good."}}); code != 200 || !strings.Contains(body, "All good.") {
+	if code, _, body := b.post(base+"ce/test", url.Values{"csrf": {tok}, "tag_input.report": {"All good."}}); code != 200 || !strings.Contains(body, "All good.") {
 		t.Fatalf("case entry %d:\n%s", code, body)
 	}
 	if n, _ := e.st.CaseCount(ws.ID); n != 0 {

@@ -51,6 +51,11 @@ ALTER TABLE agent_runs ADD COLUMN writer_conversation INTEGER NOT NULL DEFAULT 0
 CREATE UNIQUE INDEX agent_runs_one_running_thread ON agent_runs (thread) WHERE status = 'running' AND thread != 0;
 `
 
+// schemaPadSummary keeps a final report's summary with it: the thread's next run opens with it.
+const schemaPadSummary = `
+ALTER TABLE scratchpad ADD COLUMN summary TEXT NOT NULL DEFAULT '';
+`
+
 // ErrThreadBusy means the thread already has a run in progress.
 var ErrThreadBusy = errors.New("the item's thread has a run in progress")
 
@@ -138,7 +143,8 @@ type PadEntry struct {
 	Importance  string // low, medium or high
 	Description string // one line
 	Body        string
-	Report      bool // a run's final report, saved by Autobot, not written by the agent
+	Report      bool   // a run's final report, saved by Autobot, not written by the agent
+	Summary     string // of a final report: its summary (Description is that cut to one line)
 	At          time.Time
 }
 
@@ -173,8 +179,8 @@ func (p *Pad) Add(e PadEntry) (int, error) {
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(n), 0) + 1 FROM scratchpad WHERE thread_id = ?`, p.thread).Scan(&n); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`INSERT INTO scratchpad (thread_id, n, author, title, importance, description, body, report, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.thread, n, e.Author, e.Title, e.Importance, strings.Join(strings.Fields(e.Description), " "), e.Body, e.Report, now()); err != nil {
+	if _, err := tx.Exec(`INSERT INTO scratchpad (thread_id, n, author, title, importance, description, body, report, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.thread, n, e.Author, e.Title, e.Importance, strings.Join(strings.Fields(e.Description), " "), e.Body, e.Report, e.Summary, now()); err != nil {
 		return 0, err
 	}
 	if _, err := tx.Exec(`UPDATE threads SET last_at = ? WHERE id = ?`, now(), p.thread); err != nil {
@@ -185,7 +191,7 @@ func (p *Pad) Add(e PadEntry) (int, error) {
 
 // List returns every entry of the thread, in order.
 func (p *Pad) List() ([]PadEntry, error) {
-	rows, err := p.s.db.Query(`SELECT n, author, title, importance, description, body, report, created_at FROM scratchpad WHERE thread_id = ? ORDER BY n`, p.thread)
+	rows, err := p.s.db.Query(`SELECT n, author, title, importance, description, body, report, summary, created_at FROM scratchpad WHERE thread_id = ? ORDER BY n`, p.thread)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +200,7 @@ func (p *Pad) List() ([]PadEntry, error) {
 	for rows.Next() {
 		var e PadEntry
 		var at int64
-		if err := rows.Scan(&e.N, &e.Author, &e.Title, &e.Importance, &e.Description, &e.Body, &e.Report, &at); err != nil {
+		if err := rows.Scan(&e.N, &e.Author, &e.Title, &e.Importance, &e.Description, &e.Body, &e.Report, &e.Summary, &at); err != nil {
 			return nil, err
 		}
 		e.At = time.Unix(at, 0)
@@ -225,6 +231,21 @@ func ReportTitle(run int64) string {
 		loc = time.UTC
 	}
 	return fmt.Sprintf("Report of %s, run %d", time.Now().In(loc).Format("2006-01-02"), run)
+}
+
+// ScratchpadText is a thread's notes in full, the high ones first, then the medium, then the low,
+// each group in the order written: "#N [importance] Title", then the body. The final reports Autobot
+// keeps in the thread are not notes, so they are left out. Empty when there are none.
+func ScratchpadText(entries []PadEntry) string {
+	var parts []string
+	for _, imp := range []string{High, Medium, Low} {
+		for _, e := range entries {
+			if !e.Report && e.Importance == imp {
+				parts = append(parts, fmt.Sprintf("#%d [%s] %s\n\n%s", e.N, e.Importance, e.Title, e.Body))
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // NotesText is a report made of the high and medium notes in order, each with its title and body:

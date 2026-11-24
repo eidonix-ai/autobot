@@ -26,7 +26,7 @@ type GitHubCommentSettings struct {
 
 // DefaultGitHubComment is a new GitHub Comment node's settings: a trial, until someone decides.
 func DefaultGitHubComment() GitHubCommentSettings {
-	return GitHubCommentSettings{Message: "{previous_output}", Trial: true, KeepOne: true}
+	return GitHubCommentSettings{Message: "{input.report}", Trial: true, KeepOne: true}
 }
 
 // Check confirms a GitHub Comment node's settings are complete.
@@ -282,7 +282,7 @@ type DiscordPostSettings struct {
 
 // DefaultDiscordPost is a new Post to Discord node's settings.
 func DefaultDiscordPost() DiscordPostSettings {
-	return DiscordPostSettings{Message: "{previous_output}"}
+	return DiscordPostSettings{Message: "{input.report}"}
 }
 
 // Check confirms a Post to Discord node's settings are complete.

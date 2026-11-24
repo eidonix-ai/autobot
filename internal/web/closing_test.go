@@ -32,7 +32,7 @@ func closingModel(writerFails bool) func([]agent.Message, []string) agent.Messag
 			case last.Role == "user":
 				return toolCall("w1", "scratchpad_index", `{}`)
 			}
-			return toolCall("w2", "finish", `{"status":"met","report":"WRITTEN REPORT: the findings, high ones first."}`)
+			return toolCall("w2", "finish", `{"status":"met","summary":"WRITTEN SUMMARY: the key findings.","report":"WRITTEN REPORT: the findings, high ones first."}`)
 		case strings.HasPrefix(last.Content, "Before your report is written"):
 			return toolCall("s1", "scratchpad_write", `{"title":"Late","importance":"medium","description":"found late","body":"body of the late note"}`)
 		}
@@ -137,7 +137,7 @@ func TestClosingReportEndToEnd(t *testing.T) {
 	c.run("ev2")
 	reqs := c.llm.requests()
 	opening := messagesOf(t, reqs[len(reqs)-1])[1].Content
-	if got := section(opening, "Your last report on this item:\n", "\n\nYour notes so far"); got != "WRITTEN REPORT: the findings, high ones first." {
+	if got := section(opening, "Your last summary on this item:\n", "\n\nThe full report is entry"); got != "WRITTEN SUMMARY: the key findings." {
 		t.Fatalf("it opened with %q", got)
 	}
 }

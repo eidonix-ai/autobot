@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/eidonix-ai/autobot/internal/store"
 )
 
 // Tool is a tool the agent may call. Run's error is shown to the model as the tool's result.
@@ -59,6 +61,7 @@ type Transcript struct {
 	Cached  int        `json:"tokens_cached"`  // input tokens the provider answered from its cache
 	Read    []string   `json:"read,omitempty"` // the files its tools have read
 	Outcome string     `json:"outcome,omitempty"`
+	Summary string     `json:"summary,omitempty"` // about 300 words: what a continuation opens with and a step's output tag holds
 	Report  string     `json:"report,omitempty"`
 	Error   string     `json:"error,omitempty"`
 
@@ -95,6 +98,9 @@ type Config struct {
 	// Read is what the tools of an earlier session of the same piece of work have read, so that a
 	// citation of it is not marked "(not opened)".
 	Read []string
+	// WithSummary makes finish take a summary as well as the report: the session that writes the
+	// report from the scratchpad. A finish without one is not refused: see Transcript.finish.
+	WithSummary bool
 }
 
 const (
@@ -111,6 +117,16 @@ var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it wh
 	Parameters: json.RawMessage(`{"type":"object","properties":{
 		"status":{"type":"string","enum":["met","blocked"],"description":"met: the goal is met. blocked: it cannot be met, and the report says why."},
 		"report":{"type":"string","description":"The final answer."}},"required":["status","report"]}`)}
+
+// finishWriterSpec is finish for the session that writes the report from the scratchpad: a summary
+// of the findings that matter most, and the full report.
+var finishWriterSpec = ToolSpec{Name: "finish", Description: "End the work. Call it once the report is written, or when you are blocked and cannot write it. " +
+	"It takes two parts, both required. The summary is at most about 300 words: the 5 to 8 findings that matter most, one line each with its citation, " +
+	"then the most important open questions; no inventory of files. The report is the full report: it opens with a short \"Key findings\" section, then the detail.",
+	Parameters: json.RawMessage(`{"type":"object","properties":{
+		"status":{"type":"string","enum":["met","blocked"],"description":"met: the goal is met. blocked: it cannot be met, and the report says why."},
+		"summary":{"type":"string","description":"At most about 300 words: the 5 to 8 findings that matter most, one line each with its citation, then the most important open questions."},
+		"report":{"type":"string","description":"The full report, opening with a short Key findings section, then the detail."}},"required":["status","summary","report"]}`)}
 
 // finishSummarySpec is finish for a research session whose report is written next, from its notes.
 var finishSummarySpec = ToolSpec{Name: "finish", Description: "End the research. Call it when the goal is met, or when you are blocked and cannot meet it. " +
@@ -205,6 +221,19 @@ func availableOn(names []string) string {
 // cfg.Task is its next message. A conversation sends the system prompt and tool definitions it was
 // started with, whatever cfg says; a tool it has that cfg does not answers that it is not available.
 func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
+	tr := run(ctx, cfg, conv)
+	tr.EnsureSummary()
+	return tr
+}
+
+// EnsureSummary gives a transcript that has a report but no summary one made from the report.
+func (tr *Transcript) EnsureSummary() {
+	if strings.TrimSpace(tr.Summary) == "" {
+		tr.Summary = store.FallbackSummary(tr.Report)
+	}
+}
+
+func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 	if conv == nil {
 		conv = NewConversation("", 0, cfg.System, cfg.Tools)
 	}
@@ -265,12 +294,12 @@ func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 				continue
 			}
 			if last && strings.TrimSpace(reply.Content) != "" { // it answered in words: that is its report
-				tr.Outcome, tr.Report, tr.Error = Budget, reply.Content, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
+				tr.Outcome, tr.Report, tr.Summary, tr.Error = Budget, reply.Content, "", fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
 				save()
 				return tr
 			}
 			if nudges++; nudges > maxNudges {
-				tr.Outcome, tr.Report, tr.Error = Unfinished, reply.Content, "kept answering without calling finish"
+				tr.Outcome, tr.Report, tr.Summary, tr.Error = Unfinished, reply.Content, "", "kept answering without calling finish"
 				save()
 				return tr
 			}
@@ -407,24 +436,35 @@ func (s *session) builtin(name, args string, carry **string) (out string) {
 // not held against it (Derek, 2026-11-23, after two runs lost finished reports to refusals near
 // their turn limit). Only the optional check by another model (Verify) sends the agent back, and its
 // report is kept meanwhile, so a run that then runs out of turns still has it.
+//
+// The session that writes a report (cfg.WithSummary) gives a summary too. One it leaves out is not
+// a reason to refuse: the report must never be lost, so the summary is made from it (see
+// store.FallbackSummary) and says so. Any other session's report is its own summary.
 func (tr *Transcript) finish(ctx context.Context, cfg Config, args string, rejected *int) (string, bool) {
-	var a struct{ Status, Report string }
+	var a struct{ Status, Summary, Report string }
 	if json.Unmarshal([]byte(args), &a) != nil || (a.Status != Met && a.Status != Blocked) || strings.TrimSpace(a.Report) == "" {
 		return "error: finish needs a status (met or blocked) and a report", false
 	}
 	a.Report = tr.annotate(a.Report)
+	summary := a.Report
+	if cfg.WithSummary {
+		summary = store.FallbackSummary(a.Report)
+		if strings.TrimSpace(a.Summary) != "" {
+			summary = tr.annotate(strings.TrimSpace(a.Summary))
+		}
+	}
 	if a.Status == Met {
 		if cfg.Verify != nil && *rejected < maxRejected {
 			ok, why, err := cfg.Verify(ctx, cfg.Goal, a.Report)
 			if err == nil && !ok {
 				*rejected++
-				tr.Report = a.Report
+				tr.Report, tr.Summary = a.Report, summary
 				return "Not finished: a check of your report found the goal not yet met" + why +
 					". The goal: " + cfg.Goal + "\nKeep working, then finish again.", false
 			}
 		}
 	}
-	tr.Outcome, tr.Report = a.Status, a.Report
+	tr.Outcome, tr.Report, tr.Summary = a.Status, a.Report, summary
 	return "Finished.", true
 }
 

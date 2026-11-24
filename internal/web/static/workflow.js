@@ -463,6 +463,13 @@
     var step = form.elements['closing'];
     if (!custom) { step.value = opt.dataset.closing || ''; }
     step.disabled = !custom;
+    // The preset's starting Additional instructions go in an empty box, or one that still holds the
+    // previous preset's, which the person has not touched.
+    var extra = form.elements['system_prompt'], was = sel.dataset.prevAdditional;
+    if (was === undefined) { var first = sel.querySelector('option[selected]'); was = first ? first.dataset.additional || '' : ''; }
+    var now = custom ? '' : opt.dataset.additional || '';
+    if (!custom && (extra.value.trim() === '' || extra.value === was)) { extra.value = now; }
+    sel.dataset.prevAdditional = now;
     form.querySelectorAll('[data-when-report]').forEach(function (el) { el.hidden = step.value !== 'report'; });
   });
   modal.addEventListener('submit', function (e) {

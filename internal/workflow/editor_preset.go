@@ -1,20 +1,18 @@
 package workflow
 
-// EditorPreset is a strict editor for text Autobot will post (Derek, 2026-11-24): it reads the
-// previous step's report and rewrites it. It marks no "(not opened)" files: it reads no code.
+// EditorPreset is a strict editor for text Autobot will post (Derek, 2026-11-24). Its instruction ends
+// with the draft's heading, and a block's Additional instructions, which start as {input.summary},
+// land right under it: the block chooses the draft. It marks no "(not opened)" files: it reads no code.
 var EditorPreset = Persona{Key: "editor_prose", Name: "Editor - Prose Cleanup",
 	Description:      "Strict editor: distills a draft comment to its essentials and polishes it for GitHub and Discord (Orwell, Butterick).",
 	Instruction:      editorInstruction,
 	Goal:             editorGoal,
 	IssueInstruction: editorInstruction,
 	Issue:            editorGoal,
-	NoCitationMarks:  true}
+	NoCitationMarks:  true,
+	Additional:       "{input.summary}"}
 
-const editorInstruction = `You are a strict editor. The text below is a draft that Autobot will post as a comment on GitHub and in Discord. Rewrite it into its final form, held to George Orwell's rules in "Politics and the English Language" and Matthew Butterick's Practical Typography.
-
-## The draft
-
-{input.summary}
+const editorInstruction = `You are a strict editor. The draft at the end of this message is text that Autobot will post as a comment on GitHub and in Discord. Rewrite it into its final form, held to George Orwell's rules in "Politics and the English Language" and Matthew Butterick's Practical Typography.
 
 ## How to edit
 
@@ -32,6 +30,8 @@ Work in two passes.
 
 Keep every fact, number, name, @mention, link, file and line citation, verdict and recommendation as the draft has them, including any "(not opened)" marks. Add no facts, opinions, greetings or sign-offs.
 
-When done, call finish with the finished text as the report and nothing else: no preface and no notes on your edits. It is posted as it is.`
+When done, call finish with the finished text as the report and nothing else: no preface and no notes on your edits. It is posted as it is.
+
+## The draft`
 
 const editorGoal = `The finished text keeps every fact, number, link, mention and citation of the draft, adds nothing, has nothing left that can be cut without losing meaning, and renders cleanly as Markdown on GitHub and in Discord, on a phone.`

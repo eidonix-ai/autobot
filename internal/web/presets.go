@@ -25,7 +25,7 @@ func presetRows(list []workflow.Persona) []store.Preset {
 	var rows []store.Preset
 	for _, p := range list {
 		rows = append(rows, store.Preset{Key: p.Key, Name: p.Name, Description: p.Description, PRInstruction: p.Instruction, PRGoal: p.Goal, PRSummary: p.Summary,
-			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks})
+			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks, Additional: p.Additional})
 	}
 	return rows
 }
@@ -61,7 +61,7 @@ func presetRenames() []store.PresetRename {
 // asPersona is a stored preset as a block uses it.
 func asPersona(p *store.Preset) *workflow.Persona {
 	return &workflow.Persona{Key: p.Key, Name: p.Name, Description: p.Description, Instruction: p.PRInstruction, Goal: p.PRGoal, Summary: p.PRSummary,
-		IssueInstruction: p.IssueInstruction, Issue: p.IssueGoal, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks}
+		IssueInstruction: p.IssueInstruction, Issue: p.IssueGoal, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks, Additional: p.Additional}
 }
 
 // resolved gives a block's settings the preset their key names, as the database has it now. A key
@@ -173,10 +173,10 @@ func switchToCustom(sg store.StoredGraph, p *store.Preset) (string, bool, error)
 // checkPresetTexts refuses a preset whose texts use a tag a block could not fill: only the built-in
 // tags are known to a preset, as the pull request's or the issue's own.
 func checkPresetTexts(p *store.Preset) error {
-	if err := workflow.CheckTemplates(workflow.PR, nil, p.PRInstruction, p.PRGoal, p.PRSummary); err != nil {
+	if err := workflow.CheckTemplates(workflow.PR, nil, p.PRInstruction, p.PRGoal, p.PRSummary, p.Additional); err != nil {
 		return &store.InputError{Msg: "For pull requests: " + err.Error() + "."}
 	}
-	if err := workflow.CheckTemplates(workflow.Issue, nil, p.IssueInstruction, p.IssueGoal, p.IssueSummary); err != nil {
+	if err := workflow.CheckTemplates(workflow.Issue, nil, p.IssueInstruction, p.IssueGoal, p.IssueSummary, p.Additional); err != nil {
 		return &store.InputError{Msg: "For issues: " + err.Error() + "."}
 	}
 	return nil
@@ -253,7 +253,7 @@ func presetFromForm(r *http.Request) store.Preset {
 	f := r.PostForm
 	return store.Preset{Name: f.Get("name"), Description: f.Get("description"), PRInstruction: f.Get("pr_instruction"), PRGoal: f.Get("pr_goal"),
 		PRSummary: strings.TrimSpace(f.Get("pr_summary")), IssueInstruction: f.Get("issue_instruction"), IssueGoal: f.Get("issue_goal"),
-		IssueSummary: strings.TrimSpace(f.Get("issue_summary")), Closing: f.Get("closing"), NoCitationMarks: f.Get("citation_marks") == ""}
+		IssueSummary: strings.TrimSpace(f.Get("issue_summary")), Closing: f.Get("closing"), NoCitationMarks: f.Get("citation_marks") == "", Additional: strings.TrimSpace(f.Get("additional"))}
 }
 
 // presetForm renders the form: empty for a new preset, or filled with p's fields (the stored ones, or
@@ -431,8 +431,8 @@ func (u presetUse) String() string {
 
 // presetOption is one choice of a block's Preset dropdown, with what choosing it shows in the form.
 type presetOption struct {
-	Key, Name, Instruction, Goal, Summary, Closing string
-	Selected                                       bool
+	Key, Name, Instruction, Goal, Summary, Closing, Additional string
+	Selected                                                   bool
 }
 
 // presetGroup is a heading of the dropdown with its choices.
@@ -453,7 +453,7 @@ func (s *Server) presetChoices(u *store.User, kind string, current workflow.Agen
 	for _, p := range all {
 		pers := asPersona(p)
 		o := presetOption{Key: p.Key, Name: p.Name, Instruction: pers.InstructionFor(kind), Goal: pers.GoalFor(kind), Summary: pers.SummaryFor(kind),
-			Closing: p.Closing, Selected: current.Persona == p.Key}
+			Closing: p.Closing, Additional: p.Additional, Selected: current.Persona == p.Key}
 		switch {
 		case p.Shared():
 			shared.Options = append(shared.Options, o)

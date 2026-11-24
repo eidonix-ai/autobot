@@ -21,6 +21,9 @@ func TestEditorPresetIsSeededOnce(t *testing.T) {
 	if err != nil || !ed.Shared() || ed.Name != "Editor - Prose Cleanup" || !ed.NoCitationMarks || ed.Closing != "" || ed.PRInstruction != ed.IssueInstruction {
 		t.Fatalf("the editor preset: %+v %v", ed, err)
 	}
+	if ed.Additional != "{input.summary}" || !strings.HasSuffix(ed.PRInstruction, "## The draft") {
+		t.Fatalf("the editor preset's draft: additional %q, instruction ends %q", ed.Additional, ed.PRInstruction[len(ed.PRInstruction)-30:])
+	}
 	if all, _ := st.Presets(); len(all) != len(workflow.SeedPresets) {
 		t.Fatalf("%d presets, want %d", len(all), len(workflow.SeedPresets))
 	}
@@ -101,6 +104,34 @@ func TestPresetFormCitationMarks(t *testing.T) {
 		if c.Name == "Copy of Marks off" && (c.OwnerID != p.frank.ID || !c.NoCitationMarks) {
 			t.Errorf("the copy: %+v", c)
 		}
+	}
+	// The starting additional instructions are saved, shown, kept by a copy and checked like the other texts.
+	withText := p.create(p.be, "With text", url.Values{"additional": {"  {input.summary}  "}})
+	if withText.Additional != "{input.summary}" {
+		t.Errorf("stored %q", withText.Additional)
+	}
+	if _, page := p.be.get(presetURL(withText, "")); !strings.Contains(page, "Additional instructions to start with") || !strings.Contains(page, ">{input.summary}</textarea>") {
+		t.Errorf("the form does not show the starting text:\n%s", page)
+	}
+	if code, _, _ := p.post(p.bf, presetURL(withText, "/copy"), nil); code != http.StatusSeeOther {
+		t.Fatalf("copy: %d", code)
+	}
+	all, _ = p.st.Presets()
+	for _, c := range all {
+		if c.Name == "Copy of With text" && c.Additional != "{input.summary}" {
+			t.Errorf("the copy: %+v", c)
+		}
+	}
+	bad := p.form("Bad text", url.Values{"additional": {"{no_such_tag}"}, "citation_marks": {"1"}})
+	if code, _, _ := p.post(p.be, "/presets", bad); code != http.StatusBadRequest {
+		t.Errorf("an unknown tag in the starting text: %d", code)
+	}
+	// The block dialog's option carries it, escaped, for the form's script to fill in.
+	p.saveGraph(p.ws, workflow.PR, p.onPreset("ag", "gather_information"))
+	_, dialog := p.be.get("/w/o/r/workflows/pr/nodes/ag")
+	if !strings.Contains(dialog, `value="editor_prose" data-instruction=`) || !strings.Contains(dialog, `data-additional="{input.summary}"`) ||
+		!strings.Contains(dialog, `value="gather_information" data-instruction=`) {
+		t.Errorf("the dialog's options:\n%s", dialog)
 	}
 	// The Editor is a built-in with the box unticked.
 	ed, _ := p.st.PresetByKey("editor_prose")

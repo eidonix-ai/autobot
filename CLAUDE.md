@@ -285,8 +285,12 @@ git only through its environment, never a command line or the mirror's config.
    research and the writing session alike; a block on a preset with it off gets none, and a Custom block always
    does (`EffectiveCitationMarks`, `agent.Config.NoCitationMarks`). "Editor - Prose Cleanup" (`editor_prose`,
    Derek, 2026-11-24, put in once by `SeedPresetsV6`) is a shared preset with it off: a strict editor (Orwell,
-   Butterick) that rewrites the step before's summary (`{input.summary}`) for GitHub and Discord, one text for
-   pull requests and issues, no closing step.
+   Butterick) that rewrites a draft for GitHub and Discord, one text for pull requests and issues, no closing
+   step. A preset also has "Additional instructions to start with" (`additional`, one text for both kinds, checked
+   like the others): when a block chooses the preset in its dialog and its Additional instructions box is empty,
+   or still holds the previous preset's starting text, the box is filled with it (the option's `data-additional`,
+   in workflow.js). The Editor's instruction ends with the heading "## The draft", so the block's Additional
+   instructions land right under it, and its starting text is `{input.summary}`: the block chooses the draft.
    Sub-agents: with "Max sub-agents at a time" above 0 the main agent has `spawn_agent` (title, task),
    which waits for the sub-agent and returns its report, its outcome, an index (no bodies) of its notes
    and the run's totals ("Sub-agents so far: 3 started, 112 turns used."); a call made while that many are

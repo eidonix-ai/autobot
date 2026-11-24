@@ -20,6 +20,8 @@ type Persona struct {
 	Closing               string // the closing step: ClosingReport writes the report from the scratchpad; "" none
 	// NoCitationMarks turns off the "(not opened)" mark after a file the agent cites but never read.
 	NoCitationMarks bool
+	// Additional is what a block's Additional instructions box starts with when it chooses the preset.
+	Additional string
 }
 
 // SummaryFor is the preset's summary format for a workflow of kind.

@@ -163,7 +163,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A test publishes nothing: a [[tag]] shows its link's label and says so.
-	s.fillLinks(ws, itemNumber(values), s.nodeTemplates(n, kind), values, nil)
+	s.fillLinks(s.testLinks(ws, itemNumber(values)), s.nodeTemplates(n, kind), values)
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize

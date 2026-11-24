@@ -71,8 +71,18 @@ ALTER TABLE agent_runs    ADD COLUMN stopped_by TEXT    NOT NULL DEFAULT '';
 ALTER TABLE agent_runs    ADD COLUMN stopped_at INTEGER NOT NULL DEFAULT 0;
 `
 
+// schemaDryCases: a dry run has a case file of its own. The cases table's key is (workspace, number), and
+// SQLite cannot change a table's constraints without rebuilding it (and its five children), so a
+// dry-run case keeps the key free by storing minus its run's id in number, and the item's number in
+// item; it is read back as the item's (see scanCase). So no lookup by an item's number can find one.
+const schemaDryCases = `
+ALTER TABLE cases ADD COLUMN dry_run_of INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cases ADD COLUMN item       INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX cases_by_dry_run ON cases (dry_run_of) WHERE dry_run_of != 0;
+`
+
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped, schemaDryCases}
 
 const schemaV1 = `
 CREATE TABLE users (

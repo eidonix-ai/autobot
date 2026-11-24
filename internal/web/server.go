@@ -220,6 +220,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/members/{username}", s.auth(s.memberPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/cases", s.auth(s.casesPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/cases/{number}", s.auth(s.casePage))
+	s.mux.Handle("GET /w/{owner}/{repo}/dry-cases/{run}", s.auth(s.dryCasePage))
 	s.mux.Handle("GET /w/{owner}/{repo}/cases/{number}/edit", s.auth(s.caseEdit))
 	s.mux.Handle("POST /w/{owner}/{repo}/cases/{number}", s.auth(s.caseSave))
 	// Read by contributors' agents: public repositories' cases by uuid; private ones with the secret.

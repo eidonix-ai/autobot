@@ -5,6 +5,7 @@
 <div id="run-status" data-live>
 <p class="status"><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
   {{if eq .Run.Status "running"}}Running{{else if eq .Run.Status "done"}}Finished{{else if eq .Run.Status "stopped"}}Stopped{{else}}Failed{{end}} · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if eq .Run.Status "stopped"}} · stopped by {{.Run.StoppedBy}} {{ts .Run.StoppedAt}}{{end}}</p>
+{{with .DryCase}}<p><a href="{{$.WS.Path}}/dry-cases/{{$.Run.ID}}">Case file (dry run)</a></p>{{end}}
 {{if eq .Run.Status "running"}}<form method="post" action="{{.WS.Path}}/workflow-runs/{{.Run.ID}}/stop" class="row">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <button class="danger">Stop</button>

@@ -17,24 +17,36 @@ import (
 // the live case file, and publishes nothing.
 
 // publisher keeps a tag's value as a page and returns its uuid; nil where nothing may be published
-// (a test of one block from the canvas, a dry run).
+// (a test of one block from the canvas).
 type publisher func(tag, content string) (string, error)
 
-// runPublisher publishes into the case of the item the run is on, opening it if it has none; none for a dry run.
-func (s *Server) runPublisher(rs *runState) publisher {
-	if rs.run.DryRun {
-		return nil
+// links are what a template's [[links]] need: where to publish, and the case [[case]] points to.
+type links struct {
+	publish publisher                   // nil where nothing is published
+	caseOf  func() (*store.Case, error) // the case file [[case]] links to, if it is open
+}
+
+// runLinks are a run's: its pages are published into its case file (the item's, opened if it has none;
+// a dry run's own, which it deletes with them), and [[case]] is that file.
+func (s *Server) runLinks(rs *runState) links {
+	return links{
+		publish: func(tag, content string) (string, error) {
+			c, err := s.runCase(rs)
+			if errors.Is(err, store.ErrNotFound) {
+				c, err = s.caseForRun(rs)
+			}
+			if err != nil {
+				return "", err
+			}
+			return s.st.Publish(c, tag, content)
+		},
+		caseOf: func() (*store.Case, error) { return s.runCase(rs) },
 	}
-	return func(tag, content string) (string, error) {
-		c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
-		if errors.Is(err, store.ErrNotFound) {
-			c, err = s.caseForRun(rs)
-		}
-		if err != nil {
-			return "", err
-		}
-		return s.st.Publish(c, tag, content)
-	}
+}
+
+// testLinks are a test of one block's: nothing is published, and [[case]] is the item's case file.
+func (s *Server) testLinks(ws *store.Workspace, number int) links {
+	return links{caseOf: func() (*store.Case, error) { return s.st.CaseByNumber(ws.ID, number) }}
 }
 
 // pageLink is the address of a published page, or "" before the site's public address is known.
@@ -49,26 +61,27 @@ func (s *Server) pageLink(uuid string) string {
 // text as written (which is where workflow.Render looks). A tag's value is taken from values, so call
 // it once they are all there. With no publisher the link shows its label and says nothing was
 // published.
-func (s *Server) fillLinks(ws *store.Workspace, number int, templates []string, values map[string]string, publish publisher) {
+func (s *Server) fillLinks(lk links, templates []string, values map[string]string) {
 	for _, t := range templates {
 		for _, l := range workflow.TemplateLinks(t) {
 			if _, done := values[l.Text]; done {
 				continue
 			}
-			values[l.Text] = s.linkFor(ws, number, l, values, publish)
+			values[l.Text] = s.linkFor(lk, l, values)
 		}
 	}
 }
 
-func (s *Server) linkFor(ws *store.Workspace, number int, l workflow.LinkRef, values map[string]string, publish publisher) string {
+func (s *Server) linkFor(lk links, l workflow.LinkRef, values map[string]string) string {
 	if l.Name == "case" {
-		if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
+		if c, err := lk.caseOf(); err == nil {
 			if link := s.caseLink(c); link != "" {
 				return "[" + l.Label + "](" + link + ")"
 			}
 		}
 		return l.Label + " (not opened yet)"
 	}
+	publish := lk.publish
 	switch {
 	case publish == nil:
 		return l.Label + " (not published in a test)"

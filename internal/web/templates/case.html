@@ -2,7 +2,8 @@
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
 <div class="titlebar">
   <h1>{{.Case.Label}}: {{.Case.Title}}</h1>
-  <a class="button secondary" href="{{.WS.Path}}/cases/{{.Case.Number}}/edit">Edit</a>
+  {{if .Case.DryRunOf}}<a class="button secondary" href="{{.WS.Path}}/workflow-runs/{{.Case.DryRunOf}}">The dry run</a>
+  {{else}}<a class="button secondary" href="{{.WS.Path}}/cases/{{.Case.Number}}/edit">Edit</a>{{end}}
 </div>
 <article class="panel markdown">{{.HTML}}</article>
 

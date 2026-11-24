@@ -188,6 +188,12 @@ ul.models .model { overflow: hidden; text-overflow: ellipsis; white-space: nowra
   background: var(--text); color: var(--bg); pointer-events: none; opacity: 0; z-index: 10;
 }
 .info:hover::after, .info:focus::after { opacity: 1; }
+/* In a modal the note opens below its (i), wrapped and at most as wide as the dialog leaves room for, so it is
+   never cut at the dialog's edge (workflow.js sets --tip-max and --tip-left from where the icon is, and
+   tip-above where there is no room below). */
+.modal .info::after { left: var(--tip-left, 0); right: auto; top: calc(100% + 0.35rem); bottom: auto;
+  width: max-content; max-width: var(--tip-max, 18rem); white-space: normal; line-height: 1.35; }
+.modal .info.tip-above::after { top: auto; bottom: calc(100% + 0.35rem); }
 
 /* A card that opens its full page when clicked anywhere; links and (i)s inside stay their own. */
 .panel.tile { position: relative; transition: border-color 0.15s; }

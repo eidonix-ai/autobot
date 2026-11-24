@@ -380,6 +380,30 @@
   }
 
   modal.addEventListener('click', function (e) { if (e.target.closest('[data-close]')) { modal.hidePopover(); } });
+
+  // An (i)'s note opens inside the dialog: wrapped, as wide as the dialog allows, shifted left when the
+  // icon is near the right edge, and above the icon when there is more room there.
+  function placeTip(e) {
+    var icon = e.target.closest && e.target.closest('.info');
+    if (!icon) { return; }
+    var m = modal.getBoundingClientRect(), r = icon.getBoundingClientRect();
+    var max = Math.min(288, m.width - 24), below = m.bottom - r.bottom, above = r.top - m.top;
+    icon.style.setProperty('--tip-max', max + 'px');
+    icon.style.setProperty('--tip-left', Math.min(0, m.right - 12 - (r.left + max)) + 'px');
+    icon.classList.toggle('tip-above', below < 110 && above > below);
+  }
+  modal.addEventListener('mouseover', placeTip);
+  modal.addEventListener('focusin', placeTip);
+
+  // A refused save leaves its message in the dialog and on the bar; closing the dialog without saving
+  // takes the bar's message away, since there is nothing left to see or save.
+  var refused = '';
+  modal.addEventListener('toggle', function (e) {
+    if (e.newState === 'closed' && refused) {
+      if (statusEl.textContent === refused) { show(''); }
+      refused = '';
+    }
+  });
   // An agent's preset fills its Instruction and Done when, read-only; Custom unlocks them, starting
   // from the text that was there.
   modal.addEventListener('change', function (e) {
@@ -437,13 +461,18 @@
           state.version = body.version; state.summaries = body.summaries; state.names = body.names;
           state.outputs = body.outputs; state.continues = body.continues;
           syncPorts(id, body.links || []);
+          refused = '';
           Object.keys(idToDf).forEach(setSummary); modal.hidePopover(); show('Saved');
         });
       }
       if (resp.headers.get('Content-Type').indexOf('application/json') === 0) {
         return resp.json().then(function (body) { show(body.error, true); if (resp.status === 409) { offerReload(); } modal.hidePopover(); });
       }
-      return resp.text().then(function (html) { modal.innerHTML = html; show('Not saved: see the settings.', true); });
+      return resp.text().then(function (html) {
+        modal.innerHTML = html;
+        refused = (state.names[id] || 'This block') + ': settings not saved (see the message in the dialog)';
+        show(refused, true);
+      });
     }).catch(function () { show('Not saved: Autobot could not be reached.', true); });
   });
 })();

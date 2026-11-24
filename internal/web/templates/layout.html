@@ -48,3 +48,5 @@
 <dl>{{range .Tags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{if .Auto}}<span class="auto" title="Filled in by Autobot; it cannot be set">auto</span> {{end}}{{.About}}</dd>{{end}}
 {{range .OutputTags}}<dt{{if .Field}} class="field"{{end}}><code>{{"{"}}{{.Name}}{{"}"}}</code></dt><dd>{{.About}}</dd>{{end}}</dl>
 </details>{{end}}
+{{define "outputto"}}<label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="The tag this step's output is kept under, such as {{"{"}}{{.OutputTo}}{{"}"}}: any later step can use it. {{if eq .Type.Type "agent"}}Its parts are .summary, .report and .scratchpad ({{"{"}}{{.OutputTo}}.report{{"}"}}). {{end}}Kept per pull request or issue; a later run replaces it. Renaming the block does not change it.">ⓘ</span></span>
+  <input name="output_to" value="{{.OutputTo}}" maxlength="40" autocomplete="off" spellcheck="false"></label>{{end}}

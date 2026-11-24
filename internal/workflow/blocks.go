@@ -19,8 +19,8 @@ const (
 // GitHubCommentSettings are a GitHub Comment node's settings. In a trial run nothing is posted:
 // the comment it would have posted goes into the case file instead, to be read first.
 type GitHubCommentSettings struct {
-	Message string `json:"message"`  // a template
-	Trial   bool   `json:"trial"`    // write what would be posted to the case file; post nothing
+	Message string `json:"message"` // a template
+	Trial   bool   `json:"trial"`   // write what would be posted to the case file; post nothing
 }
 
 // DefaultGitHubComment is a new GitHub Comment node's settings: a trial, until someone decides.
@@ -56,6 +56,8 @@ type ConditionSettings struct {
 	Contains  string `json:"contains,omitempty"`   // the title or description contains this (any case)
 	Tag       string `json:"tag,omitempty"`        // an output tag ...
 	TagHas    string `json:"tag_has,omitempty"`    // ... contains this (any case)
+
+	OutputTo string `json:"output_to,omitempty"` // what each rule found, as a tag
 }
 
 // DefaultCondition is a new Condition node's settings.
@@ -99,7 +101,7 @@ func (s ConditionSettings) Check(kind string) error {
 // ConditionFromForm reads a Condition node's settings from its form: each rule's box, then its value.
 func ConditionFromForm(get func(string) string) ConditionSettings {
 	on := func(k string) bool { return get("on_"+k) == "on" }
-	s := ConditionSettings{Match: get("match")}
+	s := ConditionSettings{Match: get("match"), OutputTo: strings.TrimSpace(get("output_to"))}
 	if on("files") {
 		s.Files = strings.TrimSpace(get("files"))
 	}
@@ -219,6 +221,8 @@ type TestRunSettings struct {
 	Script  string `json:"script"` // a template; bash, with -e and -x
 	GPUs    int    `json:"gpus"`
 	Minutes int    `json:"minutes"`
+	// OutputTo keeps the run's summary and the end of its output as a tag.
+	OutputTo string `json:"output_to,omitempty"`
 }
 
 // DefaultTestRun is a new Test Run node's settings.
@@ -246,7 +250,7 @@ func (s TestRunSettings) Check() error {
 
 // TestRunFromForm reads a Test Run node's settings from its form.
 func TestRunFromForm(get func(string) string) TestRunSettings {
-	s := TestRunSettings{Script: strings.TrimSpace(get("script"))}
+	s := TestRunSettings{Script: strings.TrimSpace(get("script")), OutputTo: strings.TrimSpace(get("output_to"))}
 	s.Machine, _ = strconv.ParseInt(get("machine"), 10, 64)
 	s.GPUs, _ = strconv.Atoi(get("gpus"))
 	s.Minutes, _ = strconv.Atoi(get("minutes"))
@@ -299,6 +303,8 @@ func (s DiscordPostSettings) Check() error {
 type ApprovalSettings struct {
 	Request string `json:"request"` // a template
 	Hours   int    `json:"hours"`
+	// OutputTo keeps the answer (who gave it, and when) as a tag.
+	OutputTo string `json:"output_to,omitempty"`
 }
 
 // DefaultApproval is a new Human Approval node's settings, for a workflow of kind.

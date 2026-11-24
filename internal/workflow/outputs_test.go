@@ -16,10 +16,10 @@ func TestCheckTemplatesOutputParts(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ tpl, want string }{
-		{"{verdict.report}", "decision's output is one value"},
+		{"{verdict.report}", "this one is one value"},
 		{"{gather.notes}", "see the Tags list"},
 		{"{gather:report}", "use a dot, such as {gather.report}"},
-		{"{verdict:report}", "decision's output is one value"},
+		{"{verdict:report}", "this one is one value"},
 		{"{nope.report}", "not another step's output tag"},
 		{"{pr.title}", "use a colon"},
 		{"{pr:titel}", "fields of {pr}"},
@@ -40,8 +40,9 @@ func TestCheckTemplatesOutputParts(t *testing.T) {
 	}
 }
 
-// {input} is what the step before produced, in every kind of workflow, with its parts; the old
-// name {previous_output} is still accepted and still means the report, but is not listed.
+// {input} is what the step before produced, in every kind of workflow, with its parts; it and the
+// old name {previous_output} are still accepted and still mean the same, but neither is listed
+// any more: every step's output is kept under its own tag.
 func TestInputTag(t *testing.T) {
 	for _, kind := range []string{PR, Issue} {
 		if err := CheckTemplates(kind, nil, "{input} {input.summary} {input.report} {input.scratchpad} {previous_output}"); err != nil {
@@ -54,13 +55,17 @@ func TestInputTag(t *testing.T) {
 		if _, ok := listed["previous_output"]; ok {
 			t.Errorf("%s: the old name is listed", kind)
 		}
-		if listed["input"].Name == "" || listed["input"].Field() || listed["input"].Auto {
-			t.Errorf("%s: {input} %+v", kind, listed["input"])
-		}
-		for part, about := range map[string]string{"input.summary": "the summary", "input.report": "the full report", "input.scratchpad": "its notes in full"} {
-			if tag := listed[part]; tag.Name == "" || !tag.Field() || tag.Auto || tag.About != about {
-				t.Errorf("%s: {%s} %+v", kind, part, tag)
+		for _, name := range []string{"input", "input.summary", "input.report", "input.scratchpad"} {
+			if _, ok := listed[name]; ok {
+				t.Errorf("%s: {%s} is listed", kind, name)
 			}
+		}
+		all := map[string]Tag{}
+		for _, tag := range AllTags(kind) {
+			all[tag.Name] = tag
+		}
+		if all["input"].Name == "" || all["input"].Field() || all["input"].Auto {
+			t.Errorf("%s: {input} %+v", kind, all["input"])
 		}
 	}
 	if CanonicalTag("previous_output", PR) != "input.report" {
@@ -97,7 +102,9 @@ func TestOutputTagList(t *testing.T) {
 	a.OutputTo, d.OutputTo = "gather", "verdict"
 	ab, _ := json.Marshal(a)
 	db, _ := json.Marshal(d)
-	g := Graph{Nodes: []Node{{ID: "e", Type: "pr_ready"}, {ID: "a", Type: Agent, Settings: ab}, {ID: "d", Type: Decision, Settings: db}, {ID: "z", Type: Agent}}}
+	// The steps before z: e → a, e → d, a → z, d → z.
+	g := Graph{Nodes: []Node{{ID: "e", Type: "pr_ready"}, {ID: "a", Type: Agent, Settings: ab}, {ID: "d", Type: Decision, Settings: db}, {ID: "z", Type: Agent}},
+		Links: []Link{{"e", "out", "a", "in"}, {"e", "out", "d", "in"}, {"a", "out", "z", "in"}, {"d", "yes", "z", "in"}}}
 	outs := g.OutputTags(PR, "z")
 	if !outs["gather"] || outs["verdict"] || len(outs) != 2 {
 		t.Fatalf("%v", outs)
@@ -113,8 +120,17 @@ func TestOutputTagList(t *testing.T) {
 	if strings.Join(got, ";") != want {
 		t.Fatalf("got  %s\nwant %s", strings.Join(got, ";"), want)
 	}
-	// A node's own output is not offered back to it.
-	if len(g.OutputTags(PR, "a")) != 1 {
-		t.Error("a node's own output is offered to it")
+	// A node is offered the output of the steps before it only: not its own, and not a step after it.
+	if got := g.OutputTags(PR, "a"); len(got) != 0 {
+		t.Errorf("a is offered %v", got)
+	}
+	if got := g.OutputTags(PR, "d"); len(got) != 0 {
+		t.Errorf("d is offered %v", got)
+	}
+	// z has no tag saved: it is offered as its name's once something runs after it.
+	g.Nodes = append(g.Nodes, Node{ID: "y", Type: Agent, Name: "Last"})
+	g.Links = append(g.Links, Link{"z", "out", "y", "in"})
+	if got, isDecision := g.OutputTags(PR, "y"), func(m OutputSet) bool { _, ok := m["verdict"]; return ok }; len(got) != 3 || !got["agent"] || !got["gather"] || !isDecision(got) {
+		t.Errorf("y is offered %v", got)
 	}
 }

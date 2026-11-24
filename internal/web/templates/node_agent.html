@@ -67,8 +67,7 @@
         <option value="">No check</option>
         {{range .Verifiers}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
-    <label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="Saves the final report as a tag other steps can use, such as {value_summary}. Kept per pull request or issue; a later run replaces it.">ⓘ</span></span>
-      <input name="output_to" value="{{.S.OutputTo}}" placeholder="value_summary" maxlength="40" autocomplete="off" spellcheck="false"></label>
+    {{template "outputto" .}}
   </div>
   <div class="row">
     <label>Turn limit <input type="number" name="max_turns" min="1" max="500" value="{{.S.MaxTurns}}"></label>

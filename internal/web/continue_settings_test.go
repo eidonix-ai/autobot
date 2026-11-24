@@ -111,7 +111,7 @@ func TestReferenceBlocks(t *testing.T) {
 		{"id": "rr", "type": "agent", "x": 3, "y": 3, "continue_of": "aa"}, {"id": "evone", "type": "pr_ready"}}
 	code, answer := c.layout(nodes, []workflow.Link{})
 	if code != 200 || answer["continues"].(map[string]any)["rr"] != "continues Reviewer" || answer["continues"].(map[string]any)["bb"] != "continues Reviewer" ||
-		answer["summaries"].(map[string]any)["rr"] != "" {
+		answer["summaries"].(map[string]any)["rr"] != "→ {agent}" {
 		t.Fatalf("layout %d: %v", code, answer)
 	}
 	if r := c.storedNode("rr"); r.ContinueOf != "aa" || r.Model != model || r.Persona == "" {

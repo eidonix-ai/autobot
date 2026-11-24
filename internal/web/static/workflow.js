@@ -245,7 +245,9 @@
         state.outputs = r.body.outputs; state.continues = r.body.continues;
         Object.keys(sentRefs).forEach(function (id) { delete newRefs[id]; });
         Object.keys(idToDf).forEach(setSummary);
-        show('Saved');
+        // A block that now uses a tag of a step that does not run before it is marked; the layout is saved anyway.
+        var bad = Object.keys(r.body.problems || {}).map(function (id) { return state.names[id] || id; });
+        if (bad.length) { show('Saved. Check the settings of ' + bad.join(', ') + ': a template uses a tag from a step that does not run before it.', true); } else { show('Saved'); }
       } else {
         show(r.body.error || 'Not saved.', true);
         if (r.status === 409) { offerReload(); }

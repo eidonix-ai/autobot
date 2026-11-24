@@ -105,13 +105,13 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		values = map[string]string{}
 	}
 	about := map[string]string{}
-	for _, tag := range workflow.Tags(kind) {
+	for _, tag := range workflow.AllTags(kind) {
 		about[tag.Name] = tag.About
 	}
 	var fields []tagField
 	// A field is filled from its parent, as a workflow run does: only the parent ({pr}, the link) is
 	// asked, and {repo} is the workspace's.
-	seen := map[string]bool{"repo": true, "case_link": true}
+	seen := map[string]bool{"repo": true, "case": true} // filled from the workspace and the item's case file
 	for _, tpl := range templates {
 		for _, tag := range workflow.TemplateTags(tpl) {
 			tag = workflow.CanonicalTag(tag, kind)
@@ -531,7 +531,9 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 		set(k, v)
 	}
 	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
-		set(workflow.ItemTag(kind)+":case_file", c.Contents)
+		for k, v := range s.caseTags(kind, c) {
+			set(k, v)
+		}
 	}
 	return nil
 }

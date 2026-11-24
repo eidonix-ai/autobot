@@ -637,4 +637,3 @@ func (c *Client) Comment(ctx context.Context, token, name string, number int, bo
 	err := c.send(ctx, http.MethodPost, token, fmt.Sprintf("/repos/%s/issues/%d/comments", name, number), map[string]string{"body": body}, &out)
 	return out.ID, out.HTMLURL, err
 }
-

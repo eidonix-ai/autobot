@@ -17,6 +17,16 @@
 </div>
 
 <section class="panel">
+<h2>Public address</h2>
+<form method="post" action="/admin/site-address" class="stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label><span class="lbl">The address this site is reached at <span class="info" tabindex="0" data-tip="Links to Autobot in a workflow run, such as the case file's, are built from it. Empty, it is filled in from the first signed-in visit.">ⓘ</span></span>
+    <input name="address" value="{{.Address}}" placeholder="https://autobot.example.com" autocomplete="off" spellcheck="false"></label>
+  <button>Save</button>
+</form>
+</section>
+
+<section class="panel">
 <h2>Add a user</h2>
 <form method="post" action="/admin/users" class="stack">
   <input type="hidden" name="csrf" value="{{.CSRF}}">

@@ -112,11 +112,17 @@ func TestStepSettings(t *testing.T) {
 	if g.Check(PR) == nil {
 		t.Fatal("a link from a choice the decision lacks passed")
 	}
-	// Other steps' output tags are known; a node's own is not offered back to it.
+	// A step's tag is offered to the steps after it only: not to itself, nor to a step before it.
 	a.OutputTo = "value_summary"
 	ab, _ := json.Marshal(a)
 	g.Nodes[2].Settings = ab
-	if !g.OutputTags(PR, "d")["value_summary"] || g.OutputTags(PR, "a")["value_summary"] {
-		t.Fatal("output tags")
+	if _, offered := g.OutputTags(PR, "d")["value_summary"]; offered {
+		t.Fatal("a step is offered the tag of one after it")
+	}
+	if _, offered := g.OutputTags(PR, "a")["value_summary"]; offered {
+		t.Fatal("a step is offered its own tag")
+	}
+	if _, offered := g.OutputTags(PR, "a")["decision"]; !offered {
+		t.Fatal("a step is not offered the tag of the one before it")
 	}
 }

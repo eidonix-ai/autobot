@@ -73,3 +73,14 @@ func (s *Store) SetDiscordPost(caseUUID, thread, summary string) error {
 		ON CONFLICT (case_uuid) DO UPDATE SET thread_id = excluded.thread_id, summary_id = excluded.summary_id`, caseUUID, thread, summary)
 	return err
 }
+
+// SetSettingIfEmpty stores an instance setting only when it has none (or an empty one), as one
+// step, so of several requests racing to fill it exactly one wins. It reports whether this call stored it.
+func (s *Store) SetSettingIfEmpty(key, value string) (bool, error) {
+	res, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE settings.value = ''`, key, value)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}

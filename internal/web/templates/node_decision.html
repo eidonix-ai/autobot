@@ -23,8 +23,7 @@
         <option value="decision"{{if eq .S.Output "decision"}} selected{{end}}>The decision only</option>
         <option value="probabilities"{{if eq .S.Output "probabilities"}} selected{{end}}>The decision and each choice's probability</option>
       </select></label>
-    <label><span class="lbl">Output to <span class="info" tabindex="0" data-tip="Saves the decision as a tag other steps can use, such as {value_decision}. Kept per pull request or issue; a later run replaces it.">ⓘ</span></span>
-      <input name="output_to" value="{{.S.OutputTo}}" placeholder="value_decision" maxlength="40" autocomplete="off" spellcheck="false"></label>
+    {{template "outputto" .}}
   </div>
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>

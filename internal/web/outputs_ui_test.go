@@ -29,7 +29,7 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 		{ID: "ag", Type: workflow.Agent, Name: "Gatherer", Settings: raw(a)},
 		{ID: "de", Type: workflow.Decision, Settings: raw(d)},
 		{ID: "ce", Type: workflow.CaseEntry, Settings: raw(ce)},
-	}, Links: []workflow.Link{}}
+	}, Links: []workflow.Link{{From: "de", Out: "yes", To: "ag", In: "in"}, {From: "ag", Out: "out", To: "ce", In: "in"}}}
 	if _, err := e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(raw(g)), derek); err != nil {
 		t.Fatal(err)
 	}
@@ -47,16 +47,15 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 		`<dt class="field"><code>{gather.report}</code></dt><dd>the full report</dd>`,
 		`<dt class="field"><code>{gather.scratchpad}</code></dt><dd>its notes in full</dd>`,
 		`<dt><code>{verdict}</code></dt><dd>another step&#39;s output</dd>`,
-		`<dt><code>{input}</code></dt><dd>what the step before produced: its summary, report and notes</dd>`,
-		`<dt class="field"><code>{input.summary}</code></dt><dd>the summary</dd>`,
-		`<dt class="field"><code>{input.report}</code></dt><dd>the full report</dd>`,
-		`<dt class="field"><code>{input.scratchpad}</code></dt><dd>its notes in full</dd>`,
+		`<dt><code>{case}</code></dt><dd><span class="auto" title="Filled in by Autobot; it cannot be set">auto</span> the item&#39;s case file so far</dd>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the Tags list lacks %s", want)
 		}
 	}
-	for _, not := range []string{"{verdict.", "{previous_output}</code></dt>", `{gather.summary}</code></dt><dd><span class="auto"`} {
+	// {input} and its parts, and the old {previous_output}, are no longer listed (templates that use them still work).
+	for _, not := range []string{"{verdict.", "{previous_output}</code></dt>", `{gather.summary}</code></dt><dd><span class="auto"`,
+		"<code>{input}</code>", "<code>{input.summary}</code>", "<code>{input.report}</code>", "<code>{input.scratchpad}</code>"} {
 		if strings.Contains(body, not) {
 			t.Errorf("the Tags list has %s", not)
 		}
@@ -87,7 +86,7 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 	for tpl, want := range map[string]string{
 		"{gather.notes}":   "see the Tags list for the parts of {gather}",
 		"{gather:report}":  "use a dot, such as {gather.report}",
-		"{verdict.report}": "decision&#39;s output is one value",
+		"{verdict.report}": "this one is one value",
 		"{pr.title}":       "use a colon",
 	} {
 		code, _, out := b.post(base+"ce", url.Values{"csrf": {tok}, "name": {"Case entry"}, "entry": {tpl}, "finalize": {"on"}, "version": {"0"}})

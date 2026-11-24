@@ -378,11 +378,14 @@ func (s *Server) drive(rs *runState) {
 				for _, l := range fired {
 					sources = append(sources, source{nodes[l.From], steps[l.From]})
 				}
+				// The tags every step that has finished has kept, so far: this step sees them all, whether
+				// they came down its own branch or another, and the run goes on adding to the map.
+				tags := maps.Clone(rs.tags)
 				go func(n workflow.Node, sources []source) {
 					o := stepOutcome{err: errors.New("the step crashed")}
 					defer func() { results <- finished{n.ID, o} }()
 					defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
-					o = s.runStep(rs, n, sources)
+					o = s.runStep(rs, n, sources, tags)
 				}(n, sources)
 			}
 		}
@@ -463,25 +466,13 @@ func (s *Server) stepParts(rs *runState, src source) map[string]string {
 	return map[string]string{"": out, ".summary": out, ".report": out, ".scratchpad": ""}
 }
 
-// outputTo is a node's output tag, or "".
-func outputTo(n workflow.Node, kind string) string {
-	switch n.Type {
-	case workflow.Agent:
-		a, _ := workflow.AgentSettingsOf(n, kind)
-		return a.OutputTo
-	case workflow.Decision:
-		d, _ := workflow.DecisionSettingsOf(n, kind)
-		return d.OutputTo
-	}
-	return ""
-}
-
-// keepTag stores a finished step's output under its output tag: for the rest of the run, and for
-// the case unless the run is dry. An Agent's output has parts (parts, by suffix: "" is the tag
-// itself, ".summary" and so on), each kept under the tag's name and the suffix; any other step
-// has just its output. Every one replaces the value the last write left.
+// keepTag stores a finished step's output under its output tag (its own, or its name's: see
+// OutputNames): for the rest of the run, and for the case unless the run is dry. An Agent's output
+// has parts (parts, by suffix: "" is the tag itself, ".summary" and so on), each kept under the
+// tag's name and the suffix; any other step has just its output. Every one replaces the value the
+// last write left.
 func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map[string]string) {
-	name := outputTo(n, rs.run.Kind)
+	name := rs.g.OutputNames(rs.run.Kind)[n.ID]
 	if name == "" {
 		return
 	}
@@ -532,10 +523,11 @@ type stepOutcome struct {
 	tags map[string]string
 }
 
-// runStep runs one step with the run's tags and the output of the steps before it.
-func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOutcome {
+// runStep runs one step with the tags kept so far (those of the case and of the steps of this run
+// that have finished) and the output of the steps linked into it.
+func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
 	values := map[string]string{}
-	for k, v := range rs.tags {
+	for k, v := range tags {
 		values[k] = v
 	}
 	for k, v := range rs.builtIn {
@@ -544,7 +536,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 	maps.Copy(values, s.inputValues(rs, sources))
 	kind := rs.run.Kind
 	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
-		values[workflow.ItemTag(kind)+":case_file"] = c.Contents
+		maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}
 	}
 	limit := 4 * time.Hour
 	if n.Type == workflow.Approval {
@@ -614,7 +606,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 		if err != nil {
 			return stepOutcome{err: err}
 		}
-		f := workflow.ItemFacts{Author: rs.it.author, Association: rs.it.assoc, Labels: rs.it.labels, Title: rs.it.title, Body: rs.it.body, Tags: rs.tags}
+		f := workflow.ItemFacts{Author: rs.it.author, Association: rs.it.assoc, Labels: rs.it.labels, Title: rs.it.title, Body: rs.it.body, Tags: tags}
 		for _, cf := range rs.it.files {
 			f.Files, f.Lines = append(f.Files, cf.Path), f.Lines+cf.Additions+cf.Deletions
 		}

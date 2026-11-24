@@ -33,7 +33,7 @@ func TestContinuationSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The block's line on the canvas does not ask for a model it does not have.
-	if got := stepSummary(Node{Type: Agent, Settings: []byte(`{"continue_of":"x","persona":"custom","output_to":"again"}`)}, PR, func(ModelRef) string { return "m" }); got != "→ {again}" {
+	if got := stepSummary(Node{Type: Agent, Settings: []byte(`{"continue_of":"x","persona":"custom","output_to":"again"}`)}, PR, "again", func(ModelRef) string { return "m" }); got != "→ {again}" {
 		t.Fatalf("summary %q", got)
 	}
 }

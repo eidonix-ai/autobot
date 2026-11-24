@@ -19,6 +19,7 @@
     <label>GPUs <input type="number" name="gpus" min="0" max="8" value="{{.S.GPUs}}"></label>
     <label>Time limit (minutes) <input type="number" name="minutes" min="1" max="120" value="{{.S.Minutes}}"></label>
   </div>
+  {{template "outputto" .}}
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

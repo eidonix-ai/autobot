@@ -53,9 +53,11 @@ type Server struct {
 	md        goldmark.Markdown
 	mux       *http.ServeMux
 	ready     atomic.Bool // set once a user exists; users are never deleted, so it never goes back
-	fails     loginFails  // failed sign-ins by account
-	poll      *poller     // what the poller remembers in memory
-	repos     *repo.Mirrors
+	// addressKnown is set once the site's public address is known (see noteSiteAddress).
+	addressKnown atomic.Bool
+	fails        loginFails // failed sign-ins by account
+	poll         *poller    // what the poller remembers in memory
+	repos        *repo.Mirrors
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -210,6 +212,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord", s.auth(s.setForum))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/discord/bot", s.auth(s.saveBot))
 	s.mux.Handle("POST /admin/users", s.admin(s.createUser))
+	s.mux.Handle("POST /admin/site-address", s.admin(s.saveSiteAddress))
 	s.mux.Handle("GET /admin/users/{id}", s.admin(s.userPage))
 	s.mux.Handle("POST /admin/users/{id}", s.admin(s.updateUser))
 
@@ -306,6 +309,7 @@ func (s *Server) auth(next http.HandlerFunc) http.Handler {
 				return
 			}
 		}
+		s.noteSiteAddress(r)
 		// A signed-in page is for this person only: no browser or proxy keeps a copy.
 		w.Header().Set("Cache-Control", "no-store")
 		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, &session{u, csrf, c.Value})))

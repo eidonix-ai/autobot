@@ -527,17 +527,19 @@ var outputParts = []string{"", ".summary", ".report", ".scratchpad"}
 
 // inputValues are the values of {input} and its parts for a step, from the links that fired into
 // it: one step's as they are, several each under the name of the node it came from. Then come the
-// steps linked in whose links did not fire, each under its name with why ("## Correctness (failed:
-// the model could not be reached)", "(skipped)"), so that a step that reads a join knows a source is
-// missing. A step that is not an agent hands on its output, as both its summary and its report, and
+// steps linked in that failed or were stopped, each under its name with why ("## Correctness (failed:
+// the model could not be reached)"), so that a step that reads a join knows a source is missing. A step that is not an agent hands on its output, as both its summary and its report, and
 // has no notes.
 func (s *Server) inputValues(rs *runState, sources []source) map[string]string {
 	var fired, missing []source
 	for _, src := range sources {
-		if src.missing {
-			missing = append(missing, src)
-		} else {
+		switch {
+		case !src.missing:
 			fired = append(fired, src)
+		case src.step.Status == "failed" || src.step.Status == "stopped":
+			// Only a step that broke is named: a branch not taken (skipped, or another output
+			// of a decision) is how routing works, not a gap.
+			missing = append(missing, src)
 		}
 	}
 	all := make([]map[string]string, len(fired))

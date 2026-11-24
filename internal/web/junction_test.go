@@ -103,7 +103,7 @@ func TestNodeJoinWaitsForAllAndNeedsOne(t *testing.T) {
 	if steps["J2"].Status != "skipped" || steps["E2"].Status != "skipped" {
 		t.Errorf("neither fired: the Node %s, E2 %s", steps["J2"].Status, steps["E2"].Status)
 	}
-	if steps["J3"].Status != "done" || steps["E3"].Status != "done" || steps["E3"].Output != "R TEXT\n\n## P (skipped)" {
+	if steps["J3"].Status != "done" || steps["E3"].Status != "done" || steps["E3"].Output != "R TEXT" {
 		t.Errorf("one fired: the Node %+v, E3 %+v", steps["J3"], steps["E3"])
 	}
 }

@@ -50,7 +50,7 @@ func TestInputNamesMissingSteps(t *testing.T) {
 	if steps["bad"].Error == "" {
 		t.Fatal("the failing step has no error")
 	}
-	missing := why + "\n\n## Docs review (skipped)"
+	missing := why // a skipped branch ("Docs review") is not named: only a step that broke is
 	whole := "Style is fine.\n\n" + missing
 	// What fired is as it was, bare when it is one source; the missing follow, named, in each part (and
 	// alone where the fired one had nothing to give, as in the notes).

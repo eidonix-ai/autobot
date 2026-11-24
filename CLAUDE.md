@@ -324,13 +324,43 @@ git only through its environment, never a command line or the mirror's config.
    tags of everything upstream of the Node are upstream of them too. Its card says "connects links".
    Agent and Decision steps write their results into the case file by themselves (Derek, 2026-11-23): a box,
    "Write to the case file", on by default (a block saved before it existed counts as on; the field stored
-   is the inverse, `no_case_entry`), in both dialogs. When such a step finishes in a real run (a dry run and
-   a canvas test write nothing; a failed or skipped step writes nothing) the engine appends a finalized
+   is the inverse, `no_case_entry`), in both dialogs. When such a step finishes in a run (a canvas test
+   writes nothing; a dry run writes into its own case file, below; a failed or skipped step writes nothing) the engine appends a finalized
    contribution under the step's shown name (a reference: "X (continued)"), through the same writeEntry as
    Case Entry, so every run adds an entry and nothing is replaced. An Agent's is a heading, its summary (its
    report when the summary is empty) and a line of links, `[[tag.report|Full report]]` and
    `[[tag.scratchpad|Notes]]` (Notes only when it kept notes), published pages like any `[[ ]]`. A
    Decision's is one line, "Name: choice (confidence): reason".
+   Stop a run (Derek, 2026-11-24: "I have no way to abort a run"): the workflow run page, and the page of an
+   agent run that is one of its steps, have a Stop button while it runs (any member; the agent run page of
+   a canvas test stops just that run). Each run has a cancellable context kept in memory by id
+   (internal/web/stop.go, `Server.running`); every step's and agent's context derives from it, a stop
+   cancels it with `agent.StopError` (who), and the agent harness ends a stopped run at once, as outcome
+   "stopped", with no report written (`agent.IsStopped`; the closing step's own time limits still apply
+   but a stop ends them too). Running steps, waiting approvals and agent runs become "stopped"
+   (`Store.StopWorkflowRun`; the run records `stopped_by` and `stopped_at`), a waiting approval's Discord
+   message is edited to say who stopped the run and its buttons are refused, steps not started never start,
+   and nothing that ends after the stop writes a tag, a case entry or a post (guards in the driver, in
+   writeEntry, keepTag, writeResult and the posting steps). A run not in memory (Autobot restarted) is only
+   marked in the database.
+   A dry run has its own case file (Derek, 2026-11-24): a case flagged `dry_run_of` = the run, titled
+   "<title> (dry run)", opened where a real run would open the item's, with a first line saying it is a
+   dry run (so its page, its public view and the API show it), and it gets everything the real case would:
+   agent and decision entries, Case Entry blocks, approval outcomes, a Post's "would post" text, and the
+   published `[[ ]]` pages; `{case}`, `{case:link}`, `{pr:case_file}` and `[[case]]` are that case within
+   the run. A dry run never reads or writes the item's real case, its values or pages, keeps no tags
+   (in memory only; it starts with none, not the case's), and posts nothing. The cases table stores minus
+   the run's id in `number` (and the item's in `item`), so no lookup by an item's number can find a dry
+   case; `Case.Number` reads back as the item's. Its page is /w/{owner}/{repo}/dry-cases/{run}, linked from
+   the run page; the Cases page lists them after the real ones; the daily retention deletes them, with
+   their pages, 30 days after the run ended.
+   The Runs page, /w/{owner}/{repo}/workflow-runs (linked from the workspace tile and the canvas header):
+   the runs in progress, then the 100 most recent, with item, block, status, dry-run badge, who and when,
+   and below them the recent canvas tests; a case page lists the runs on its item; the lists update in
+   place while anything runs. `{input}` and its parts name, after the steps whose links fired (as before:
+   one bare, several under their names), the steps linked in (through Node blocks too) that did not, each as
+   "## Name (failed: the start of its error)", "(skipped)" or "(took its “x” output)"; the Tags list shows
+   `{input}` again.
    Code review presets (Derek, 2026-11-23): six shared presets, Code Review - All Lenses (the first
    reviewer, five lenses, findings grouped by lens) and one per lens (Correctness, Architecture,
    Conventions, Simplicity, Prose), in internal/workflow/review_presets.go. Each has the packet in its pull

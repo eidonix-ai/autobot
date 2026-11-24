@@ -481,6 +481,9 @@ type ItemSearch struct {
 	Author string
 	Label  string
 	Limit  int
+	// Phrase wants the words together in that order; Any is satisfied by one of them (best match
+	// first). With neither, every word is required, anywhere.
+	Phrase, Any bool
 }
 
 // ItemHit is one item a search found, with the words around the match.
@@ -498,14 +501,21 @@ type ItemHit struct {
 var wordRE = regexp.MustCompile(`[\p{L}\p{N}_]+`)
 
 // matchQuery turns what an agent typed into an FTS5 query that cannot be a syntax error: every
-// word quoted, all required.
-func matchQuery(q string) (string, error) {
+// word quoted, all required; or, with any, each one enough; or, with phrase, the words together in
+// that order ("max-batch" finds "max batch" and "max-batch").
+func matchQuery(q string, phrase, any bool) (string, error) {
 	words := wordRE.FindAllString(q, 20)
 	if len(words) == 0 {
 		return "", &InputError{"give at least one word to search for"}
 	}
+	if phrase {
+		return `"` + strings.Join(words, " ") + `"`, nil
+	}
 	for i, w := range words {
 		words[i] = `"` + w + `"`
+	}
+	if any {
+		return strings.Join(words, " OR "), nil
 	}
 	return strings.Join(words, " "), nil
 }
@@ -544,7 +554,7 @@ func (q ItemSearch) filters(where *strings.Builder, args *[]any) {
 // Search finds items by the words in their titles, bodies and comments, best match first, one hit
 // per item.
 func (x *ItemIndex) Search(q ItemSearch) ([]ItemHit, error) {
-	match, err := matchQuery(q.Query)
+	match, err := matchQuery(q.Query, q.Phrase, q.Any)
 	if err != nil {
 		return nil, err
 	}

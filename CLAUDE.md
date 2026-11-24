@@ -373,6 +373,10 @@ git only through its environment, never a command line or the mirror's config.
    where its key is free.
    The poller (internal/web/poller.go, internal/workflow/poll.go) starts runs for workflows
    switched Live on the canvas (off by default; switching on baselines what is already open).
+   The Pull requests page (`/w/{o}/{r}/items/pr`, tab Issues at `.../items/issue`) lists the local
+   copy's open items and those closed in the last 30 days, with search, state and "Has a case file"
+   filters, the case and the latest run of each, and one Run form per row (event block, dry run on by
+   default) that starts a run as shift-clicking the block does; members only.
    Next: questions in case posts (needs the gateway), sub-agents.
 6. Discord (decided by Derek, 2026-11-23): each workspace has its own bot, installed on its
    project's own server, set up in the workspace's Settings by any member (token sealed per

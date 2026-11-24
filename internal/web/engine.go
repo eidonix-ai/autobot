@@ -755,8 +755,13 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	// A [[tag]] in a template becomes a link to a page that keeps the tag's value as it is now.
 	s.fillLinks(s.runLinks(rs), s.nodeTemplates(n, kind), values)
 	limit := 4 * time.Hour
-	if n.Type == workflow.Approval {
+	switch n.Type {
+	case workflow.Approval:
 		limit = 15 * 24 * time.Hour // a person may take up to two weeks
+	case workflow.Agent:
+		if a, err := workflow.AgentSettingsOf(n, kind); err == nil {
+			limit = agentStepTimeout(a.MaxMinutes)
+		}
 	}
 	ctx, cancel := context.WithTimeout(rs.context(), limit)
 	defer cancel()
@@ -1035,6 +1040,16 @@ func (s *Server) writeEntry(rs *runState, n workflow.Node, text string, finalize
 		_, err = s.st.FinalizeContribution(id)
 	}
 	return err
+}
+
+// agentStepTimeout is the workflow step's timeout for an Agent block: at least 4 hours (covering
+// waiting for an earlier run on the same thread, sandbox setup, the run itself, overtime grace,
+// save turn and closing writer), and scaled up for long MaxMinutes blocks (up to 240m).
+func agentStepTimeout(maxMinutes int) time.Duration {
+	if maxMinutes <= 0 {
+		return 4 * time.Hour
+	}
+	return max(4*time.Hour, time.Duration(maxMinutes)*2*time.Minute+45*time.Minute)
 }
 
 // agentStep runs an agent and waits for it to end. A block that continues another's conversation

@@ -429,3 +429,40 @@ func TestSpawnCallsKeepTheCallsPerTurnCap(t *testing.T) {
 		t.Fatalf("%d sub-agents started", len(rows))
 	}
 }
+
+// Passing include_context: true prepends the shared Context to the sub-agent's task so the lead does
+// not have to copy it verbatim into each spawn_agent call.
+func TestSubAgentIncludeContext(t *testing.T) {
+	e := newSubEnv(t)
+	var mu sync.Mutex
+	var seen []string
+	subs := e.subs(func(ctx context.Context, msgs []Message, tools []ToolSpec) (Message, error) {
+		mu.Lock()
+		seen = append(seen, msgs[1].Content)
+		mu.Unlock()
+		return finishCall("ok"), nil
+	}, 2, 0)
+	subs.Context = "Pull request: https://github.com/o/r/pull/5\n## Orientation packet\nArea: pkg/a"
+	main := &script{replies: []Message{
+		calls(
+			call("a", "spawn_agent", `{"title":"with","task":"review correctness","include_context":true}`),
+			call("b", "spawn_agent", `{"title":"without","task":"review prose"}`),
+		),
+		finishCall("done"),
+	}}
+	if tr := Run(context.Background(), Config{Model: main, Tools: []Tool{subs.Tool()}, MaxTurns: 5, Task: "go"}, nil); tr.Outcome != Met {
+		t.Fatalf("%s: %s", tr.Outcome, tr.Error)
+	}
+	var withFound, withoutFound bool
+	for _, s := range seen {
+		if strings.Contains(s, "review correctness") {
+			withFound = strings.Contains(s, "Orientation packet")
+		}
+		if strings.Contains(s, "review prose") {
+			withoutFound = !strings.Contains(s, "Orientation packet")
+		}
+	}
+	if !withFound || !withoutFound {
+		t.Fatalf("include_context mismatch: %v", seen)
+	}
+}

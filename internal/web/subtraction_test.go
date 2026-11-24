@@ -17,7 +17,7 @@ func TestSubtractionPresetIsSeededOnce(t *testing.T) {
 	}
 	p, err := st.PresetByKey("review_subtraction")
 	if err != nil || !p.Shared() || p.Name != "Code Review - Subtraction" || p.Closing != workflow.ClosingReport || p.NoCitationMarks ||
-		!strings.Contains(p.PRInstruction, "{pr:packet}") || !strings.Contains(p.PRInstruction, "Your lens is subtraction") || !strings.Contains(p.PRSummary, "**Could remove:**") {
+		!strings.Contains(p.PRInstruction, "{pr:packet}") || !strings.Contains(p.PRInstruction, "Your lens is Subtraction") || !strings.Contains(p.PRSummary, "**Could remove:**") {
 		t.Fatalf("the subtraction preset: %+v %v", p, err)
 	}
 	if err := workflow.CheckTemplates(workflow.PR, nil, p.PRInstruction, p.PRGoal, p.PRSummary); err != nil {

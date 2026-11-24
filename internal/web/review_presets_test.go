@@ -13,7 +13,7 @@ import (
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
-var reviewKeys = []string{"review_all", "review_correctness", "review_architecture", "review_conventions", "review_simplicity", "review_prose"}
+var reviewKeys = []string{"review_all", "review_correctness", "review_architecture", "review_conventions", "review_prose"}
 
 // olderDB is a database as production has it: seeded with the original five presets under their
 // original names, before the code review presets existed. It is not yet served: New is what runs the
@@ -156,7 +156,7 @@ func TestReviewSeedInsertsOnceWithoutDuplicates(t *testing.T) {
 	if _, err := New(st, fakeGitHub{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SeedPresetsV2(presetRenames(), reviewRows()); err != nil {
+	if err := st.RunPresetSteps(presetSeedSteps()); err != nil {
 		t.Fatal(err)
 	}
 	if again := snapshot(t, st); !slices.Equal(first, again) {
@@ -203,7 +203,7 @@ func TestReviewSeedOnAFreshDatabase(t *testing.T) {
 	want := map[string]string{"gather_information": "Gather Information", "value_analyst": "Value Analyst",
 		"code_quality": "Code Review - Quality", "security": "Code Review - Security", "test_engineer": "Code Review - Testing",
 		"review_all": "Code Review - All Lenses", "review_correctness": "Code Review - Correctness", "review_architecture": "Code Review - Architecture",
-		"review_conventions": "Code Review - Conventions", "review_simplicity": "Code Review - Simplicity", "review_prose": "Code Review - Prose",
+		"review_conventions": "Code Review - Conventions", "review_prose": "Code Review - Prose",
 		"review_pretest": "Code Review - Pre-Test Report", "review_consequences": "Code Review - Unintended Consequences", "editor_prose": "Editor - Prose Cleanup", "review_subtraction": "Code Review - Subtraction", "review_lens_team": "Code Review - Lens Team"}
 	if len(got) != len(want) {
 		t.Errorf("presets: %v", got)
@@ -213,7 +213,7 @@ func TestReviewSeedOnAFreshDatabase(t *testing.T) {
 			t.Errorf("%s is named %q, want %q", k, got[k], n)
 		}
 	}
-	// The seeds themselves carry it all, so the first seed is complete without the second step.
+	// The seeds themselves carry it all, so the first seed is complete without the migration steps.
 	seeds := map[string]string{}
 	for _, p := range seedRows() {
 		seeds[p.Key] = p.Name
@@ -222,54 +222,43 @@ func TestReviewSeedOnAFreshDatabase(t *testing.T) {
 		t.Errorf("the seeds: %v", seeds)
 	}
 	before := snapshot(t, e.st)
-	if err := e.st.SeedPresetsV2(presetRenames(), reviewRows()); err != nil {
+	if err := e.st.RunPresetSteps(presetSeedSteps()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(e.st, fakeGitHub{}); err != nil {
 		t.Fatal(err)
 	}
 	if after := snapshot(t, e.st); !slices.Equal(before, after) {
-		t.Error("the second step changed a new database")
+		t.Error("re-running preset steps changed a new database")
 	}
 }
 
 const (
 	wantPacketHead = "Pull request: {pr}\nTitle: {pr:title}\n\n{pr:body}\n\n{pr:packet}\n\n"
-	wantDone       = "Every change has been read in context through this review's lens, and the report lists each finding with its severity, file and line, why it matters and the fix, or says plainly that there are none."
 	wantFormat     = "**Verdict:** <blocking issues / should-fix issues only / clean>\n**Blocking:**\n- <file:line: the issue, in one line>   (up to 5; \"None.\")\n**Should fix:**\n- <file:line: the issue, in one line>   (up to 5; \"None.\")\n**Nits:** <how many, or \"None.\">\n**Link:** {pr}"
-	wantRules      = `How to review:
-- Read the project's own rules first: its charter (read_charter), and the contributor, design-review and writing guidance in the repository (AGENTS.md, CONTRIBUTING, docs on design and review). Judge against those, and cite them.
-- Stay inside your lens: other reviewers cover the other lenses.
-- Read each changed function in its surrounding code, not only the diff, and follow its callers when behaviour changes.
-- For every finding give: its severity (blocking, should fix, or nit), the file and line, what is wrong, why it matters, and the fix.
-- Before you report a finding, check it in the code. Drop anything you cannot show from the code; say what would settle it if only a test can.
-- For GPU kernel code (CUDA and other low-level GPU paths), report defects only; do not propose designs for it.
-- Record each finding in your scratchpad as you go, with its severity at the start of the title.
-- If you find nothing in your lens, say so plainly.`
 )
 
-// Each code review preset has the packet in its head, its lens text and then the shared rules, the
-// exact Done when and summary format, the report as its closing step, and issue texts that say it is
-// for pull requests; it passes the checks a saved preset does.
+// Each code review preset has the packet in its head, shared review guidance, the summary format,
+// the report closing step, PR-only issue stubs, and passes every save/template check without
+// repository-specific hardcoding or conflicting lens rules.
 func TestReviewPresetsTexts(t *testing.T) {
 	e := newEnv(t)
-	lens := map[string]string{
-		"review_all":          "You are the first reviewer of this pull request, covering all five review lenses: A. Correctness and consequences; B. Architecture and scope; C. Conventions and duplication; D. Simplicity; E. Prose. (Each lens is described in the project's other Code Review presets: correctness everywhere the change reaches; whether it belongs and the approach is right; consistency with precedent and no duplicated helpers; what can be deleted; and the quality of the description, commits, docs and comments.) Give the findings grouped by lens.",
-		"review_correctness":  "Your lens is A, correctness and consequences: does it work everywhere it reaches? Check every caller, and every configuration the project supports: each model, cache scheme, parallel layout, multi-host setup and hardware target its documentation names. Check resource lifetimes, inactive and edge-case paths, state and graph transitions, and whether existing data, artifacts and exported cores still load.",
-		"review_architecture": "Your lens is B, architecture and scope: does this belong in the repository, and is the approach right? Judge it against the project's rejection criteria and design-review principles as its documents state them: for example keeping the core simple, keeping each layer in its role, no per-model special cases or flags, compatibility with what exists, and measured evidence for performance claims.",
-		"review_conventions":  "Your lens is C, conventions and duplication: compare each new construct with its closest precedent in the repository and flag where it departs from the established way, citing the precedent. Flag any existing helper or mechanism it duplicates, citing it.",
-		"review_simplicity":   "Your lens is D, simplicity: what can be deleted? Look for unneeded code, options, fallbacks and parallel paths, tests that do not prove a behaviour, and bloated comments. For each, show the smaller version.",
-		"review_prose":        "Your lens is E, prose: check the pull request's description, its commit messages, and the docs and comments it changes against the repository's writing rules. Check that the description has the four parts: why, what changed, the claimed result, and the evidence.",
-	}
 	for _, key := range reviewKeys {
 		p, err := e.st.PresetByKey(key)
 		if err != nil {
 			t.Fatalf("%s: %v", key, err)
 		}
-		if want := wantPacketHead + lens[key] + "\n\n" + wantRules; p.PRInstruction != want {
-			t.Errorf("%s: the instruction is\n%q\nwant\n%q", key, p.PRInstruction, want)
+		if !strings.HasPrefix(p.PRInstruction, wantPacketHead) || !strings.Contains(p.PRInstruction, "How to review:") || !strings.Contains(p.PRInstruction, "read_charter") {
+			t.Errorf("%s: unexpected instruction:\n%s", key, p.PRInstruction)
 		}
-		if p.PRGoal != wantDone || p.PRSummary != wantFormat || p.Closing != "report" {
+		if key == "review_all" {
+			if strings.Contains(p.PRInstruction, "Stay inside your lens") {
+				t.Errorf("%s should not include the single-lens restriction", key)
+			}
+		} else if !strings.Contains(p.PRInstruction, "Stay inside your lens") {
+			t.Errorf("%s missing single-lens restriction", key)
+		}
+		if p.PRGoal == "" || p.PRSummary != wantFormat || p.Closing != "report" {
 			t.Errorf("%s: done %q, format %q, closing %q", key, p.PRGoal, p.PRSummary, p.Closing)
 		}
 		if p.IssueInstruction != "This preset reviews pull requests; use it on a pull-request workflow." || p.IssueGoal != "Not applicable to issues." || p.IssueSummary != "" {

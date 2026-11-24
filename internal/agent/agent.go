@@ -134,12 +134,13 @@ type Config struct {
 }
 
 const (
-	maxNudges     = 3
-	maxRejected   = 3
-	maxResult     = 24_000 // characters of a tool's result shown to the model
-	maxCalls      = 16     // tool calls one turn may make; the rest are refused, to be made next turn
-	defaultWindow = 128_000
-	forceAt       = 85 // percent of the window past which the agent is told to compact
+	maxNudges      = 3
+	maxRejected    = 3
+	maxResult      = 24_000 // characters of a tool's result shown to the model
+	maxSubResult   = 48_000 // sub-agent reports can be larger than a single file read
+	maxCalls       = 16     // tool calls one turn may make; the rest are refused, to be made next turn
+	defaultWindow  = 128_000
+	forceAt        = 85 // percent of the window past which the agent is told to compact
 )
 
 var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it when the goal is met, or when you are blocked and cannot meet it. " +
@@ -149,13 +150,13 @@ var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it wh
 		"report":{"type":"string","description":"The final answer."}},"required":["status","report"]}`)}
 
 // finishWriterSpec is finish for the session that writes the report from the scratchpad: a summary
-// of the findings that matter most, and the full report.
+// and the full report.
 var finishWriterSpec = ToolSpec{Name: "finish", Description: "End the work. Call it once the report is written, or when you are blocked and cannot write it. " +
-	"It takes two parts, both required. The summary is at most about 300 words: the 5 to 8 findings that matter most, one line each with its citation, " +
-	"then the most important open questions; no inventory of files. The report is the full report: it opens with a short \"Key findings\" section, then the detail.",
+	"It takes two parts, both required: summary (follow the summary format in the instructions, or write about 300 words of the findings that matter most if no format is given) " +
+	"and report (the full report, opening with a short \"Key findings\" section, then the detail).",
 	Parameters: json.RawMessage(`{"type":"object","properties":{
 		"status":{"type":"string","enum":["met","blocked"],"description":"met: the goal is met. blocked: it cannot be met, and the report says why."},
-		"summary":{"type":"string","description":"At most about 300 words: the 5 to 8 findings that matter most, one line each with its citation, then the most important open questions."},
+		"summary":{"type":"string","description":"Follow the summary format in the instructions; if none is given, about 300 words of the findings that matter most and open questions."},
 		"report":{"type":"string","description":"The full report, opening with a short Key findings section, then the detail."}},"required":["status","summary","report"]}`)}
 
 // finishSummarySpec is finish for a research session whose report is written next, from its notes.
@@ -312,8 +313,7 @@ func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			left := max(1, int(math.Ceil(cfg.Deadline.Sub(s.now()).Minutes())))
 			conv.add(Message{Role: "user", Content: fmt.Sprintf("About %d minute%s left: finish with your report soon.", left, map[bool]string{true: "", false: "s"}[left == 1])})
 		}
-		// The last turn can only finish, so a run that reaches its limit still ends with its report.
-		// (Its request leaves out the other tools, so it misses the provider's cache, once.)
+		// The last turn allows only finish (enforced via message, keeping the tools array fixed for cache hits).
 		allowed, last, forced := s.turnSpecs(turn)
 		reply, use, err := complete(ctx, cfg.Model, conv.request(), conv.Tools)
 		if err != nil && tooLong(err) {
@@ -438,7 +438,11 @@ func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			}
 		}
 		for i, call := range reply.ToolCalls {
-			out := clip(results[i])
+			limit := maxResult
+			if call.Function.Name == "spawn_agent" {
+				limit = maxSubResult
+			}
+			out := clipTo(results[i], limit)
 			if line := s.contextLine(); i == len(reply.ToolCalls)-1 && line != "" && !s.lineShown {
 				out += "\n" + line // appended, never rewriting what came before
 			}
@@ -613,11 +617,14 @@ var citedRE = regexp.MustCompile(`\b([\w./-]*[\w-]+\.(?:go|mod|py|rs|ts|tsx|js|j
 var citedLines = regexp.MustCompile("^(?::\\d+(?:[-–]\\d+)?)?`?")
 
 // annotate marks each place the report cites a file the agent's tools never read: "(not opened)"
-// after the citation, its line numbers and any code span around it.
+// after the citation, its line numbers and any code span around it. Filenames inside URLs are skipped.
 func (tr *Transcript) annotate(report string) string {
 	var b strings.Builder
 	last := 0
 	for _, ix := range citedRE.FindAllStringSubmatchIndex(report, -1) {
+		if inURL(report, ix[0]) {
+			continue
+		}
 		c := strings.TrimPrefix(strings.TrimPrefix(report[ix[2]:ix[3]], "./"), "/")
 		if slices.ContainsFunc(tr.Read, func(r string) bool { return samePath(r, c) }) {
 			continue
@@ -631,6 +638,16 @@ func (tr *Transcript) annotate(report string) string {
 	return b.String()
 }
 
+// inURL reports whether byte offset pos in s lies inside an http(s):// URL token.
+func inURL(s string, pos int) bool {
+	start := pos
+	for start > 0 && !strings.ContainsRune(" \t\n\r([<\"'`", rune(s[start-1])) {
+		start--
+	}
+	prefix := s[start:pos]
+	return strings.HasPrefix(prefix, "http://") || strings.HasPrefix(prefix, "https://")
+}
+
 // samePath reports whether two paths name the same file, one perhaps given relative to a folder.
 func samePath(a, b string) bool {
 	a, b = strings.TrimPrefix(a, "/"), strings.TrimPrefix(b, "/")
@@ -638,10 +655,12 @@ func samePath(a, b string) bool {
 }
 
 // clip keeps a long result's beginning and end, which is where the useful parts usually are.
-func clip(s string) string {
-	if len(s) <= maxResult {
+func clip(s string) string { return clipTo(s, maxResult) }
+
+func clipTo(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	head, tail := s[:maxResult*2/3], s[len(s)-maxResult/3:]
+	head, tail := s[:limit*2/3], s[len(s)-limit/3:]
 	return strings.ToValidUTF8(head, "") + fmt.Sprintf("\n[… %d characters left out …]\n", len(s)-len(head)-len(tail)) + strings.ToValidUTF8(tail, "")
 }

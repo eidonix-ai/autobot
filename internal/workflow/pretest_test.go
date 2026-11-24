@@ -23,7 +23,7 @@ func TestPreTestPreset(t *testing.T) {
 		t.Fatal("not seeded")
 	}
 	c := ConsequencesPreset
-	if c.Name != "Code Review - Unintended Consequences" || !strings.Contains(c.Instruction, "unintended consequences") || c.Closing != ClosingReport {
+	if c.Name != "Code Review - Unintended Consequences" || !strings.Contains(c.Instruction, "Unintended consequences") || c.Closing != ClosingReport {
 		t.Fatalf("%+v", c)
 	}
 	if err := CheckTemplates(PR, nil, c.Instruction, c.Goal, c.Summary); err != nil {
@@ -33,8 +33,8 @@ func TestPreTestPreset(t *testing.T) {
 
 // The Pre-Test Report sees the machines, and its plan is matched against them.
 func TestPreTestSeesTheMachines(t *testing.T) {
-	if !strings.Contains(PreTestInstruction, "{machines}") || !strings.Contains(PreTestInstruction, "Match the plan against the test machines") ||
-		strings.Contains(PreTestInstructionV1, "{machines}") || PreTestPreset.Instruction != PreTestInstruction {
+	if !strings.Contains(PreTestInstruction, "{machines}") || !strings.Contains(PreTestInstruction, "Match the plan against the available test machines") ||
+		PreTestPreset.Instruction != PreTestInstruction {
 		t.Fatalf("%s", PreTestInstruction)
 	}
 	if err := CheckTemplates(PR, nil, PreTestInstruction); err != nil {

@@ -257,7 +257,7 @@ func TestContinuationOpensFreshFromTheLastReport(t *testing.T) {
 		t.Fatalf("the continuation's first request has %d messages: %.600s", len(msgs), reqs[1])
 	}
 	opening := msgs[1].Content
-	wantStart := "Recheck PR 1.\n\nDone when: goal of B\n\nYour last summary on this item:\nReport 1.\n\nThe full report is entry #1 of your notes: read it with scratchpad_read.\n\nYour notes so far, readable with scratchpad_read and scratchpad_search:\n#1 [high] Report of "
+	wantStart := "Recheck PR 1.\n\n---\n\nDone when: goal of B\n\nYour last summary on this item:\nReport 1.\n\nThe full report is entry #1 of your notes: read it with scratchpad_read.\n\nYour notes so far, readable with scratchpad_read and scratchpad_search:\n#1 [high] Report of "
 	if !strings.HasPrefix(opening, wantStart) {
 		t.Fatalf("the opening message:\n%s", opening)
 	}
@@ -435,7 +435,7 @@ func TestRerunResumesOrStartsAnEmptyThread(t *testing.T) {
 	r2 := c.agentRun(c.run("ev1"), "A")
 	reqs := c.llm.requests()
 	msgs := messagesOf(t, reqs[1])
-	if r2.Thread != r1.Thread || len(msgs) != 2 || !strings.HasPrefix(msgs[1].Content, "Anything new? No new comments.\n\nDone when: goal of A\n\nYour last summary on this item:\nReport 1.") {
+	if r2.Thread != r1.Thread || len(msgs) != 2 || !strings.HasPrefix(msgs[1].Content, "Anything new? No new comments.\n\n---\n\nDone when: goal of A\n\nYour last summary on this item:\nReport 1.") {
 		t.Fatalf("resumed (thread %d, then %d):\n%q", r1.Thread, r2.Thread, msgs[len(msgs)-1].Content)
 	}
 	set(func(s *workflow.AgentSettings) { s.Rerun = "fresh" })

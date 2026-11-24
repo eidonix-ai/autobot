@@ -24,13 +24,15 @@ type SubAgents struct {
 	Provider  int64
 	System    string // their preamble
 	Tools     []Tool // what they may use: read-only
-	MaxTurns  int
-	Window    int
-	Deadline  time.Time // the run's, which they share
-	WarnAt    time.Time
-	Now       func() time.Time
-	AtOnce    int // how many may work at the same time
-	PerRun    int // how many may be started in all; 0 for no limit
+	MaxTurns        int
+	Window          int
+	Deadline        time.Time // the run's, which they share
+	WarnAt          time.Time
+	Now             func() time.Time
+	AtOnce          int    // how many may work at the same time
+	PerRun          int    // how many may be started in all; 0 for no limit
+	Context         string // shared item context (link, title, description, orientation packet), prepended when include_context is true
+	NoCitationMarks bool
 
 	mu               sync.Mutex
 	running, started int
@@ -44,14 +46,23 @@ func (sa *SubAgents) Tool() Tool {
 	if sa.PerRun > 0 {
 		limit = fmt.Sprintf(" and %d in this run", sa.PerRun)
 	}
+	contextNote := ""
+	params := `{"type":"object","properties":{
+				"title":{"type":"string","description":"A short name for the sub-agent's work."},
+				"task":{"type":"string","description":"What to find out and bring back, with what it needs to know."}},"required":["title","task"]}`
+	if strings.TrimSpace(sa.Context) != "" {
+		contextNote = " Pass include_context: true to automatically prepend the item's details and orientation packet so you do not have to copy them into task."
+		params = `{"type":"object","properties":{
+				"title":{"type":"string","description":"A short name for the sub-agent's work."},
+				"task":{"type":"string","description":"What to find out and bring back, with what it needs to know."},
+				"include_context":{"type":"boolean","description":"When true, prepend the item's title, description and orientation packet to the sub-agent's task."}},"required":["title","task"]}`
+	}
 	return Tool{
 		Spec: ToolSpec{Name: "spawn_agent", Description: fmt.Sprintf("Hand a separate piece of work to a sub-agent: a fresh session like yours, with read-only tools and a scratchpad of its own, "+
 			"that works on the task and brings back its report. You may have up to %d sub-agents working at once%s. Each has up to %d turns of its own, so start one only for a "+
 			"substantial piece of work that can be done separately. The call waits until the sub-agent has finished and returns its report and an index of its notes "+
-			"(read them with scratchpad_read, agent \"s1\" and so on); several calls in one turn run at the same time.", sa.AtOnce, limit, sa.MaxTurns),
-			Parameters: json.RawMessage(`{"type":"object","properties":{
-				"title":{"type":"string","description":"A short name for the sub-agent's work."},
-				"task":{"type":"string","description":"What to find out and bring back, with what it needs to know."}},"required":["title","task"]}`)},
+			"(read them with scratchpad_read, agent \"s1\" and so on); several calls in one turn run at the same time.%s", sa.AtOnce, limit, sa.MaxTurns, contextNote),
+			Parameters: json.RawMessage(params)},
 		Run: sa.spawn,
 		Reads: func(args json.RawMessage) []string {
 			sa.mu.Lock()
@@ -76,13 +87,21 @@ func (sa *SubAgents) refuse(msg string) (string, error) {
 }
 
 func (sa *SubAgents) spawn(ctx context.Context, raw json.RawMessage) (string, error) {
-	var a struct{ Title, Task string }
+	var a struct {
+		Title          string
+		Task           string
+		IncludeContext bool `json:"include_context"`
+	}
 	if json.Unmarshal(raw, &a) != nil || strings.TrimSpace(a.Task) == "" {
 		return sa.refuse(`spawn_agent takes {"title": a short name, "task": what to find out and bring back}`)
 	}
 	a.Title = strings.Join(strings.Fields(a.Title), " ")
 	if a.Title == "" {
 		a.Title = firstLine(a.Task, 60)
+	}
+	task := a.Task
+	if a.IncludeContext && strings.TrimSpace(sa.Context) != "" {
+		task = strings.TrimSpace(sa.Context) + "\n\n" + task
 	}
 	sa.mu.Lock()
 	switch {
@@ -98,7 +117,7 @@ func (sa *SubAgents) spawn(ctx context.Context, raw json.RawMessage) (string, er
 	name := fmt.Sprintf("s%d", sa.started)
 	sa.mu.Unlock()
 
-	tr, pad, err := sa.work(ctx, name, a.Title, a.Task)
+	tr, pad, err := sa.work(ctx, name, a.Title, task)
 
 	sa.mu.Lock()
 	defer sa.mu.Unlock()
@@ -149,6 +168,7 @@ func (sa *SubAgents) work(ctx context.Context, name, title, task string) (*Trans
 			"Find it out, saving what you find to your own scratchpad as you go, then call finish with your report: what you found, with its citations "+
 			"(file and lines, pull request or issue numbers, links), and what you could not find.", name, title, task),
 		Tools: sa.Tools, MaxTurns: sa.MaxTurns, Window: sa.Window, Pad: pad, RunID: sa.Run, Deadline: sa.Deadline, WarnAt: sa.WarnAt, Now: sa.Now,
+		NoCitationMarks: sa.NoCitationMarks,
 		Save: func(tr *Transcript) { save(tr, "running") },
 	}, conv)
 	if strings.TrimSpace(tr.Report) == "" { // it ended without finishing and said nothing: its notes are its report

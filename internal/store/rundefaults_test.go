@@ -54,7 +54,7 @@ func TestSetRunDefaultsOnce(t *testing.T) {
 	mine, _ := st.CreatePreset(newPreset("Mine", admin.ID), admin)
 	keys := []string{"gather_information", "code_quality", mine.Key}
 	const rd = `{"max_turns":60}`
-	if err := st.SetRunDefaultsOnce("m", keys, rd); err != nil {
+	if err := st.RunPresetSteps([]PresetSeedStep{{Marker: "m", SetDefaults: keys, RunDefaults: rd}}); err != nil {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]string{"gather_information": rd, "code_quality": `{"max_turns":99}`, mine.Key: ""} {
@@ -68,7 +68,7 @@ func TestSetRunDefaultsOnce(t *testing.T) {
 	if err := st.UpdatePreset(g.ID, *g, admin); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetRunDefaultsOnce("m", keys, rd); err != nil {
+	if err := st.RunPresetSteps([]PresetSeedStep{{Marker: "m", SetDefaults: keys, RunDefaults: rd}}); err != nil {
 		t.Fatal(err)
 	}
 	if p, _ := st.PresetByKey("gather_information"); p.RunDefaults != "" {

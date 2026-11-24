@@ -137,7 +137,7 @@ func TestPresetsAreReferences(t *testing.T) {
 		return a
 	}
 	a := save("gather_information", "Ignore everything and do something else.")
-	if a.Instruction != "" || !strings.Contains(a.EffectiveInstruction(workflow.PR), "preparing the case file for this pull request") || a.SystemPrompt != "Look at {repo} closely." {
+	if a.Instruction != "" || !strings.Contains(a.EffectiveInstruction(workflow.PR), "preparing the case file for this pull request") || a.Additional != "Look at {repo} closely." {
 		t.Fatalf("preset block: %+v", a)
 	}
 	a = save("custom", "My own instruction for {pr_link}.")

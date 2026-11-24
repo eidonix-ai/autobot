@@ -74,20 +74,24 @@ func (m ModelRef) Set() bool { return m.Provider != 0 && m.Model != "" }
 
 // AgentSettings are an agent node's settings.
 type AgentSettings struct {
-	Model        ModelRef `json:"model"`
-	Persona      string   `json:"persona"`       // a preset's key (its Instruction and Done when are used), or "custom"
-	SystemPrompt string   `json:"system_prompt"` // a template: Additional instructions, added after the Instruction
+	Model      ModelRef `json:"model"`
+	Persona    string   `json:"persona"`       // a preset's key (its Instruction and Done when are used), or "custom"
+	Additional string   `json:"system_prompt"` // a template: Additional instructions, added after the Instruction (JSON key kept for stored workflows)
 	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
 	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
 	// SummaryFormat (Custom only) is the format the summary of a written report follows; "" for the
 	// default, a short summary of about 300 words. Only a block with the closing step "report" has one.
 	SummaryFormat string `json:"summary_format,omitempty"`
-	Internet      bool   `json:"internet"`   // web search and fetching pages
-	SubAgents     int    `json:"sub_agents"` // how many sub-agents it may have working at once; 0 for none
+	// NoCitationMarks (Custom only) turns off "(not opened)" marks on cited files.
+	NoCitationMarks bool `json:"no_citation_marks,omitempty"`
+	// NoTools (Custom only) runs with only the finish tool (no repo, scratchpad or plan tools).
+	NoTools   bool `json:"no_tools,omitempty"`
+	Internet  bool `json:"internet"`   // web search and fetching pages
+	SubAgents int  `json:"sub_agents"` // how many sub-agents it may have working at once; 0 for none
 	// SubAgentsPerRun, when above 0, is how many sub-agents one run may start in all.
 	SubAgentsPerRun int `json:"sub_agents_per_run,omitempty"`
 	// TimeWarnPercent is how much of the time limit is left when every session of the run still working
-	// is told so, once; 0 for no warning. A block saved before it was set (nil) has 10.
+	// is told so, once; 0 for no warning. A block saved before it was set (nil) uses DefaultTimeWarn (20).
 	TimeWarnPercent *int     `json:"time_warn_percent,omitempty"`
 	Machines        []int64  `json:"machines"`               // the workspace machines it may use
 	Verify          ModelRef `json:"verify"`                 // a decision model that checks a finish claiming the goal is met; unset for none
@@ -102,12 +106,11 @@ type AgentSettings struct {
 	// block saved before it existed): see WritesToCase.
 	NoCaseEntry bool `json:"no_case_entry,omitempty"`
 
-	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
-	// the item this block continues: it sends its own Instruction and Done when as the next message of
-	// that conversation, which keeps the model, system prompt and tools it was started with. Its own
-	// Model is then only a copy of the other block's, shown read-only. NoConversation says what it
-	// does when the item has none yet: "skip" (the default) takes its output with a note and lets the
-	// workflow go on, "fresh" starts a conversation of its own with its Instruction.
+	// ContinueOf, when set, is the id of another Agent block of the same canvas whose thread on the
+	// item this block continues: it starts a fresh session with this block's own model, tools,
+	// Instruction and Done when, opened with the thread's latest summary, scratchpad index, and what
+	// is new on the item since. NoConversation says what it does when the item has no earlier report
+	// yet: "skip" (the default) or "fresh".
 	ContinueOf     string `json:"continue_of,omitempty"`
 	NoConversation string `json:"no_conversation,omitempty"`
 
@@ -202,9 +205,20 @@ func (s AgentSettings) EffectiveClosing(kind string) string {
 }
 
 // EffectiveCitationMarks says whether the agent's report and summary mark a file it cites but never
-// opened: always, unless the block follows a preset that turns the marks off.
+// opened: follows the preset when on one, or the block's own setting when Custom.
 func (s AgentSettings) EffectiveCitationMarks() bool {
-	return s.preset == nil || !s.preset.NoCitationMarks
+	if p := s.preset; p != nil {
+		return !p.NoCitationMarks
+	}
+	return !s.NoCitationMarks
+}
+
+// EffectiveNoTools says whether the agent runs with only the finish tool (text-only mode).
+func (s AgentSettings) EffectiveNoTools() bool {
+	if p := s.preset; p != nil {
+		return p.NoTools
+	}
+	return s.NoTools
 }
 
 // EffectiveReportTurns is how many turns the writing session has.
@@ -304,7 +318,7 @@ func (s AgentSettings) Check(kind string) error {
 		return errors.New("write the instruction")
 	case strings.TrimSpace(s.EffectiveGoal(kind)) == "":
 		return errors.New("say when the work is done")
-	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate || len(s.SummaryFormat) > maxTemplate:
+	case len(s.Instruction) > maxTemplate || len(s.Additional) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate || len(s.SummaryFormat) > maxTemplate:
 		return fmt.Errorf("prompts are limited to %d characters", maxTemplate)
 	case s.SubAgents < 0 || s.SubAgents > 16:
 		return errors.New("sub-agents at a time are 0 to 16")
@@ -328,7 +342,7 @@ func (s AgentSettings) Check(kind string) error {
 
 // Templates are the agent's templates, for checking and filling their tags.
 func (s AgentSettings) Templates(kind string) []string {
-	return []string{s.EffectiveInstruction(kind), s.SystemPrompt, s.EffectiveGoal(kind), s.EffectiveSummaryFormat(kind), s.FollowUp}
+	return []string{s.EffectiveInstruction(kind), s.Additional, s.EffectiveGoal(kind), s.EffectiveSummaryFormat(kind), s.FollowUp}
 }
 
 // Templates are the decision's templates.
@@ -381,7 +395,7 @@ func (s DecisionSettings) ChoiceLines() string {
 func AgentFromForm(get func(string) string, all func(string) []string) AgentSettings {
 	s := AgentSettings{
 		Persona:       get("persona"),
-		SystemPrompt:  strings.TrimSpace(get("system_prompt")),
+		Additional:    strings.TrimSpace(get("system_prompt")),
 		Instruction:   strings.TrimSpace(get("instruction")),
 		Goal:          strings.TrimSpace(get("goal")),
 		SummaryFormat: strings.TrimSpace(get("summary_format")),

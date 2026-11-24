@@ -19,16 +19,20 @@ func TestEffectiveCitationMarks(t *testing.T) {
 	}
 	custom := base
 	custom.Persona = "custom"
-	if !custom.EffectiveCitationMarks() {
-		t.Error("a Custom block has marks")
+	if !custom.EffectiveCitationMarks() || custom.EffectiveNoTools() {
+		t.Error("a Custom block defaults to marks on and tools on")
+	}
+	custom.NoCitationMarks, custom.NoTools = true, true
+	if custom.EffectiveCitationMarks() || !custom.EffectiveNoTools() {
+		t.Error("a Custom block respects its own NoCitationMarks and NoTools flags")
 	}
 }
 
 // The Editor preset is one text for pull requests and issues, has no closing step or summary format,
-// turns the marks off, and is among the seeds; its texts pass the template check for both kinds.
+// turns the marks off, runs text-only (NoTools), and is among the seeds; its texts pass the template check.
 func TestEditorPreset(t *testing.T) {
 	e := EditorPreset
-	if e.Key != "editor_prose" || e.Name != "Editor - Prose Cleanup" || !e.NoCitationMarks || e.Closing != "" || e.Summary != "" || e.IssueSummary != "" ||
+	if e.Key != "editor_prose" || e.Name != "Editor - Prose Cleanup" || !e.NoCitationMarks || !e.NoTools || e.Closing != "" || e.Summary != "" || e.IssueSummary != "" ||
 		e.Instruction != e.IssueInstruction || e.Goal != e.Issue {
 		t.Errorf("the editor preset: %+v", e)
 	}

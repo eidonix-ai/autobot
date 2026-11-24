@@ -36,7 +36,7 @@
   <label><span class="lbl">Instruction <span class="info" tabindex="0" data-tip="The preset's, read-only. Choose Custom to write your own, starting from it.">ⓘ</span></span>
     <textarea name="instruction" rows="9" class="code" spellcheck="false" required{{if .Locked}} readonly{{end}}>{{.Instruction}}</textarea></label>
   <label><span class="lbl">Additional instructions <span class="info" tabindex="0" data-tip="Your own, added after the Instruction.">ⓘ</span></span>
-    <textarea name="system_prompt" rows="3" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
+    <textarea name="system_prompt" rows="3" class="code" spellcheck="false">{{.S.Additional}}</textarea></label>
   <label><span class="lbl">Done when <span class="info" tabindex="0" data-tip="The goal. The agent can only finish once it is met, or by saying why it cannot be.">ⓘ</span></span>
     <textarea name="goal" rows="2" class="code" spellcheck="false" required{{if .Locked}} readonly{{end}}>{{.Goal}}</textarea></label>
   <label data-when-report{{if ne .Closing "report"}} hidden{{end}}><span class="lbl">Summary format <span class="info" tabindex="0" data-tip="The preset's, read-only. The summary of the written report follows it exactly. Empty: a short summary of about 300 words.">ⓘ</span></span>

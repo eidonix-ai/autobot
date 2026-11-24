@@ -122,3 +122,23 @@ func TestVerdict(t *testing.T) {
 		t.Fatalf("should start:\n%s", strings.Join(lines, "\n"))
 	}
 }
+
+// An Agent workflow step gets at least 4 hours so waiting for an earlier run on the same thread
+// plus running and writing the report cannot time out the step; long blocks scale above 4 hours.
+func TestAgentStepTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		maxMinutes int
+		want       time.Duration
+	}{
+		{0, 4 * time.Hour},
+		{-5, 4 * time.Hour},
+		{30, 4 * time.Hour},
+		{60, 4 * time.Hour},
+		{120, 285 * time.Minute},
+		{240, 525 * time.Minute},
+	} {
+		if got := agentStepTimeout(tc.maxMinutes); got != tc.want {
+			t.Errorf("agentStepTimeout(%d) = %v, want %v", tc.maxMinutes, got, tc.want)
+		}
+	}
+}

@@ -547,7 +547,7 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		data["ReportTurns"], data["TimeWarn"] = st.EffectiveReportTurns(), st.EffectiveTimeWarn()
 		data["Locked"] = st.OnPreset()
 		data["Missing"] = st.Persona != "custom" && !st.OnPreset()
-		data["Preamble"] = preambleText(ws.Name, st.EffectiveClosing(kind) == workflow.ClosingReport)
+		data["Preamble"] = agentPreamble(ws.Name, st.EffectiveClosing(kind) == workflow.ClosingReport, st.EffectiveNoTools())
 		// The blocks whose conversation this one may continue: the others that start their own.
 		type source struct {
 			ID, Name, Model string // Model is its value in a model dropdown
@@ -654,8 +654,9 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			if err = a.Check(kind); err == nil {
-				if a.OnPreset() { // a preset's own text is not stored on the block
+				if a.OnPreset() { // a preset's own text and flags are not stored on the block
 					a.Instruction, a.Goal, a.SummaryFormat, a.Closing = "", "", "", ""
+					a.NoCitationMarks, a.NoTools = false, false
 				}
 				if err = g.CheckNodeTemplates(kind, n.ID, a.Templates(kind)...); err == nil && a.Model.Set() {
 					err = s.checkModel(ws, a.Model, false)

@@ -470,17 +470,40 @@
     var now = custom ? '' : opt.dataset.additional || '';
     if (!custom && (extra.value.trim() === '' || extra.value === was)) { extra.value = now; }
     sel.dataset.prevAdditional = now;
-    // Its starting run settings fill the inputs it has a value for, only when the person chooses it.
-    var rd = {};
+    // Its starting run settings fill the inputs it has a value for; fields left untouched from a
+    // previous preset's defaults reset to the dialog's baseline so switching away from e.g. Lens Team
+    // does not leave sub_agents=6 stuck on a single-agent preset.
+    var numFields = ['max_turns', 'max_minutes', 'time_warn_percent', 'sub_agents'];
+    if (sel.dataset.baseRunDefaults === undefined) {
+      var base = {};
+      numFields.forEach(function (name) { base[name] = form.elements[name].value; });
+      base.limit_sub_agents = form.elements['limit_sub_agents'].checked;
+      base.sub_agents_per_run = form.elements['sub_agents_per_run'].value;
+      sel.dataset.baseRunDefaults = JSON.stringify(base);
+    }
+    var baseRD = {}, prevRD = {}, rd = {};
+    try { baseRD = JSON.parse(sel.dataset.baseRunDefaults); } catch (err) { baseRD = {}; }
+    try { prevRD = sel.dataset.prevRunDefaults ? JSON.parse(sel.dataset.prevRunDefaults) : {}; } catch (err) { prevRD = {}; }
     try { rd = custom || !opt.dataset.runDefaults ? {} : JSON.parse(opt.dataset.runDefaults); } catch (err) { rd = {}; }
-    ['max_turns', 'max_minutes', 'time_warn_percent', 'sub_agents'].forEach(function (name) {
-      if (typeof rd[name] === 'number') { form.elements[name].value = rd[name]; }
-    });
-    if (typeof rd.sub_agents_per_run === 'number') {
+    if (!custom) {
+      numFields.forEach(function (name) {
+        if (typeof rd[name] === 'number') {
+          form.elements[name].value = rd[name];
+        } else if (typeof prevRD[name] === 'number' && String(form.elements[name].value) === String(prevRD[name])) {
+          form.elements[name].value = baseRD[name];
+        }
+      });
       var lim = form.elements['limit_sub_agents'];
-      lim.checked = rd.sub_agents_per_run > 0;
-      if (lim.checked) { form.elements['sub_agents_per_run'].value = rd.sub_agents_per_run; }
-      form.querySelectorAll('[data-when-limit]').forEach(function (el) { el.hidden = !lim.checked; });
+      if (typeof rd.sub_agents_per_run === 'number') {
+        lim.checked = rd.sub_agents_per_run > 0;
+        if (lim.checked) { form.elements['sub_agents_per_run'].value = rd.sub_agents_per_run; }
+        form.querySelectorAll('[data-when-limit]').forEach(function (el) { el.hidden = !lim.checked; });
+      } else if (typeof prevRD.sub_agents_per_run === 'number') {
+        lim.checked = !!baseRD.limit_sub_agents;
+        form.elements['sub_agents_per_run'].value = baseRD.sub_agents_per_run;
+        form.querySelectorAll('[data-when-limit]').forEach(function (el) { el.hidden = !lim.checked; });
+      }
+      sel.dataset.prevRunDefaults = JSON.stringify(rd);
     }
     form.querySelectorAll('[data-when-report]').forEach(function (el) { el.hidden = step.value !== 'report'; });
   });

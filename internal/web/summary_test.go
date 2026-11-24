@@ -41,7 +41,7 @@ func TestResearchFinishAsksForASummaryOnlyWithAClosingStep(t *testing.T) {
 		d, sys := finishOf(t, body)
 		if strings.Contains(messagesOf(t, body)[1].Content, "Your research is done") {
 			sawWriter = true
-			if !strings.Contains(d, "The summary is at most about 300 words") || !strings.Contains(sys, reportSentence) || strings.Contains(sys, "short summary") {
+			if !strings.Contains(d, "follow the summary format in the instructions, or write about 300 words") || !strings.Contains(sys, reportSentence) || strings.Contains(sys, "short summary") {
 				t.Fatalf("the writing session: %s\n%s", d, sys)
 			}
 			continue

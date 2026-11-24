@@ -78,7 +78,7 @@ func TestStepSettings(t *testing.T) {
 	if err := a.Check(PR); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckTemplates(PR, nil, a.SystemPrompt, a.Instruction); err != nil {
+	if err := CheckTemplates(PR, nil, a.Additional, a.Instruction); err != nil {
 		t.Fatalf("the default agent's own templates: %v", err)
 	}
 	a.OutputTo = "pr_diff"

@@ -66,6 +66,12 @@ func NewResearchConversation(model string, provider int64, system string, tools 
 	return startConversation(model, provider, system, specs)
 }
 
+// NewPlainConversation starts a conversation with only the finish tool, for text-only tasks
+// (such as editing or rewriting a draft) that do not research code or keep a scratchpad.
+func NewPlainConversation(model string, provider int64, system string) *Conversation {
+	return startConversation(model, provider, system, []ToolSpec{finishSpec})
+}
+
 // NewWriterConversation starts the conversation in which a report is written from the scratchpad:
 // it can read the scratchpad, but not write to it or compact.
 func NewWriterConversation(model string, provider int64, system string, tools []Tool) *Conversation {
@@ -143,9 +149,19 @@ func (c *Conversation) Write(write func(...store.ConvEvent) error) error {
 	return nil
 }
 
-// request is the conversation as sent: the system prompt, then the messages.
+// request is the conversation as sent: the system prompt, then the messages with any consecutive
+// user messages merged so providers that require alternating roles accept the request.
 func (c *Conversation) request() []Message {
-	return append([]Message{{Role: "system", Content: c.System}}, c.Messages...)
+	out := make([]Message, 0, len(c.Messages)+1)
+	out = append(out, Message{Role: "system", Content: c.System})
+	for _, m := range c.Messages {
+		if m.Role == "user" && len(out) > 1 && out[len(out)-1].Role == "user" {
+			out[len(out)-1].Content += "\n\n" + m.Content
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // LoadConversation rebuilds a conversation from its file's events, replaying every change to it:

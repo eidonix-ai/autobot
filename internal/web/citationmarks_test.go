@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,7 +19,7 @@ func TestEditorPresetIsSeededOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	ed, err := st.PresetByKey("editor_prose")
-	if err != nil || !ed.Shared() || ed.Name != "Editor - Prose Cleanup" || !ed.NoCitationMarks || ed.Closing != "" || ed.PRInstruction != ed.IssueInstruction {
+	if err != nil || !ed.Shared() || ed.Name != "Editor - Prose Cleanup" || !ed.NoCitationMarks || !ed.NoTools || ed.Closing != "" || ed.PRInstruction != ed.IssueInstruction {
 		t.Fatalf("the editor preset: %+v %v", ed, err)
 	}
 	if ed.Additional != "{input.summary}" || !strings.HasSuffix(ed.PRInstruction, "## The draft") {
@@ -133,9 +134,21 @@ func TestPresetFormCitationMarks(t *testing.T) {
 		!strings.Contains(dialog, `value="gather_information" data-instruction=`) {
 		t.Errorf("the dialog's options:\n%s", dialog)
 	}
-	// The Editor is a built-in with the box unticked.
+	// The Editor is a built-in with citation marks off and NoTools on.
 	ed, _ := p.st.PresetByKey("editor_prose")
-	if _, page := p.bd.get(presetURL(ed, "")); ticked(page) {
-		t.Error("the Editor preset shows marks on")
+	if _, page := p.bd.get(presetURL(ed, "")); ticked(page) || !strings.Contains(page, `name="no_tools" value="1" checked`) {
+		t.Error("the Editor preset form flags are wrong")
+	}
+	// Removing a preset with NoCitationMarks/NoTools preserves both flags on the switched Custom block.
+	noToolsPreset := p.create(p.be, "Plain editor", url.Values{"no_tools": {"1"}})
+	p.saveGraph(p.ws, workflow.PR, p.onPreset("ed", noToolsPreset.Key))
+	if code, _, _ := p.post(p.be, presetURL(noToolsPreset, "/remove"), nil); code != http.StatusSeeOther {
+		t.Fatalf("remove: %d", code)
+	}
+	w, _ := p.st.Workflow(p.ws.ID, workflow.PR)
+	var g workflow.Graph
+	json.Unmarshal([]byte(w.Graph), &g)
+	if a, err := p.ui.agentSettings(g.Nodes[0], workflow.PR); err != nil || a.Persona != "custom" || a.EffectiveCitationMarks() || !a.EffectiveNoTools() {
+		t.Fatalf("switched custom block lost preset flags: %+v %v", a, err)
 	}
 }

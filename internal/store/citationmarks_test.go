@@ -34,17 +34,17 @@ func TestPresetNoCitationMarksRoundTrips(t *testing.T) {
 	if got, _ := st.Preset(made.ID); !got.NoCitationMarks {
 		t.Fatal("update did not turn the flag on")
 	}
-	one := Preset{Key: "ed", Name: "Ed", PRInstruction: "p", PRGoal: "g", IssueInstruction: "i", IssueGoal: "g", NoCitationMarks: true, Additional: "x"}
+	one := Preset{Key: "ed", Name: "Ed", PRInstruction: "p", PRGoal: "g", IssueInstruction: "i", IssueGoal: "g", NoCitationMarks: true, NoTools: true, Additional: "x"}
 	two := one
 	two.Key, two.Name = "ed2", "Ed 2"
-	if err := st.SeedPresetsV6([]Preset{two}); err != nil {
+	if err := st.RunPresetSteps([]PresetSeedStep{{Marker: "presets_v6_editor", Adds: []Preset{two}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SeedPresets([]Preset{one}); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"ed", "ed2"} {
-		if got, err := st.PresetByKey(k); err != nil || !got.NoCitationMarks || got.Additional != "x" {
+		if got, err := st.PresetByKey(k); err != nil || !got.NoCitationMarks || !got.NoTools || got.Additional != "x" {
 			t.Fatalf("seeded %s: %+v %v", k, got, err)
 		}
 	}

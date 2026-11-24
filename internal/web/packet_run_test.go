@@ -51,7 +51,7 @@ func TestAgentRunGetsThePacket(t *testing.T) {
 	if strings.Contains(first, "{pr:packet}") {
 		t.Errorf("the tag was left unfilled")
 	}
-	mustHave(t, "the writing session's task", writer, "You are preparing the case file", "organized by the angles the instruction names, if it names them")
+	mustHave(t, "the writing session's task", writer, "You are preparing the case file", "organize the body with one section per angle in the order above", "follow any organization or grouping specified in the original task above")
 	if quality == "" || strings.Contains(quality, "Orientation packet") {
 		t.Errorf("another preset's message: %.300s", quality)
 	}

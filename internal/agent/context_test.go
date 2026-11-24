@@ -250,13 +250,13 @@ func TestCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs := req.Messages
-	if len(msgs) != 3 || msgs[0].Role != "system" || msgs[1].Role != "user" || msgs[2].Role != "user" || msgs[1].Content != "the task" {
+	if len(msgs) != 2 || msgs[0].Role != "system" || msgs[1].Role != "user" || !strings.HasPrefix(msgs[1].Content, "the task\n\n---\n\n") {
 		t.Fatalf("%d messages: %+v", len(msgs), msgs)
 	}
 	for _, want := range []string{"Your earlier work was compacted. What you carried forward:", "callers of Foo are next", "#1 [high] Finding one — it leaks",
 		"[done] read the diff", "[in_progress] check callers (two left)"} {
-		if !strings.Contains(msgs[2].Content, want) {
-			t.Errorf("the compacted message lacks %q:\n%s", want, msgs[2].Content)
+		if !strings.Contains(msgs[1].Content, want) {
+			t.Errorf("the compacted message lacks %q:\n%s", want, msgs[1].Content)
 		}
 	}
 	if p := valid(msgs[1:]); p != "" {
@@ -295,7 +295,7 @@ func TestForcedCompact(t *testing.T) {
 		if got := last(m.seen[1]); !strings.HasPrefix(got, "Your context is at 9") || !strings.HasSuffix(got, "% of its window. Save to your scratchpad what you still need, then call compact. Only scratchpad_write, update_plan and compact are available on this turn.") {
 			t.Fatalf("told %q", got)
 		}
-		if len(m.seen[2]) != 3 || !strings.Contains(last(m.seen[2]), "on it") || len(m.tools[2]) < 8 {
+		if len(m.seen[2]) != 2 || !strings.Contains(last(m.seen[2]), "on it") || len(m.tools[2]) < 8 {
 			t.Fatalf("after compacting: %d messages, %d tools", len(m.seen[2]), len(m.tools[2]))
 		}
 	})
@@ -310,7 +310,7 @@ func TestForcedCompact(t *testing.T) {
 		for name, reply := range map[string]Message{"another tool": call("b", "long", `{}`), "words": {Role: "assistant", Content: "I will keep going"}} {
 			m := &script{ins: []int{9000}, replies: []Message{call("a", "long", `{}`), reply, finishCall("ok")}}
 			tr := short(t, m, 10_000)
-			if tr.Outcome != Met || len(m.seen) != 3 || len(m.seen[2]) != 3 || !strings.Contains(last(m.seen[2]), carriedByAutobot) || valid(m.seen[2][1:]) != "" {
+			if tr.Outcome != Met || len(m.seen) != 3 || len(m.seen[2]) != 2 || !strings.Contains(last(m.seen[2]), carriedByAutobot) || valid(m.seen[2][1:]) != "" {
 				t.Fatalf("%s: %s after %d requests (%d messages): %s", name, tr.Outcome, len(m.seen), len(m.seen[len(m.seen)-1]), tr.Error)
 			}
 		}
@@ -320,7 +320,7 @@ func TestForcedCompact(t *testing.T) {
 			replies: []Message{call("a", "long", `{}`), call("b", "long", `{}`), finishCall("ok")}}
 		tr := short(t, m, 0)
 		// request 2 was refused; its retry has been compacted
-		if tr.Outcome != Met || len(m.seen) != 4 || len(m.seen[2]) < 5 || len(m.seen[3]) != 3 || !strings.Contains(last(m.seen[3]), carriedByAutobot) {
+		if tr.Outcome != Met || len(m.seen) != 4 || len(m.seen[2]) < 5 || len(m.seen[3]) != 2 || !strings.Contains(last(m.seen[3]), carriedByAutobot) {
 			t.Fatalf("%s after %d requests: %s", tr.Outcome, len(m.seen), tr.Error)
 		}
 		// refused again: the run fails with the provider's error, after one try only
@@ -479,7 +479,7 @@ func TestClosingReport(t *testing.T) {
 	if len(first) != 2 || first[0].Content != "preamble" {
 		t.Fatalf("the writing session continued the research: %d messages", len(first))
 	}
-	for _, want := range []string{"Instruction: look at it.\n\nDone when: it is all read", "Your research is done and its notes are in your scratchpad. Write the final report now, from your notes:",
+	for _, want := range []string{"Instruction: look at it.\n\nDone when: it is all read", "Your research is done and its notes are in your scratchpad. Write the final report now from those notes:",
 		"Call finish with two parts.", "#1 [high] Research summary — Found it in a.go:1.", "#2 [medium] Late find — found late"} {
 		if !strings.Contains(first[1].Content, want) {
 			t.Errorf("the writer's first message lacks %q:\n%s", want, first[1].Content)

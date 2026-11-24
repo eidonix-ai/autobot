@@ -1,5 +1,5 @@
-// Package web serves Autobot's browser interface: server-rendered pages and plain forms, no
-// JavaScript.
+// Package web serves Autobot's browser interface: server-rendered pages and plain forms, with
+// minimal JavaScript for the workflow canvas and live updates.
 package web
 
 import (
@@ -28,7 +28,6 @@ import (
 	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/repo"
 	"github.com/eidonix-ai/autobot/internal/store"
-	"github.com/eidonix-ai/autobot/internal/workflow"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
@@ -142,28 +141,7 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 	if err := st.SeedPresets(seedRows()); err != nil { // the built-in presets, once; the database is the authority after
 		return nil, err
 	}
-	if err := st.SeedPresetsV4(consequencesRows()); err != nil { // the Unintended Consequences preset, once
-		return nil, err
-	}
-	if err := st.SeedPresetsV3(preTestRows()); err != nil { // the Pre-Test Report preset, once
-		return nil, err
-	}
-	if err := st.SeedPresetsV7(subtractionRows()); err != nil { // the Code Review - Subtraction preset, once
-		return nil, err
-	}
-	if err := st.SeedPresetsV6(editorRows()); err != nil { // the Editor - Prose Cleanup preset, once
-		return nil, err
-	}
-	if err := updatePreTest(st); err != nil { // the Pre-Test Report sees the machines
-		return nil, err
-	}
-	if err := st.SeedPresetsV2(presetRenames(), reviewRows()); err != nil { // the code review presets, once, for a database seeded before them
-		return nil, err
-	}
-	if err := st.SeedPresetsV8(lensTeamRows()); err != nil { // the Code Review - Lens Team preset, once
-		return nil, err
-	}
-	if err := st.SetRunDefaultsOnce("presets_v8_run_defaults", reviewRunDefaultKeys, workflow.ReviewRunDefaults().JSON()); err != nil { // starting run settings of the review presets, once
+	if err := st.RunPresetSteps(presetSeedSteps()); err != nil { // one-time upgrades for older databases
 		return nil, err
 	}
 	s.routes()

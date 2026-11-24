@@ -141,7 +141,7 @@ func TestRetagText(t *testing.T) {
 // nothing to rewrite is left as it is.
 func TestRetagEveryBlock(t *testing.T) {
 	a := DefaultAgent(PR)
-	a.Persona, a.Instruction, a.Goal, a.SystemPrompt, a.FollowUp, a.SummaryFormat = "custom", "Do {old.report}", "Done {old}", "Sys [[old]]", "Next {old.summary}", "Fmt [[old.report|R]]"
+	a.Persona, a.Instruction, a.Goal, a.Additional, a.FollowUp, a.SummaryFormat = "custom", "Do {old.report}", "Done {old}", "Sys [[old]]", "Next {old.summary}", "Fmt [[old.report|R]]"
 	d := DefaultDecision(PR)
 	d.Context, d.Question = "{old}", "Is {old.confidence} high?"
 	for typ, c := range map[string]struct {
@@ -150,7 +150,7 @@ func TestRetagEveryBlock(t *testing.T) {
 	}{
 		Agent: {a, func(n Node) string {
 			s, _ := AgentSettingsOf(n, PR)
-			return s.Instruction + s.Goal + s.SystemPrompt + s.FollowUp + s.SummaryFormat
+			return s.Instruction + s.Goal + s.Additional + s.FollowUp + s.SummaryFormat
 		}},
 		Decision:  {d, func(n Node) string { s, _ := DecisionSettingsOf(n, PR); return s.Context + s.Question }},
 		CaseEntry: {CaseEntrySettings{Entry: "E {old} [[old]]"}, func(n Node) string { s, _ := CaseEntrySettingsOf(n); return s.Entry }},

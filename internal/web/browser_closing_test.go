@@ -127,6 +127,9 @@ func TestBrowserClosingStep(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "code_quality")); err != nil {
 		t.Fatal(err)
 	}
+	if got := runs(); got != "60,30,20,0,false" {
+		t.Fatalf("switching from Lens Team to Code Quality kept stale sub_agents: %q", got)
+	}
 	// Custom unlocks it; the report brings its turns.
 	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "custom")); err != nil {
 		t.Fatal(err)

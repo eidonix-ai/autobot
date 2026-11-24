@@ -66,7 +66,7 @@ func Retag(n Node, kind, old, new string) (Node, bool) {
 		if err != nil {
 			return n, false
 		}
-		fix(&s.Instruction, &s.SystemPrompt, &s.Goal, &s.SummaryFormat, &s.FollowUp)
+		fix(&s.Instruction, &s.Additional, &s.Goal, &s.SummaryFormat, &s.FollowUp)
 		settings = s
 	case Decision:
 		s, err := DecisionSettingsOf(n, kind)

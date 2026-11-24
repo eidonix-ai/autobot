@@ -60,14 +60,29 @@ const reportSentence = "The report you give finish is your final answer and the 
 
 const summarySentence = "The report you give finish is only a short summary of where you got to, a few paragraphs: the final report is written next, from your scratchpad notes, so keep your findings there and do not repeat them in full."
 
-// preambleText is the preamble for a repository; closing is whether the block's report is written
-// from its notes after the research.
+// plainPreamble is what a text-only (NoTools) agent is told: no repo/scratchpad/plan instructions.
+const plainPreamble = `You are Autobot, working on text for the GitHub repository %s.
+Follow the instructions directly and end by calling finish with status met and the finished text as the report (or blocked, saying why, if you cannot).
+Do not invent facts, links or citations.
+
+` + untrustedRule
+
+// preambleText is the research preamble for a repository; closing is whether the block's report is
+// written from its notes after the research.
 func preambleText(repo string, closing bool) string {
 	text := fmt.Sprintf(preamble, repo)
 	if closing {
 		text = strings.Replace(text, reportSentence, summarySentence, 1)
 	}
 	return text
+}
+
+// agentPreamble returns the system prompt for an agent block.
+func agentPreamble(repo string, closing, noTools bool) string {
+	if noTools {
+		return fmt.Sprintf(plainPreamble, repo)
+	}
+	return preambleText(repo, closing)
 }
 
 var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/(\d+)`)
@@ -127,9 +142,10 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 	model := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model}
 	// The system prompt is only the harness's own preamble; everything about this task is in the
 	// first message, where it can be read on the block: Instruction, Additional instructions, Done when.
-	closing := a.EffectiveClosing(kind) == workflow.ClosingReport
+	noTools := a.EffectiveNoTools()
+	closing := !noTools && a.EffectiveClosing(kind) == workflow.ClosingReport
 	base := preambleText(ws.Name, false) // the writing session's: its report is the final one
-	cfg := agent.Config{Model: model, System: preambleText(ws.Name, closing), MaxTurns: a.MaxTurns, Window: s.st.ModelWindow(ref.Provider, ref.Model),
+	cfg := agent.Config{Model: model, System: agentPreamble(ws.Name, closing, noTools), MaxTurns: a.MaxTurns, Window: s.st.ModelWindow(ref.Provider, ref.Model),
 		NoCitationMarks: !a.EffectiveCitationMarks()}
 
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
@@ -159,8 +175,10 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 			}
 		}
 		item, commit, prTools = num, info.HeadSHA, true
-		pull = &agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files}
-		cfg.Tools = append(cfg.Tools, agent.PRTools(pull)...)
+		if !noTools {
+			pull = &agent.PR{GitHub: s.gh, Token: token, Repo: ws.Name, Info: info, Files: files}
+			cfg.Tools = append(cfg.Tools, agent.PRTools(pull)...)
+		}
 		if th != nil { // what came after the thread's last run
 			values = maps.Clone(values)
 			commits, comments := s.sinceTags(ctx, ws, token, num, info.HeadSHA, th)
@@ -174,49 +192,55 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		instruction = a.FollowUp
 	}
 	// The orientation packet is computed only for a block whose text asks for it.
-	if tag := workflow.ItemTag(kind) + ":packet"; slices.Contains(workflow.TemplateTags(instruction+"\n"+a.SystemPrompt+"\n"+a.EffectiveGoal(kind)), tag) {
+	packetTag := workflow.ItemTag(kind) + ":packet"
+	if slices.Contains(workflow.TemplateTags(instruction+"\n"+a.Additional+"\n"+a.EffectiveGoal(kind)), packetTag) {
 		values = maps.Clone(values)
-		values[tag] = s.orientation(ctx, ws, token, kind, item, values, info, files)
+		values[packetTag] = s.orientation(ctx, ws, token, kind, item, values, info, files)
 	}
 	task := strings.TrimSpace(workflow.Render(instruction, values))
-	if extra := strings.TrimSpace(workflow.Render(a.SystemPrompt, values)); extra != "" {
+	if extra := strings.TrimSpace(workflow.Render(a.Additional, values)); extra != "" {
 		task += "\n\n" + extra
 	}
 	cfg.Goal = workflow.Render(a.EffectiveGoal(kind), values)
-	intro := task + "\n\nDone when: " + cfg.Goal
+	intro := task + "\n\n---\n\nDone when: " + cfg.Goal
 	cfg.Task = intro
 	if th != nil {
 		cfg.Task += s.opening(th, fresh)
 	}
-	// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
-	cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
-	cfg.Tools = append(cfg.Tools, s.charterTool(ws))
-	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
-	// request's head, or the default branch's) instead of through GitHub.
-	sess, note, err := s.openSandbox(ctx, ws, a, token, commit, by)
-	if err != nil {
-		return 0, err
-	}
+	var sess *Session
 	started := false
-	if sess != nil {
-		defer func() {
-			if !started {
-				sess.Close()
-			}
-		}()
-		cfg.System += "\n\n" + note
-		if prTools {
-			cfg.Tools = slices.DeleteFunc(cfg.Tools, func(t agent.Tool) bool { return t.Spec.Name == "read_file" || t.Spec.Name == "list_files" })
-		}
-		cfg.Tools = append(cfg.Tools, agent.SandboxTools(sess)...)
-	}
-	cfg.Tools = s.withLocalCode(ctx, ws, token, pull, sess != nil, cfg.Tools) // the code from Autobot's own copy, when it has one
-	if a.Internet {
-		searcher, err := s.searcher(ws)
+	var subs *agent.SubAgents
+	if !noTools {
+		// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
+		cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
+		cfg.Tools = append(cfg.Tools, s.charterTool(ws))
+		// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
+		// request's head, or the default branch's) instead of through GitHub.
+		var note string
+		sess, note, err = s.openSandbox(ctx, ws, a, token, commit, by)
 		if err != nil {
 			return 0, err
 		}
-		cfg.Tools = append(cfg.Tools, agent.WebTools(searcher)...)
+		if sess != nil {
+			defer func() {
+				if !started {
+					sess.Close()
+				}
+			}()
+			cfg.System += "\n\n" + note
+			if prTools {
+				cfg.Tools = slices.DeleteFunc(cfg.Tools, func(t agent.Tool) bool { return t.Spec.Name == "read_file" || t.Spec.Name == "list_files" })
+			}
+			cfg.Tools = append(cfg.Tools, agent.SandboxTools(sess)...)
+		}
+		cfg.Tools = s.withLocalCode(ctx, ws, token, pull, sess != nil, cfg.Tools) // the code from Autobot's own copy, when it has one
+		if a.Internet {
+			searcher, err := s.searcher(ws)
+			if err != nil {
+				return 0, err
+			}
+			cfg.Tools = append(cfg.Tools, agent.WebTools(searcher)...)
+		}
 	}
 	if a.Verify.Set() {
 		vp, vkey, err := s.stepModel(ws, a.Verify, true)
@@ -225,19 +249,24 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		}
 		cfg.Verify = verifier(vp, vkey, a.Verify.Model)
 	}
-	var subs *agent.SubAgents
-	if a.SubAgents > 0 {
+	if !noTools && a.SubAgents > 0 {
 		// Sub-agents have the read-only tools, and the web only if the block allows it: no shell, no sub-agents.
 		subTools := subAgentTools(cfg.Tools, a.Internet)
 		subs = &agent.SubAgents{St: s.st, ModelName: ref.Model, Provider: ref.Provider, System: fmt.Sprintf(subPreamble, ws.Name), Tools: subTools,
 			Model: func(session string) agent.Model {
 				return &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model, Session: session}
 			},
-			MaxTurns: a.MaxTurns, Window: cfg.Window, AtOnce: a.SubAgents, PerRun: a.SubAgentsPerRun}
+			MaxTurns: a.MaxTurns, Window: cfg.Window, AtOnce: a.SubAgents, PerRun: a.SubAgentsPerRun,
+			Context: subAgentContext(kind, values), NoCitationMarks: cfg.NoCitationMarks}
 		cfg.Tools = append(cfg.Tools, subs.Tool())
 		cfg.Subs = subs
 	}
-	conv := agent.NewResearchConversation(ref.Model, ref.Provider, cfg.System, cfg.Tools, closing)
+	var conv *agent.Conversation
+	if noTools {
+		conv = agent.NewPlainConversation(ref.Model, ref.Provider, cfg.System)
+	} else {
+		conv = agent.NewResearchConversation(ref.Model, ref.Provider, cfg.System, cfg.Tools, closing)
+	}
 	model.Session = conv.Session
 	var threadID int64
 	if th != nil {
@@ -377,6 +406,34 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		finish(tr)
 	}()
 	return id, nil
+}
+
+// subAgentContext builds the shared item header and orientation packet that spawn_agent prepends
+// when the main agent sets include_context: true.
+func subAgentContext(kind string, values map[string]string) string {
+	tag, label := "pr", "Pull request"
+	if kind == workflow.Issue {
+		tag, label = "issue", "Issue"
+	}
+	link := strings.TrimSpace(values[tag])
+	title := strings.TrimSpace(values[tag+":title"])
+	if link == "" && title == "" {
+		return ""
+	}
+	var b strings.Builder
+	if link != "" {
+		fmt.Fprintf(&b, "%s: %s\n", label, link)
+	}
+	if title != "" {
+		fmt.Fprintf(&b, "Title: %s\n", title)
+	}
+	if body := strings.TrimSpace(values[tag+":body"]); body != "" {
+		b.WriteString("\n" + body + "\n")
+	}
+	if pkt := strings.TrimSpace(values[tag+":packet"]); pkt != "" {
+		b.WriteString("\n" + pkt + "\n")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // runClock is the clock the time warning goes by; tests move it.

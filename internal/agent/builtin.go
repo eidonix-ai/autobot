@@ -357,7 +357,7 @@ func (s *session) compact(carry string) {
 		}
 		b.WriteString("\n")
 	}
-	s.conv.compactTo(Message{Role: "user", Content: s.cfg.Task}, Message{Role: "user", Content: strings.TrimRight(b.String(), "\n")})
+	s.conv.compactTo(Message{Role: "user", Content: s.cfg.Task + "\n\n---\n\n" + strings.TrimRight(b.String(), "\n")})
 }
 
 // tooLong reports whether a provider refused a request for being longer than its model's context.

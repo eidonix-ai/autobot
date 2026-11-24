@@ -352,7 +352,7 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch n.Type {
 	case workflow.Agent:
-		settings, err = workflow.AgentSettingsOf(n, kind)
+		settings, err = s.agentSettings(n, kind)
 	case workflow.Decision:
 		settings, err = workflow.DecisionSettingsOf(n, kind)
 	case workflow.CaseEntry:
@@ -397,15 +397,17 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			s.fail(w, err)
 			return
 		}
-		type preset struct{ Key, Label, Instruction, Goal, Closing string }
-		var presets []preset
-		for _, p := range workflow.Personas {
-			presets = append(presets, preset{p.Key, p.Label, p.InstructionFor(kind), p.GoalFor(kind), p.Closing})
+		groups, foreign, err := s.presetChoices(me(r), kind, st)
+		if err != nil {
+			s.fail(w, err)
+			return
 		}
-		data["Presets"], data["Machines"], data["Verifiers"] = presets, machines, verify
+		data["PresetGroups"], data["Foreign"], data["Machines"], data["Verifiers"] = groups, foreign, machines, verify
 		data["Instruction"], data["Goal"], data["Closing"] = st.EffectiveInstruction(kind), st.EffectiveGoal(kind), st.EffectiveClosing(kind)
+		data["SummaryFormat"] = st.EffectiveSummaryFormat(kind)
 		data["ReportTurns"], data["TimeWarn"] = st.EffectiveReportTurns(), st.EffectiveTimeWarn()
-		data["Locked"] = workflow.PersonaOf(st.Persona) != nil
+		data["Locked"] = st.OnPreset()
+		data["Missing"] = st.Persona != "custom" && !st.OnPreset()
 		data["Preamble"] = preambleText(ws.Name, st.EffectiveClosing(kind) == workflow.ClosingReport)
 		// The blocks whose conversation this one may continue: the others that start their own.
 		type source struct {
@@ -491,9 +493,17 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil {
+			// The preset's text is read from the database now; a person may give a block a preset only if it
+			// is shared or their own, or the block already follows it.
+			old, _ := workflow.AgentSettingsOf(*n, kind)
+			if a, err = s.resolved(a); err == nil {
+				err = s.checkPresetChoice(me(r), a, old)
+			}
+		}
+		if err == nil {
 			if err = a.Check(kind); err == nil {
-				if workflow.PersonaOf(a.Persona) != nil { // a preset's own text is not stored on the block
-					a.Instruction, a.Goal, a.Closing = "", "", ""
+				if a.OnPreset() { // a preset's own text is not stored on the block
+					a.Instruction, a.Goal, a.SummaryFormat, a.Closing = "", "", "", ""
 				}
 				if err = workflow.CheckTemplates(kind, outputs, a.Templates(kind)...); err == nil && a.Model.Set() {
 					err = s.checkModel(ws, a.Model, false)

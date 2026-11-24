@@ -30,6 +30,7 @@
   <nav>
     <a href="/">Workspaces</a>
     <a href="/providers">Providers</a>
+    <a href="/presets">Presets</a>
     {{if .IsAdmin}}<a href="/admin/users">Users</a>{{end}}
     <a href="/account">{{.Name}}</a>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="link">Sign out</button></form>

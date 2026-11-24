@@ -6,11 +6,26 @@ import "strings"
 // requests and one for issues. Nothing of it is hidden: the agent block shows the preset's text,
 // read-only, and the person adds their own Additional instructions (Derek, 2026-11-23). An agent
 // on a preset follows the preset as it is now, so improving a preset improves every block on it.
+//
+// The presets live in the database (Derek, 2026-11-23: shared by admins or owned by users). This
+// file keeps only the built-in ones, as SeedPresets, which are put in once when a database is new;
+// the web layer resolves a block's Persona key to the stored preset and hands it over with WithPreset.
 type Persona struct {
-	Key, Label              string
+	Key, Name, Description  string
 	Instruction, Goal       string // for pull requests
 	IssueInstruction, Issue string // for issues: the instruction and the goal
-	Closing                 string // the closing step: ClosingReport writes the report from the scratchpad; "" none
+	// Summary and IssueSummary are the format the summary of a written report follows, "" for the
+	// default (a short summary of about 300 words).
+	Summary, IssueSummary string
+	Closing               string // the closing step: ClosingReport writes the report from the scratchpad; "" none
+}
+
+// SummaryFor is the preset's summary format for a workflow of kind.
+func (p Persona) SummaryFor(kind string) string {
+	if kind == Issue {
+		return p.IssueSummary
+	}
+	return p.Summary
 }
 
 // InstructionFor is the preset's instruction for a workflow of kind.
@@ -36,6 +51,28 @@ const issueHead = "Issue: {issue}\nTitle: {issue:title}\n\n{issue:body}\n\n"
 const gatherPRHead = "Pull request: {pr}\nTitle: {pr:title}\n\n{pr:body}\n\n{pr:packet}\n\n"
 const gatherIssueHead = "Issue: {issue}\nTitle: {issue:title}\n\n{issue:body}\n\n{issue:packet}\n\n"
 
+// The summary formats of Gather Information (Derek, 2026-11-23): the writing session fills them in.
+const gatherPRSummary = `**Author:** <login (role in the project); Discord handle if the PR gives one>
+**Motivation:** <two sentences: why this is proposed, explained simply, as to a newcomer>
+**Scale:** +N / −N lines in N files
+**Proposal:**
+- <up to 5 bullets: the changes it makes>
+**Touches:**
+- <up to 3 major modules it changes, most risky first>
+**Related items:**
+- #N <title> (<open/closed/merged>): <how it relates, a few words>   (up to 5)
+**Link:** <the pull request on GitHub>
+**Autobot comments:** <anything else highly relevant, explained simply: what the description doesn't mention, work it undoes or overlaps, claims without evidence. "None." if nothing.>`
+
+const gatherIssueSummary = `**Reporter:** <login (role in the project); Discord handle if the issue gives one>
+**Problem:** <two sentences: what is wrong or asked for, explained simply, as to a newcomer>
+**Affects:**
+- <up to 3 areas of the project it concerns, most affected first>
+**Related items:**
+- #N <title> (<open/closed/merged>): <how it relates, a few words>   (up to 5)
+**Link:** <the issue on GitHub>
+**Autobot comments:** <anything else highly relevant, explained simply. "None." if nothing.>`
+
 // gatherRecord is the paragraphs on recording to the scratchpad; an issue's says "issue" where a pull request's says "change".
 const gatherRecord = `Record as you go. Every detail that could matter to someone deciding about this change goes into your scratchpad as its own entry, the moment you find it, with its link or citation. Start each title with its angle ("Related work: #477 overlaps the same files", "People: author's earlier compression series"). Lean towards recording: a detail you leave out cannot reach the report. When a fact connects to another (a commit to a pull request, an issue to a person, a claim to its evidence), say so in the entry, and record the connection itself as an entry when it matters.
 
@@ -44,9 +81,10 @@ Importance is how soon a reader should see it: high for what a reader could not 
 var issueRecord = strings.NewReplacer("this change", "this issue", "(undeclared changes, reversed or overlapping work, claims without evidence",
 	"(reversed or overlapping work, fixes that already exist, claims without evidence").Replace(gatherRecord)
 
-// Personas are the built-in presets, in the order the settings list them.
-var Personas = []Persona{
-	{Key: "gather_information", Label: "Gather Information",
+// SeedPresets are the built-in presets, put in the database once, with these keys. Their texts
+// include their heads (the link, title, description and, for Gather Information, the packet).
+var SeedPresets = []Persona{
+	{Key: "gather_information", Name: "Gather Information", Description: "Gathers everything relevant to a pull request or issue, linked and cross-referenced, with no judgement.",
 		Instruction: gatherPRHead + `You are preparing the case file for this pull request: everything relevant to it, gathered, linked and cross-referenced, for the people and agents who will decide about it later. Do not judge whether it is good or should be merged. Find out, and connect.
 
 Start from the orientation packet above: it is a map of where to look, not the answer. Cover each of these angles, as wide as it needs to be:
@@ -82,9 +120,11 @@ Start from the orientation packet above: it is a map of where to look, not the a
 ` + issueRecord + `
 
 Read the code as much as you need to understand what the issue concerns, but this is not a code review: keep implementation detail to what explains the issue. Keep what you verified apart from what is claimed, and give every fact its link or citation.`,
-		Issue:   "Every angle has been looked into and has entries in the scratchpad, and every lead in the orientation packet has been followed or noted as not relevant.",
-		Closing: ClosingReport},
-	{Key: "code_quality", Label: "Code Quality",
+		Issue:        "Every angle has been looked into and has entries in the scratchpad, and every lead in the orientation packet has been followed or noted as not relevant.",
+		Summary:      gatherPRSummary,
+		IssueSummary: gatherIssueSummary,
+		Closing:      ClosingReport},
+	{Key: "code_quality", Name: "Code Quality", Description: "Reviews a change for correctness first, then for clarity and maintainability.",
 		Instruction: prHead + `Review the change for correctness first, then for clarity and maintainability.
 Read each changed function in its surrounding code, not only the diff, and follow its callers when the change alters behaviour.
 Look for bugs: wrong conditions, unhandled errors and edge cases, races, leaks, broken invariants, and missing or weakened tests.
@@ -95,7 +135,7 @@ When the change is sound, say so plainly.`,
 		IssueInstruction: issueHead + `Look into this issue as a careful engineer: find the code involved, judge whether the report describes a real defect, and where.
 Report what is wrong, with files and lines, why, and how it could be fixed; or say plainly that the code is behaving as intended.`,
 		Issue: "The report says whether the issue is a real defect, with the files and lines involved and how it could be fixed, or that the code behaves as intended."},
-	{Key: "value_analyst", Label: "Value Analyst",
+	{Key: "value_analyst", Name: "Value Analyst", Description: "Judges whether a change is worth making for the project, against its charter.",
 		Instruction: prHead + `Judge whether this change is worth making for this project.
 Compare it with the project charter: its vision, goals, non-goals and roadmap.
 Ask who benefits and how much, and what it costs in complexity, maintenance, performance and risk.
@@ -105,7 +145,7 @@ Give a clear verdict, worth merging, worth it with changes, or not worth it, wit
 		IssueInstruction: issueHead + `Judge whether what this issue asks for is worth doing for this project, against the charter's vision, goals, non-goals and roadmap.
 Weigh who benefits against the cost in complexity, maintenance and risk, and give a clear verdict with your reasons.`,
 		Issue: "The report gives a clear verdict on whether the issue is worth doing, with reasons tied to the charter."},
-	{Key: "security", Label: "Security Reviewer",
+	{Key: "security", Name: "Security Reviewer", Description: "Looks for ways a change could be abused or could leak.",
 		Instruction: prHead + `Look for ways this change could be abused or could leak.
 Trace untrusted input to where it is used: injection, path traversal, unsafe deserialization, server-side request forgery,
 gaps in authentication and authorization, secrets in code or logs, unsafe defaults, and risky new dependencies.
@@ -114,7 +154,7 @@ For each finding give its impact and likelihood, how it could be exploited, and 
 		IssueInstruction: issueHead + `Look at this issue for its security side: whether it reveals or could lead to a vulnerability, how it could be exploited, and how severe it is.
 Do not report theoretical issues as real ones.`,
 		Issue: "The report says whether the issue has a real security side, with impact, likelihood and how it could be exploited, or that it has none."},
-	{Key: "test_engineer", Label: "Test Engineer",
+	{Key: "test_engineer", Name: "Test Engineer", Description: "Makes sure a change works and keeps working: builds it, runs the tests, proposes missing ones.",
 		Instruction: prHead + `Make sure this change works and keeps working.
 Work out how the project is built and tested, what the existing tests cover and what they miss,
 and which edge cases and failure paths need tests. When you have a machine, build the change and run the tests,
@@ -124,14 +164,4 @@ Propose the missing tests concretely.`,
 		IssueInstruction: issueHead + `Work out how to reproduce this issue. When you have a machine, build the project and try, and report exactly what you ran and what happened.
 Propose a test that would catch it.`,
 		Issue: "The report says whether the issue reproduces, with exactly what was run and what happened, and proposes a test that would catch it."},
-}
-
-// PersonaOf looks a preset up by key, or returns nil.
-func PersonaOf(key string) *Persona {
-	for i := range Personas {
-		if Personas[i].Key == key {
-			return &Personas[i]
-		}
-	}
-	return nil
 }

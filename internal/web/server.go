@@ -135,6 +135,9 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		}
 		s.pages[strings.TrimPrefix(n, "templates/")] = t
 	}
+	if err := st.SeedPresets(seedRows()); err != nil { // the built-in presets, once; the database is the authority after
+		return nil, err
+	}
 	s.routes()
 	return s, nil
 }
@@ -211,6 +214,14 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /admin/users/{id}", s.admin(s.userPage))
 	s.mux.Handle("POST /admin/users/{id}", s.admin(s.updateUser))
 
+	s.mux.Handle("GET /presets", s.auth(s.presetList))
+	s.mux.Handle("GET /presets/new", s.auth(s.presetNew))
+	s.mux.Handle("POST /presets", s.auth(s.presetCreate))
+	s.mux.Handle("GET /presets/{id}", s.auth(s.presetPage))
+	s.mux.Handle("POST /presets/{id}", s.auth(s.presetSave))
+	s.mux.Handle("POST /presets/{id}/copy", s.auth(s.presetCopy))
+	s.mux.Handle("GET /presets/{id}/remove", s.auth(s.presetRemovePage))
+	s.mux.Handle("POST /presets/{id}/remove", s.auth(s.presetRemove))
 	s.mux.Handle("GET /providers", s.auth(s.providerList))
 	s.mux.Handle("POST /providers", s.auth(s.createProvider))
 	s.mux.Handle("POST /providers/trusted", s.admin(s.saveTrusted))

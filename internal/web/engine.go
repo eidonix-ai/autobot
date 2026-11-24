@@ -452,7 +452,7 @@ func (s *Server) inputValues(rs *runState, sources []source) map[string]string {
 // that they survive a restart of Autobot between the steps.
 func (s *Server) stepParts(rs *runState, src source) map[string]string {
 	if src.node.Type == workflow.Agent && src.step.AgentRun != 0 {
-		a, err := workflow.AgentSettingsOf(src.node, rs.run.Kind)
+		a, err := s.agentSettings(src.node, rs.run.Kind)
 		run, rerr := s.st.AgentRun(src.step.AgentRun)
 		if err == nil && rerr == nil {
 			_, parts := s.agentParts(a.EffectiveClosing(rs.run.Kind) == workflow.ClosingReport, run)
@@ -589,7 +589,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 		}
 		return stepOutcome{port: "out", output: text}
 	case workflow.Agent:
-		a, err := workflow.AgentSettingsOf(n, kind)
+		a, err := s.agentSettings(n, kind)
 		if err == nil {
 			err = a.Check(kind)
 		}

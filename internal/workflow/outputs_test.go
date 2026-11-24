@@ -71,7 +71,7 @@ func TestInputTag(t *testing.T) {
 		t.Errorf("rendered %q", got)
 	}
 	// No output tag may be named like it.
-	n := DefaultAgent(PR)
+	n := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	n.OutputTo, n.Model = "input", ModelRef{Provider: 1, Model: "m"}
 	if err := n.Check(PR); err == nil || !strings.Contains(err.Error(), "built-in") {
 		t.Errorf("an output named input: %v", err)

@@ -14,7 +14,7 @@ func form(m map[string]string) AgentSettings {
 }
 
 func valid() AgentSettings {
-	s := DefaultAgent(PR)
+	s := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	s.Model = ModelRef{Provider: 1, Model: "m"}
 	return s
 }

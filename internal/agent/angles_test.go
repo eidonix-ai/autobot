@@ -22,7 +22,7 @@ func TestWriterPromptOrganizesByAngles(t *testing.T) {
 			t.Errorf("the writer prompt lacks %q", want)
 		}
 	}
-	task := WriterTask("INSTRUCTION AND DONE WHEN", nil, nil)
+	task := WriterTask("INSTRUCTION AND DONE WHEN", "", nil, nil)
 	if !strings.HasPrefix(task, "INSTRUCTION AND DONE WHEN\n\n") || !strings.Contains(task, "Nothing found") {
 		t.Errorf("the writing task: %.300s", task)
 	}

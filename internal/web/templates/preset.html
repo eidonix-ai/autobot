@@ -1,0 +1,36 @@
+{{define "content"}}
+<p class="crumbs"><a href="/presets">Presets</a> /</p>
+<h1>{{if .P}}{{.P.Name}}{{else}}New preset{{end}}</h1>
+{{if and .P (not .CanChange)}}<p class="notice">{{if .P.Shared}}This is a shared preset; only an admin can change it.{{else}}This preset is {{.P.Owner}}'s; only {{.P.Owner}} can change it.{{end}} You can copy it to your own presets.</p>{{end}}
+{{if and .P .CanChange .P.Shared}}<p class="notice">Used by {{.Use.Blocks}} block{{if ne .Use.Blocks 1}}s{{end}} in {{.Use.Workspaces}} workspace{{if ne .Use.Workspaces 1}}s{{end}}: they will follow the new text.</p>{{end}}
+<form method="post" action="{{if .P}}/presets/{{.P.ID}}{{else}}/presets{{end}}" class="stack wide">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{if not .P}}{{if .Me.IsAdmin}}<label>Who can use it
+    <select name="shared"><option value="">Only me</option><option value="1"{{if .Shared}} selected{{end}}>Everyone (shared)</option></select></label>
+  {{end}}{{end}}
+  <div class="row">
+    <label>Name <input name="name" value="{{.F.Name}}" maxlength="60" required autocomplete="off"{{if not .CanChange}} readonly{{end}}></label>
+    <label>Description <input name="description" value="{{.F.Description}}" maxlength="200" autocomplete="off"{{if not .CanChange}} readonly{{end}}></label>
+  </div>
+  <h2>For pull requests</h2>
+  <label>Instruction <textarea name="pr_instruction" rows="12" class="code" spellcheck="false" required{{if not .CanChange}} readonly{{end}}>{{.F.PRInstruction}}</textarea></label>
+  <label>Done when <textarea name="pr_goal" rows="2" class="code" spellcheck="false" required{{if not .CanChange}} readonly{{end}}>{{.F.PRGoal}}</textarea></label>
+  <label><span class="lbl">Summary format <span class="info" tabindex="0" data-tip="With the closing step that writes the report: the summary follows this format exactly. Empty: a short summary of about 300 words.">ⓘ</span></span>
+    <textarea name="pr_summary" rows="8" class="code" spellcheck="false"{{if not .CanChange}} readonly{{end}}>{{.F.PRSummary}}</textarea></label>
+  <h2>For issues</h2>
+  <label>Instruction <textarea name="issue_instruction" rows="12" class="code" spellcheck="false" required{{if not .CanChange}} readonly{{end}}>{{.F.IssueInstruction}}</textarea></label>
+  <label>Done when <textarea name="issue_goal" rows="2" class="code" spellcheck="false" required{{if not .CanChange}} readonly{{end}}>{{.F.IssueGoal}}</textarea></label>
+  <label><span class="lbl">Summary format <span class="info" tabindex="0" data-tip="With the closing step that writes the report: the summary follows this format exactly. Empty: a short summary of about 300 words.">ⓘ</span></span>
+    <textarea name="issue_summary" rows="8" class="code" spellcheck="false"{{if not .CanChange}} readonly{{end}}>{{.F.IssueSummary}}</textarea></label>
+  <label>Closing step
+    <select name="closing"{{if not .CanChange}} disabled{{end}}>
+      <option value=""{{if eq .F.Closing ""}} selected{{end}}>None: finish delivers the output</option>
+      <option value="report"{{if eq .F.Closing "report"}} selected{{end}}>Write the report from the scratchpad</option>
+    </select></label>
+  {{if .CanChange}}<div class="row"><button>Save</button>{{if .P}}<a class="button secondary" href="/presets/{{.P.ID}}/remove">Remove</a>{{end}}</div>{{end}}
+</form>
+{{if .P}}<form method="post" action="/presets/{{.P.ID}}/copy" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button class="secondary">Copy to my presets</button>
+</form>{{end}}
+{{end}}

@@ -32,7 +32,7 @@ func TestClosingStepInTheAgentForm(t *testing.T) {
 		w, _ = e.st.Workflow(ws.ID, workflow.PR)
 		var got workflow.Graph
 		json.Unmarshal([]byte(w.Graph), &got)
-		a, _ := workflow.AgentSettingsOf(got.Nodes[0], workflow.PR)
+		a, _ := e.ui.agentSettings(got.Nodes[0], workflow.PR)
 		return code, a
 	}
 	form := func() string {

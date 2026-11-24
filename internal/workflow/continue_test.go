@@ -8,7 +8,7 @@ import (
 // A block that continues another's conversation needs no model of its own; the tags of what is new
 // are for pull requests, and may be used by any template there.
 func TestContinuationSettings(t *testing.T) {
-	a := DefaultAgent(PR)
+	a := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	if err := a.Check(PR); err == nil || !strings.Contains(err.Error(), "choose a model") {
 		t.Fatalf("a block with no model: %v", err)
 	}

@@ -33,10 +33,10 @@ type tagField struct {
 var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true}
 
 // stepTemplates is a node's settings and templates, or an error saying why it cannot be tested.
-func stepTemplates(n workflow.Node, kind string) (any, []string, error) {
+func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, error) {
 	switch n.Type {
 	case workflow.Agent:
-		s, err := workflow.AgentSettingsOf(n, kind)
+		s, err := srv.agentSettings(n, kind)
 		if err == nil {
 			err = s.Check(kind)
 		}
@@ -95,7 +95,7 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 		s.renderFragment(w, r, status, "node_run.html", data)
 		return
 	}
-	_, templates, err := stepTemplates(n, kind)
+	_, templates, err := s.stepTemplates(n, kind)
 	if err != nil {
 		data["Problem"] = err.Error()
 		s.renderFragment(w, r, status, "node_test.html", data)
@@ -149,7 +149,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := g.Nodes[i]
-	settings, _, err := stepTemplates(n, kind)
+	settings, _, err := s.stepTemplates(n, kind)
 	if err != nil {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, nil, map[string]any{})
 		return

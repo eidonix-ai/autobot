@@ -58,7 +58,7 @@ func TestParentAndFieldTags(t *testing.T) {
 		}
 	}
 	// Every preset uses the new names only.
-	for _, p := range Personas {
+	for _, p := range SeedPresets {
 		for _, text := range []string{p.Instruction, p.Goal, p.IssueInstruction, p.Issue} {
 			for _, tag := range TemplateTags(text) {
 				if CanonicalTag(tag, PR) != tag {
@@ -70,7 +70,7 @@ func TestParentAndFieldTags(t *testing.T) {
 }
 
 func TestStepSettings(t *testing.T) {
-	a := DefaultAgent(PR)
+	a := DefaultAgent(PR).WithPreset(seed("gather_information"))
 	if a.Check(PR) == nil {
 		t.Fatal("an agent with no model passed")
 	}

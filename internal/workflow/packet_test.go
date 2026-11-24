@@ -37,7 +37,7 @@ func TestPacketTags(t *testing.T) {
 // Gather Information carries the orientation packet in its head, names the angles, and ends with its
 // exact Done when; no other preset carries the packet.
 func TestGatherInformationPreset(t *testing.T) {
-	g := PersonaOf("gather_information")
+	g := seed("gather_information")
 	if g == nil {
 		t.Fatal("no Gather Information preset")
 	}
@@ -76,7 +76,7 @@ func TestGatherInformationPreset(t *testing.T) {
 	if g.Closing != ClosingReport {
 		t.Errorf("closing %q", g.Closing)
 	}
-	for _, p := range Personas {
+	for _, p := range SeedPresets {
 		if p.Key == "gather_information" {
 			continue
 		}

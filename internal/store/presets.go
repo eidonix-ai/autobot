@@ -24,8 +24,10 @@ CREATE TABLE presets (
 	owner_id          INTEGER REFERENCES users(id),
 	pr_instruction    TEXT    NOT NULL,
 	pr_goal           TEXT    NOT NULL,
+	pr_summary        TEXT    NOT NULL DEFAULT '',
 	issue_instruction TEXT    NOT NULL,
 	issue_goal        TEXT    NOT NULL,
+	issue_summary     TEXT    NOT NULL DEFAULT '',
 	closing           TEXT    NOT NULL DEFAULT '',
 	created_at        INTEGER NOT NULL,
 	updated_at        INTEGER NOT NULL,
@@ -41,8 +43,8 @@ type Preset struct {
 	Description string // one line
 	OwnerID     int64  // 0 for a shared preset
 	Owner       string // the owner's name; "" when shared
-	PRInstruction, PRGoal,
-	IssueInstruction, IssueGoal string
+	PRInstruction, PRGoal, PRSummary,
+	IssueInstruction, IssueGoal, IssueSummary string // a summary format is "" for the default summary
 	Closing   string // "" or "report"
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -51,15 +53,15 @@ type Preset struct {
 // Shared reports whether the preset belongs to everyone.
 func (p Preset) Shared() bool { return p.OwnerID == 0 }
 
-const presetCols = `p.id, p.key, p.name, p.description, COALESCE(p.owner_id, 0), COALESCE(` + authorName + `, ''), p.pr_instruction, p.pr_goal,
-	p.issue_instruction, p.issue_goal, p.closing, p.created_at, p.updated_at`
+const presetCols = `p.id, p.key, p.name, p.description, COALESCE(p.owner_id, 0), COALESCE(` + authorName + `, ''), p.pr_instruction, p.pr_goal, p.pr_summary,
+	p.issue_instruction, p.issue_goal, p.issue_summary, p.closing, p.created_at, p.updated_at`
 
 const presetFrom = ` FROM presets p LEFT JOIN users u ON u.id = p.owner_id`
 
 func scanPreset(r interface{ Scan(...any) error }) (*Preset, error) {
 	var p Preset
 	var created, updated int64
-	err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Description, &p.OwnerID, &p.Owner, &p.PRInstruction, &p.PRGoal, &p.IssueInstruction, &p.IssueGoal,
+	err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Description, &p.OwnerID, &p.Owner, &p.PRInstruction, &p.PRGoal, &p.PRSummary, &p.IssueInstruction, &p.IssueGoal, &p.IssueSummary,
 		&p.Closing, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -160,7 +162,8 @@ func CheckPreset(p *Preset) error {
 		return invalid("write the instruction for pull requests and for issues")
 	case strings.TrimSpace(p.PRGoal) == "" || strings.TrimSpace(p.IssueGoal) == "":
 		return invalid("say when the work is done, for pull requests and for issues")
-	case len(p.PRInstruction) > MaxPresetText || len(p.PRGoal) > MaxPresetText || len(p.IssueInstruction) > MaxPresetText || len(p.IssueGoal) > MaxPresetText:
+	case len(p.PRInstruction) > MaxPresetText || len(p.PRGoal) > MaxPresetText || len(p.IssueInstruction) > MaxPresetText || len(p.IssueGoal) > MaxPresetText ||
+		len(p.PRSummary) > MaxPresetText || len(p.IssueSummary) > MaxPresetText:
 		return invalid("the texts are limited to %d characters each", MaxPresetText)
 	case p.Closing != "" && p.Closing != "report":
 		return invalid("choose a closing step")
@@ -182,9 +185,9 @@ func (s *Store) CreatePreset(p Preset, actor *User) (*Preset, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, issue_instruction, issue_goal, closing, created_at, updated_at, updated_by)
-		VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?)`, key, p.Name, p.Description, p.OwnerID, p.PRInstruction, p.PRGoal, p.IssueInstruction, p.IssueGoal,
-		p.Closing, now(), now(), actor.ID)
+	res, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, created_at, updated_at, updated_by)
+		VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, key, p.Name, p.Description, p.OwnerID, p.PRInstruction, p.PRGoal, p.PRSummary,
+		p.IssueInstruction, p.IssueGoal, p.IssueSummary, p.Closing, now(), now(), actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +204,9 @@ func (s *Store) UpdatePreset(id int64, p Preset, actor *User) error {
 	if err := CheckPreset(&p); err != nil {
 		return err
 	}
-	res, err := s.db.Exec(`UPDATE presets SET name = ?, description = ?, pr_instruction = ?, pr_goal = ?, issue_instruction = ?, issue_goal = ?,
-		closing = ?, updated_at = ?, updated_by = ? WHERE id = ?`, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.IssueInstruction, p.IssueGoal,
-		p.Closing, now(), actor.ID, id)
+	res, err := s.db.Exec(`UPDATE presets SET name = ?, description = ?, pr_instruction = ?, pr_goal = ?, pr_summary = ?, issue_instruction = ?, issue_goal = ?, issue_summary = ?,
+		closing = ?, updated_at = ?, updated_by = ? WHERE id = ?`, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+		p.IssueSummary, p.Closing, now(), actor.ID, id)
 	if err != nil {
 		return err
 	}
@@ -233,8 +236,9 @@ func (s *Store) SeedPresets(seeds []Preset) error {
 		return err
 	}
 	for _, p := range seeds {
-		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, issue_instruction, issue_goal, closing, created_at, updated_at)
-			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.IssueInstruction, p.IssueGoal, p.Closing, now(), now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+			p.IssueSummary, p.Closing, now(), now()); err != nil {
 			return err
 		}
 	}

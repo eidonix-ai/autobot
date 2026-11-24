@@ -1,0 +1,11 @@
+{{define "content"}}
+<p class="crumbs"><a href="/presets">Presets</a> / <a href="/presets/{{.P.ID}}">{{.P.Name}}</a> /</p>
+<h1>Remove {{.P.Name}}?</h1>
+{{if .Use.Blocks}}<p class="notice">{{.Use.Blocks}} block{{if ne .Use.Blocks 1}}s{{end}} in {{.Use.Workspaces}} workspace{{if ne .Use.Workspaces 1}}s{{end}} follow{{if eq .Use.Blocks 1}}s{{end}} it. Each will switch to Custom and keep this preset's text as its own, so nothing is lost.</p>
+{{else}}<p class="muted">No block follows it.</p>{{end}}
+<form method="post" action="/presets/{{.P.ID}}/remove" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button class="danger">Remove preset</button>
+  <a class="button secondary" href="/presets/{{.P.ID}}">Cancel</a>
+</form>
+{{end}}

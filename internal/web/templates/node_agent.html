@@ -13,10 +13,12 @@
       </select></label>
     <label>Preset
       <select name="persona" data-preset>
-        {{range .Presets}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}" data-closing="{{.Closing}}"{{if eq $.S.Persona .Key}} selected{{end}}>{{.Label}}</option>{{end}}
+        {{range .PresetGroups}}<optgroup label="{{.Label}}">{{range .Options}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}" data-summary="{{.Summary}}" data-closing="{{.Closing}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</optgroup>{{end}}
         <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
       </select></label>
   </div>
+  {{if .Missing}}<p class="error">The preset “{{.S.Persona}}” no longer exists. Choose another preset, or Custom.</p>{{end}}
+  {{with .Foreign}}<p class="muted">This preset is {{.Owner}}'s. <a href="/presets/{{.ID}}" target="_blank" rel="noopener">Copy to my presets</a></p>{{end}}
   <div class="row">
     <label>Continue the conversation of
       <select name="continue_of" data-continue>
@@ -35,6 +37,8 @@
     <textarea name="system_prompt" rows="3" class="code" spellcheck="false">{{.S.SystemPrompt}}</textarea></label>
   <label><span class="lbl">Done when <span class="info" tabindex="0" data-tip="The goal. The agent can only finish once it is met, or by saying why it cannot be.">ⓘ</span></span>
     <textarea name="goal" rows="2" class="code" spellcheck="false" required{{if .Locked}} readonly{{end}}>{{.Goal}}</textarea></label>
+  <label data-when-report{{if ne .Closing "report"}} hidden{{end}}><span class="lbl">Summary format <span class="info" tabindex="0" data-tip="The preset's, read-only. The summary of the written report follows it exactly. Empty: a short summary of about 300 words.">ⓘ</span></span>
+    <textarea name="summary_format" rows="6" class="code" spellcheck="false"{{if .Locked}} readonly{{end}}>{{.SummaryFormat}}</textarea></label>
   <div class="row">
     <label><span class="lbl">Closing step <span class="info" tabindex="0" data-tip="The preset's, read-only. Write the report: research notes go to the scratchpad, and a fresh session writes the report from them.">ⓘ</span></span>
       <select name="closing" data-closing{{if .Locked}} disabled{{end}}>

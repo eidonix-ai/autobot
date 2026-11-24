@@ -248,7 +248,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		wconv = agent.NewWriterConversation(ref.Model, ref.Provider, base, wtools)
 		wmodel := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model, Session: wconv.Session}
 		writer = agent.Writer{Config: agent.Config{Model: wmodel, System: base, Tools: wtools, MaxTurns: a.EffectiveReportTurns(), RunID: id, Window: cfg.Window},
-			Conv: wconv, Intro: intro, Time: reportMinutes * time.Minute, WarnPercent: a.EffectiveTimeWarn()}
+			Conv: wconv, Intro: intro, SummaryFormat: strings.TrimSpace(workflow.Render(a.EffectiveSummaryFormat(kind), values)), Time: reportMinutes * time.Minute, WarnPercent: a.EffectiveTimeWarn()}
 	}
 	flush := func(row int64, c *agent.Conversation) {
 		if err := c.Write(func(evs ...store.ConvEvent) error { return s.st.AppendConv(row, evs...) }); err != nil {

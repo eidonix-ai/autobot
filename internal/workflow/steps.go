@@ -78,8 +78,11 @@ type AgentSettings struct {
 	SystemPrompt string   `json:"system_prompt"` // a template: Additional instructions, added after the Instruction
 	Instruction  string   `json:"instruction"`   // a template: the task, sent as the first message
 	Goal         string   `json:"goal"`          // a template: when the work is done; the agent may finish only then
-	Internet     bool     `json:"internet"`      // web search and fetching pages
-	SubAgents    int      `json:"sub_agents"`    // how many sub-agents it may have working at once; 0 for none
+	// SummaryFormat (Custom only) is the format the summary of a written report follows; "" for the
+	// default, a short summary of about 300 words. Only a block with the closing step "report" has one.
+	SummaryFormat string `json:"summary_format,omitempty"`
+	Internet      bool   `json:"internet"`   // web search and fetching pages
+	SubAgents     int    `json:"sub_agents"` // how many sub-agents it may have working at once; 0 for none
 	// SubAgentsPerRun, when above 0, is how many sub-agents one run may start in all.
 	SubAgentsPerRun int `json:"sub_agents_per_run,omitempty"`
 	// TimeWarnPercent is how much of the time limit is left when every session of the run still working
@@ -103,7 +106,20 @@ type AgentSettings struct {
 	// workflow go on, "fresh" starts a conversation of its own with its Instruction.
 	ContinueOf     string `json:"continue_of,omitempty"`
 	NoConversation string `json:"no_conversation,omitempty"`
+
+	// preset is the preset Persona names, as the database has it now; the web layer finds it and hands
+	// it over with WithPreset. Nil for Custom, and for a block whose preset no longer exists (Check says so).
+	preset *Persona
 }
+
+// WithPreset returns the settings with the preset their Persona key names.
+func (s AgentSettings) WithPreset(p *Persona) AgentSettings {
+	s.preset = p
+	return s
+}
+
+// OnPreset reports whether the block follows a preset's text rather than its own.
+func (s AgentSettings) OnPreset() bool { return s.preset != nil }
 
 // Continues reports whether the block continues another block's conversation.
 func (s AgentSettings) Continues() bool { return s.ContinueOf != "" }
@@ -133,12 +149,12 @@ type DecisionSettings struct {
 // DefaultAgent is a new agent node's settings, for a workflow of kind.
 func DefaultAgent(kind string) AgentSettings {
 	// A preset's Instruction and Done when are its own: the block stores only which preset.
-	return AgentSettings{Persona: Personas[0].Key, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
+	return AgentSettings{Persona: SeedPresets[0].Key, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
 }
 
 // EffectiveInstruction is the instruction the agent is given: its preset's, or its own when Custom.
 func (s AgentSettings) EffectiveInstruction(kind string) string {
-	if p := PersonaOf(s.Persona); p != nil {
+	if p := s.preset; p != nil {
 		return p.InstructionFor(kind)
 	}
 	return s.Instruction
@@ -166,7 +182,7 @@ const DefaultReportTurns = 15
 
 // EffectiveClosing is the closing step: its preset's, or its own when Custom.
 func (s AgentSettings) EffectiveClosing(kind string) string {
-	if p := PersonaOf(s.Persona); p != nil {
+	if p := s.preset; p != nil {
 		return p.Closing
 	}
 	return s.Closing
@@ -180,9 +196,18 @@ func (s AgentSettings) EffectiveReportTurns() int {
 	return s.ReportTurns
 }
 
+// EffectiveSummaryFormat is the format of the written report's summary: its preset's, or its own
+// when Custom; "" for the default.
+func (s AgentSettings) EffectiveSummaryFormat(kind string) string {
+	if p := s.preset; p != nil {
+		return p.SummaryFor(kind)
+	}
+	return s.SummaryFormat
+}
+
 // EffectiveGoal is the Done when the agent is held to: its preset's, or its own when Custom.
 func (s AgentSettings) EffectiveGoal(kind string) string {
-	if p := PersonaOf(s.Persona); p != nil {
+	if p := s.preset; p != nil {
 		return p.GoalFor(kind)
 	}
 	return s.Goal
@@ -252,13 +277,15 @@ func (s AgentSettings) Check(kind string) error {
 		return errors.New("choose a model")
 	case s.NoConversation != "" && s.NoConversation != "skip" && s.NoConversation != "fresh":
 		return errors.New("choose what to do when the item has no earlier report")
-	case PersonaOf(s.Persona) == nil && s.Persona != "custom":
+	case s.preset == nil && s.Persona != "custom" && s.Persona != "":
+		return errors.New("the preset no longer exists: choose a preset, or Custom")
+	case s.preset == nil && s.Persona != "custom":
 		return errors.New("choose a preset, or Custom")
 	case strings.TrimSpace(s.EffectiveInstruction(kind)) == "":
 		return errors.New("write the instruction")
 	case strings.TrimSpace(s.EffectiveGoal(kind)) == "":
 		return errors.New("say when the work is done")
-	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate:
+	case len(s.Instruction) > maxTemplate || len(s.SystemPrompt) > maxTemplate || len(s.FollowUp) > maxTemplate || len(s.Goal) > maxTemplate || len(s.SummaryFormat) > maxTemplate:
 		return fmt.Errorf("prompts are limited to %d characters", maxTemplate)
 	case s.SubAgents < 0 || s.SubAgents > 16:
 		return errors.New("sub-agents at a time are 0 to 16")
@@ -282,7 +309,7 @@ func (s AgentSettings) Check(kind string) error {
 
 // Templates are the agent's templates, for checking and filling their tags.
 func (s AgentSettings) Templates(kind string) []string {
-	return []string{s.EffectiveInstruction(kind), s.SystemPrompt, s.EffectiveGoal(kind), s.FollowUp}
+	return []string{s.EffectiveInstruction(kind), s.SystemPrompt, s.EffectiveGoal(kind), s.EffectiveSummaryFormat(kind), s.FollowUp}
 }
 
 // Templates are the decision's templates.
@@ -334,16 +361,17 @@ func (s DecisionSettings) ChoiceLines() string {
 // AgentFromForm reads an agent's settings from its form; the model is the web layer's to fill in.
 func AgentFromForm(get func(string) string, all func(string) []string) AgentSettings {
 	s := AgentSettings{
-		Persona:      get("persona"),
-		SystemPrompt: strings.TrimSpace(get("system_prompt")),
-		Instruction:  strings.TrimSpace(get("instruction")),
-		Goal:         strings.TrimSpace(get("goal")),
-		Internet:     get("internet") == "on",
-		Rerun:        get("rerun"),
-		Closing:      get("closing"),
-		FollowUp:     strings.TrimSpace(get("follow_up")),
-		OutputTo:     strings.TrimSpace(get("output_to")),
-		Machines:     []int64{},
+		Persona:       get("persona"),
+		SystemPrompt:  strings.TrimSpace(get("system_prompt")),
+		Instruction:   strings.TrimSpace(get("instruction")),
+		Goal:          strings.TrimSpace(get("goal")),
+		SummaryFormat: strings.TrimSpace(get("summary_format")),
+		Internet:      get("internet") == "on",
+		Rerun:         get("rerun"),
+		Closing:       get("closing"),
+		FollowUp:      strings.TrimSpace(get("follow_up")),
+		OutputTo:      strings.TrimSpace(get("output_to")),
+		Machines:      []int64{},
 	}
 	if s.ContinueOf = get("continue_of"); s.ContinueOf != "" {
 		s.NoConversation = get("no_conversation")

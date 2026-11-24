@@ -111,7 +111,7 @@ const reportMinutes = 10
 // on a continuation or a re-run that resumes, it opens with the thread's last report, its scratchpad
 // and what is new. chooseThread answers errNoConversation when there is nothing to continue and the
 // block is set to skip, and store.ErrThreadBusy while the thread has a run in progress.
-func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a workflow.AgentSettings, values map[string]string, by *store.User, test bool, item int) (int64, error) {
+func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind string, n workflow.Node, a workflow.AgentSettings, values map[string]string, by *store.User, test bool, item int) (int64, error) {
 	th, err := s.chooseThread(ws, kind, n, a, item, test)
 	if err != nil {
 		return 0, err
@@ -131,7 +131,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	base := preambleText(ws.Name, false) // the writing session's: its report is the final one
 	cfg := agent.Config{Model: model, System: preambleText(ws.Name, closing), MaxTurns: a.MaxTurns, Window: s.st.ModelWindow(ref.Provider, ref.Model)}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	commit, token := "", ""
 	if id, err := s.st.GitHub(ws.ID); err == nil {
@@ -296,7 +296,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	// notes what the run saw of the item only when the run came to a report.
 	reportKept := false
 	finish := func(tr *agent.Transcript) {
-		if strings.TrimSpace(tr.Report) != "" {
+		if strings.TrimSpace(tr.Report) != "" && tr.Outcome != agent.Stopped { // a stopped run leaves no report in its thread
 			tr.EnsureSummary()
 			if !reportKept {
 				reportKept = true
@@ -311,7 +311,12 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		save(tr, tr.Outcome)
 	}
 	started = true
+	// The run's own context: the parent's (a workflow run's, whose stop ends it; a test's has none), with
+	// a cancel of its own kept by the run's id for the agent run page's Stop.
+	rctx, stop := context.WithCancelCause(parent)
+	release := s.running.add(liveKey{agent: true, id: id}, stop)
 	go func() {
+		defer release()
 		defer survive(fmt.Sprintf("agent run %d", id), func(msg string) {
 			// A crash keeps what the run had: the written report if there is one, else the research's,
 			// else the notes, and the run's outcome so far.
@@ -340,16 +345,20 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 		if sess != nil {
 			defer sess.Close()
 			// The agent's time starts once its sandbox has the code and takes commands.
-			rctx, cancel := context.WithTimeout(context.Background(), sandboxSetup)
-			err := sess.Ready(rctx)
+			sctx, cancel := context.WithTimeout(rctx, sandboxSetup)
+			err := sess.Ready(sctx)
 			cancel()
+			if agent.IsStopped(rctx) {
+				save(&agent.Transcript{Outcome: agent.Stopped, Error: context.Cause(rctx).Error()}, agent.Stopped)
+				return
+			}
 			if err != nil {
 				save(&agent.Transcript{Outcome: agent.Failed, Error: "the sandbox did not start: " + err.Error()}, agent.Failed)
 				return
 			}
 		}
 		limit := time.Duration(a.MaxMinutes) * time.Minute
-		ctx, cancel := context.WithTimeout(context.Background(), limit)
+		ctx, cancel := context.WithTimeout(rctx, limit)
 		defer cancel()
 		// Every session still working is told once when a share of the time is left.
 		cfg.Now = runClock

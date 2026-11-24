@@ -58,6 +58,7 @@ type Server struct {
 	fails        loginFails // failed sign-ins by account
 	poll         *poller    // what the poller remembers in memory
 	repos        *repo.Mirrors
+	running      liveRuns // the workflow runs and agent runs going on, to stop them (see stop.go)
 }
 
 // GitHub is what the web interface asks of GitHub. *github.Client is the real one; tests use a fake.
@@ -209,8 +210,10 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.testForm))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.runTest))
 	s.mux.Handle("GET /w/{owner}/{repo}/agent-runs/{id}", s.auth(s.agentRun))
+	s.mux.Handle("POST /w/{owner}/{repo}/agent-runs/{id}/stop", s.auth(s.stopAgentRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/run", s.auth(s.runWorkflow))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflow-runs/{id}", s.auth(s.workflowRun))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/stop", s.auth(s.stopWorkflowRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/approvals/{approval}", s.auth(s.decideOnPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/models", s.auth(s.modelsPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/members", s.auth(s.membersPage))

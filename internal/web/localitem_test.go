@@ -74,7 +74,7 @@ func TestTestIsFilledFromTheLocalCopy(t *testing.T) {
 	e.st.LendProvider(p, []int64{ws.ID}, derek)
 	a, _ := e.ui.resolved(workflow.DefaultAgent(workflow.PR))
 	a.Model, a.Internet = workflow.ModelRef{Provider: p.ID, Model: "m"}, false
-	id, err := e.ui.startAgent(ws, workflow.PR, workflow.Node{ID: "ag", Type: workflow.Agent, Name: "Gather"}, a, v, derek, true, 3)
+	id, err := e.ui.startAgent(context.Background(), ws, workflow.PR, workflow.Node{ID: "ag", Type: workflow.Agent, Name: "Gather"}, a, v, derek, true, 3)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}

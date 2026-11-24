@@ -229,6 +229,31 @@ type runState struct {
 	builtIn map[string]string
 	tags    map[string]string // output tags: the case's, then this run's
 	by      *store.User
+	// ctx is the run's: a person's stop cancels it (see stop.go), and every step's context derives from it.
+	// It is nil for a state built by hand in a test.
+	ctx context.Context
+}
+
+// context is the run's context.
+func (rs *runState) context() context.Context {
+	if rs.ctx == nil {
+		return context.Background()
+	}
+	return rs.ctx
+}
+
+// stopped says whether a person has stopped the run. From then on nothing it runs may write a tag, a
+// case entry or a post.
+func (rs *runState) stopped() bool { return rs.ctx != nil && agent.IsStopped(rs.ctx) }
+
+// errStopped is how a step ends that a person's stop cut short.
+func (rs *runState) errStopped() error {
+	if rs.ctx != nil {
+		if cause := context.Cause(rs.ctx); cause != nil {
+			return cause
+		}
+	}
+	return agent.ErrStopped
 }
 
 // startWorkflow starts a run of a kind's workflow on an item from an event node, and returns its id.
@@ -291,10 +316,7 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	rs.run = run
-	go func() {
-		defer survive(fmt.Sprintf("workflow run %d", rs.run.ID), func(msg string) { s.st.FinishWorkflowRun(rs.run.ID, "failed") })
-		s.drive(rs)
-	}()
+	s.launch(rs)
 	return id, nil
 }
 
@@ -368,7 +390,7 @@ func (s *Server) drive(rs *runState) {
 				o := stepOutcome{err: errors.New("the step crashed")}
 				defer func() { results <- finished{n.ID, o} }()
 				defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
-				ctx, cancel := context.WithTimeout(context.Background(), 15*24*time.Hour)
+				ctx, cancel := context.WithTimeout(rs.context(), 15*24*time.Hour)
 				defer cancel()
 				o = s.awaitApproval(ctx, rs, n)
 			}(n)
@@ -378,6 +400,9 @@ func (s *Server) drive(rs *runState) {
 		for progressed := true; progressed; {
 			progressed = false
 			for _, n := range rs.g.Nodes {
+				if rs.stopped() { // a stopped run starts nothing more
+					break
+				}
 				st := steps[n.ID]
 				if st.Status != "pending" {
 					continue
@@ -425,6 +450,14 @@ func (s *Server) drive(rs *runState) {
 		f := <-results
 		running--
 		st := steps[f.id]
+		if rs.stopped() { // whatever it came to, it ended after the stop: it writes nothing
+			st.Status, st.FinishedAt, st.Port, st.Output, st.Error = "stopped", time.Now(), "", "", ""
+			if f.o.agentRun != 0 {
+				st.AgentRun = f.o.agentRun
+			}
+			save(st)
+			continue
+		}
 		st.FinishedAt, st.Port, st.Output, st.AgentRun = time.Now(), f.o.port, f.o.output, f.o.agentRun
 		st.Status = "done"
 		if f.o.err != nil {
@@ -437,6 +470,15 @@ func (s *Server) drive(rs *runState) {
 			s.keepTag(rs, nodes[f.id], st.Output, f.o.tags)
 			s.writeResult(rs, nodes[f.id], f.o)
 		}
+	}
+	if rs.stopped() { // the person's stop marks the run, its steps and its approvals
+		by := ""
+		var stop *agent.StopError
+		if errors.As(context.Cause(rs.ctx), &stop) {
+			by = stop.By
+		}
+		s.markStopped(rs.run.ID, by)
+		return
 	}
 	status := "done"
 	for _, st := range steps {
@@ -504,7 +546,7 @@ func (s *Server) stepParts(rs *runState, src source) map[string]string {
 // last write left.
 func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map[string]string) {
 	name := rs.g.OutputNames(rs.run.Kind)[n.ID]
-	if name == "" {
+	if name == "" || rs.stopped() {
 		return
 	}
 	if parts == nil {
@@ -540,7 +582,7 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map
 // step's name, its summary (its report when it has none), and links to the full report and the notes as
 // published pages; a Decision's is one line: the choice, how sure the model was, and what the choice means.
 func (s *Server) writeResult(rs *runState, n workflow.Node, o stepOutcome) {
-	if rs.run.DryRun {
+	if rs.run.DryRun || rs.stopped() {
 		return
 	}
 	kind, name := rs.run.Kind, workflow.DisplayName(n)
@@ -626,7 +668,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	if n.Type == workflow.Approval {
 		limit = 15 * 24 * time.Hour // a person may take up to two weeks
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	ctx, cancel := context.WithTimeout(rs.context(), limit)
 	defer cancel()
 	switch n.Type {
 	case workflow.Decision:
@@ -745,6 +787,9 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 	if rs.run.DryRun {
 		return stepOutcome{port: "out", output: text, note: "dry run: not posted"}
 	}
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
+	}
 	var reports []string
 	failed := false
 	report := func(where string, o stepOutcome) {
@@ -773,6 +818,9 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 // commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
 // file. Every run adds a comment; none is ever edited.
 func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, trial bool, text string) stepOutcome {
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
+	}
 	if trial {
 		if err := s.writeEntry(rs, n, "**Would post on GitHub:**\n\n"+text, true); err != nil {
 			return stepOutcome{err: err}
@@ -826,6 +874,10 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 	for {
 		select {
 		case <-ctx.Done():
+			s.st.RequestCancel(run.ID) // the test run on the machine stops too
+			if rs.stopped() {
+				return stepOutcome{err: rs.errStopped()}
+			}
 			return stepOutcome{err: errors.New("stopped waiting for the test run")}
 		case <-deadline:
 			s.st.RequestCancel(run.ID)
@@ -856,6 +908,9 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 // writeEntry writes a case entry under the node's name: it revises the node's open draft, or
 // starts one, and finalizes it when asked.
 func (s *Server) writeEntry(rs *runState, n workflow.Node, text string, finalize bool) error {
+	if rs.stopped() {
+		return rs.errStopped()
+	}
 	c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
 	if errors.Is(err, store.ErrNotFound) {
 		c, err = s.caseForRun(rs)
@@ -900,7 +955,7 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 	waited := time.Now()
 	var id int64
 	for {
-		id, err = s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
+		id, err = s.startAgent(rs.context(), rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
 		if !errors.Is(err, store.ErrThreadBusy) {
 			break
 		}
@@ -909,6 +964,9 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		}
 		select {
 		case <-ctx.Done():
+			if rs.stopped() {
+				return stepOutcome{err: rs.errStopped()}
+			}
 			return stepOutcome{err: errors.New("stopped waiting for the conversation's run in progress")}
 		case <-time.After(convWait):
 		}
@@ -919,11 +977,21 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 	if err != nil {
 		return stepOutcome{err: err}
 	}
+	// The page of a running step links to its agent run, and a Stop there stops the whole workflow run.
+	if err := s.st.SetStepAgentRun(rs.run.ID, n.ID, id); err != nil {
+		log.Printf("workflow run %d: %v", rs.run.ID, err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return stepOutcome{agentRun: id, err: errors.New("the agent did not end in time")}
 		case <-time.After(agentPoll):
+		}
+		if rs.stopped() { // the agent was stopped with the run; give it a moment to close its session
+			s.running.wait(liveKey{agent: true, id: id})
+			return stepOutcome{agentRun: id, err: rs.errStopped()}
+		}
+		if ctx.Err() != nil {
+			return stepOutcome{agentRun: id, err: errors.New("the agent did not end in time")}
 		}
 		run, err := s.st.AgentRun(id)
 		if err != nil {

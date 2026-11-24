@@ -2,7 +2,11 @@
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/workflows/{{.Run.Kind}}">Workflows</a> /</p>
 <h1>{{.Run.NodeName}}{{if .Run.Test}} <span class="muted">test</span>{{end}}</h1>
 <div id="run-head" data-live>
-<p class="status"><span class="dot {{.Dot}}"></span> {{.Outcome}} · {{.Run.Model}} · {{.T.Turns}} turn{{if ne .T.Turns 1}}s{{end}} · {{.T.In}} tokens in{{with .Cache}} ({{.}}){{end}}, {{.T.Out}} out · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if not .Run.FinishedAt.IsZero}}, took {{.Took}}{{end}}</p>
+<p class="status"><span class="dot {{.Dot}}"></span> {{.Outcome}}{{if not .Run.StoppedAt.IsZero}} by {{.Run.StoppedBy}} {{ts .Run.StoppedAt}}{{end}} · {{.Run.Model}} · {{.T.Turns}} turn{{if ne .T.Turns 1}}s{{end}} · {{.T.In}} tokens in{{with .Cache}} ({{.}}){{end}}, {{.T.Out}} out · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if not .Run.FinishedAt.IsZero}}, took {{.Took}}{{end}}</p>
+{{if eq .Run.Status "running"}}<form method="post" action="{{.WS.Path}}/agent-runs/{{.Run.ID}}/stop" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button class="danger">Stop</button>{{if not .Run.Test}}<span class="muted">stops the whole workflow run</span>{{end}}
+</form>{{end}}
 {{with .MainLine}}<p class="status muted">{{.}}</p>{{end}}
 {{with .WriterLine}}<p class="status muted">{{.}}</p>{{end}}
 {{with .T.Error}}<p class="error">{{.}}</p>{{end}}

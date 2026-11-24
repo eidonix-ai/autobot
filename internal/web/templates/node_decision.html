@@ -25,7 +25,9 @@
         <option value="probabilities"{{if eq .S.Output "probabilities"}} selected{{end}}>The decision and each choice's probability</option>
       </select></label>
     </div>
+  {{if ne .Kind "discord"}}
   <label class="check"><input type="checkbox" name="case_entry"{{if .S.WritesToCase}} checked{{end}}> Write to the case file <span class="info" tabindex="0" data-tip="Adds this step's result to the case file when it finishes.">ⓘ</span></label>
+  {{end}}
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

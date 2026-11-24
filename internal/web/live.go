@@ -43,6 +43,9 @@ func (s *Server) setLive(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if kind == workflow.Discord {
+		s.discordHub.Poke()
+	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
@@ -59,7 +62,16 @@ func (s *Server) goLive(ctx context.Context, ws *store.Workspace, kind string, s
 		}
 	}
 	if len(events) == 0 {
+		if kind == workflow.Discord {
+			return "Add a Discord Mention event block before switching it live."
+		}
 		return "Add an event block, such as PR First Ready, before switching it live."
+	}
+	if kind == workflow.Discord {
+		if b, _ := s.bot(ws); b == nil {
+			return "Set up a Discord bot in workspace Settings before switching the Discord workflow live."
+		}
+		return ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
@@ -69,9 +81,22 @@ func (s *Server) goLive(ctx context.Context, ws *store.Workspace, kind string, s
 	return ""
 }
 
-// pollView adds to a workflow page what the poller has to show: whether it is live, what it
-// decided lately, and what is wrong.
+// pollView adds to a workflow page what the poller (or Discord Gateway) has to show: whether it is
+// live, what it decided lately, and what is wrong.
 func (s *Server) pollView(data map[string]any, ws *store.Workspace, kind string, stored *store.StoredWorkflow, g workflow.Graph) {
+	if kind == workflow.Discord {
+		data["Live"] = stored.Live
+		st := s.discordHub.getStatus(ws.ID)
+		if stored.Live && st.Connected && st.BotName != "" {
+			data["LiveStatus"] = "Listening on Discord as " + st.BotName
+		}
+		if p := s.poll.problem(ws.ID, kind); p != "" {
+			data["LiveProblem"] = p
+		} else if stored.Live && st.Problem != "" {
+			data["LiveProblem"] = st.Problem
+		}
+		return
+	}
 	names, _ := canvasFacts(g)
 	type line struct {
 		At         time.Time

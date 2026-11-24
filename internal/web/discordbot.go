@@ -68,6 +68,7 @@ func (s *Server) saveBot(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
+		s.discordHub.Poke()
 		http.Redirect(w, r, ws.Path()+"/settings?saved=1#discord", http.StatusSeeOther)
 		return
 	}
@@ -95,6 +96,7 @@ func (s *Server) saveBot(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	s.discordHub.Poke()
 	http.Redirect(w, r, ws.Path()+"/settings?saved=1#discord", http.StatusSeeOther)
 }
 

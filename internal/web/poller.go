@@ -144,6 +144,9 @@ func (s *Server) pollRound(ctx context.Context) {
 	byWS := map[int64][]store.LiveWorkflow{}
 	var order []int64
 	for _, w := range live {
+		if w.Kind == workflow.Discord {
+			continue // Discord workflows are driven by the Gateway listener (discordgateway.go), not GitHub polling
+		}
 		if _, ok := byWS[w.WorkspaceID]; !ok {
 			order = append(order, w.WorkspaceID)
 		}

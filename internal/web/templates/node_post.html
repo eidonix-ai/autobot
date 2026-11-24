@@ -7,6 +7,13 @@
   <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
   <label>Message <textarea name="message" rows="6" class="code" spellcheck="false" required>{{.S.Message}}</textarea></label>
   {{template "tags" .}}
+  {{if eq .Kind "discord"}}
+  <fieldset>
+    <legend>Reply in Discord</legend>
+    <p class="hint">Replies directly to the message that mentioned Autobot. Never pings @everyone, roles, or mentions in text, and suppresses link previews. Skipped for private repositories.</p>
+    <label class="check"><input type="checkbox" name="trial"{{if .S.Trial}} checked{{end}}> Trial run <span class="info" tabindex="0" data-tip="Records what the reply would be on the run page without sending anything to Discord.">ⓘ</span></label>
+  </fieldset>
+  {{else}}
   <fieldset>
     <legend>Post to</legend>
     <label class="check"><input type="checkbox" name="github"{{if .S.GitHub}} checked{{end}}> GitHub <span class="info" tabindex="0" data-tip="Adds a comment on the pull request or issue; every run adds another.">ⓘ</span></label>
@@ -14,6 +21,7 @@
     <label class="check"><input type="checkbox" name="discord"{{if .S.Discord}} checked{{end}}> Discord <span class="info" tabindex="0" data-tip="Posts in the case's forum post, opened if it has none. No pings, no link previews. A private repository's cases are never posted: Discord is skipped for them.">ⓘ</span></label>
     <label class="check sub"><input type="checkbox" name="summary"{{if .S.Summary}} checked{{end}}> Update the summary <span class="info" tabindex="0" data-tip="Replaces the post's first message, which carries the case's summary of findings, instead of adding a message.">ⓘ</span></label>
   </fieldset>
+  {{end}}
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

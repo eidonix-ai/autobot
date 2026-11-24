@@ -99,6 +99,7 @@
   <div class="row"><button>{{if .Bot}}Save{{else}}Set up the bot{{end}}</button></div>
 </form>
 <p>Interactions endpoint URL, for the application's General Information page: <code>{{.Interactions}}</code></p>
+<p class="hint">For the Discord @mention workflow, also enable <strong>Message Content Intent</strong> on the application's Bot page (Privileged Gateway Intents).</p>
 {{if .BotName}}
 <form method="post" action="{{.WS.Path}}/settings/discord" class="row spaced">
   <input type="hidden" name="csrf" value="{{.CSRF}}">

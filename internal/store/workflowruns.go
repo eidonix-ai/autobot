@@ -6,19 +6,20 @@ import (
 	"time"
 )
 
-// WorkflowRun is one run of a workflow on one item.
+// WorkflowRun is one run of a workflow on one item (or Discord mention).
 type WorkflowRun struct {
 	ID          int64
 	WorkspaceID int64
-	Kind        string // pr or issue
+	Kind        string // pr, issue, or discord
 	EventNode   string // the event node it started from
-	Item        int    // the pull request or issue
+	Item        int    // the pull request or issue (0 for discord)
+	TriggerData string // JSON payload for non-GitHub triggers (e.g. Discord mention)
 	DryRun      bool   // writes nothing: no case file, no output tags, nothing posted
 	Graph       string // the workflow as it was when the run started
 	Status      string // queued (over the workspace's limit, not started), running, done, failed or stopped
 	Note        string // how the event's conditions stood when it started
-	StartedBy   string // the name of the person who started it; "" when the poller did
-	StartedByID int64  // that person's id; 0 when the poller started it
+	StartedBy   string // the name of the person who started it; "" when live automation did
+	StartedByID int64  // that person's id; 0 when live automation started it
 	StartedAt   time.Time
 	FinishedAt  time.Time
 	StoppedBy   string // the name of the person who stopped it
@@ -52,8 +53,8 @@ func (s *Store) StartWorkflowRun(r WorkflowRun, nodes []string, by *User) (int64
 	if by != nil {
 		uid = by.ID
 	}
-	res, err := tx.Exec(`INSERT INTO workflow_runs (workspace_id, kind, event_node, item, dry_run, graph, status, note, started_by, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.WorkspaceID, r.Kind, r.EventNode, r.Item, r.DryRun, r.Graph, r.Status, r.Note, uid, now())
+	res, err := tx.Exec(`INSERT INTO workflow_runs (workspace_id, kind, event_node, item, trigger_data, dry_run, graph, status, note, started_by, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.WorkspaceID, r.Kind, r.EventNode, r.Item, r.TriggerData, r.DryRun, r.Graph, r.Status, r.Note, uid, now())
 	if err != nil {
 		return 0, err
 	}
@@ -154,13 +155,13 @@ func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
 	return scanWorkflowRun(s.db.QueryRow(workflowRunSelect+` WHERE w.id = ?`, id))
 }
 
-const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, ` + authorName + `, COALESCE(w.started_by, 0),
+const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.trigger_data, w.dry_run, w.graph, w.status, w.note, ` + authorName + `, COALESCE(w.started_by, 0),
 	w.started_at, w.finished_at, w.stopped_by, w.stopped_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by`
 
 func scanWorkflowRun(row scanner) (*WorkflowRun, error) {
 	var r WorkflowRun
 	var started, finished, stopped int64
-	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &r.StartedByID, &started, &finished, &r.StoppedBy, &stopped)
+	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.TriggerData, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &r.StartedByID, &started, &finished, &r.StoppedBy, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

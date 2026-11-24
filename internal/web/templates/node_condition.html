@@ -18,6 +18,7 @@
     <div class="rule"><label class="check"><input type="checkbox" name="on_files"{{if .S.Files}} checked{{end}}> A changed file matches</label><input name="files" value="{{.S.Files}}" placeholder="kernels/* or *.cu" autocomplete="off"></div>
     <div class="rule"><label class="check"><input type="checkbox" name="on_lines"{{if .S.MoreLines}} checked{{end}}> Changed lines, more than</label><input type="number" name="more_lines" min="0" value="{{if .S.MoreLines}}{{.S.MoreLines}}{{else}}500{{end}}"></div>
     {{end}}
+    {{if ne .Kind "discord"}}
     <div class="rule"><label class="check"><input type="checkbox" name="on_author"{{if .S.Author}} checked{{end}}> The author is</label>
       <select name="author">
         <option value="first_time"{{if eq .S.Author "first_time"}} selected{{end}}>a first-time contributor</option>
@@ -26,7 +27,8 @@
         <option value="bot"{{if eq .S.Author "bot"}} selected{{end}}>a bot</option>
       </select></div>
     <div class="rule"><label class="check"><input type="checkbox" name="on_label"{{if .S.Label}} checked{{end}}> It has the label</label><input name="label" value="{{.S.Label}}" autocomplete="off"></div>
-    <div class="rule"><label class="check"><input type="checkbox" name="on_contains"{{if .S.Contains}} checked{{end}}> Title or description contains</label><input name="contains" value="{{.S.Contains}}" autocomplete="off"></div>
+    {{end}}
+    <div class="rule"><label class="check"><input type="checkbox" name="on_contains"{{if .S.Contains}} checked{{end}}> {{if eq .Kind "discord"}}Message contains{{else}}Title or description contains{{end}}</label><input name="contains" value="{{.S.Contains}}" autocomplete="off"></div>
     <div class="rule"><label class="check"><input type="checkbox" name="on_tag"{{if .S.Tag}} checked{{end}}> The tag</label><input name="tag" value="{{.S.Tag}}" placeholder="value_decision" autocomplete="off" spellcheck="false"><span class="muted">contains</span><input name="tag_has" value="{{.S.TagHas}}" autocomplete="off"></div>
   </fieldset>
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>

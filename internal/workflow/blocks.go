@@ -56,6 +56,8 @@ func (s ConditionSettings) Check(kind string) error {
 		return errors.New("the number of lines cannot be negative")
 	case kind == Issue && (s.Files != "" || s.MoreLines > 0):
 		return errors.New("an issue changes no files: use the other rules")
+	case kind == Discord && (s.Files != "" || s.MoreLines > 0 || s.Author != "" || s.Label != ""):
+		return errors.New("a Discord message has no files, labels or GitHub author: use Contains or Tag rules")
 	case s.Author != "" && s.Author != "bot" && s.Author != "first_time" && s.Author != "outside" && s.Author != "member":
 		return errors.New("choose who the author is")
 	case s.Tag != "" && !tagNameRE.MatchString(s.Tag):

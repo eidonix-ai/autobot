@@ -18,29 +18,38 @@ import (
 
 // The workflow kinds, one tab each.
 const (
-	PR    = "pr"
-	Issue = "issue"
+	PR      = "pr"
+	Issue   = "issue"
+	Discord = "discord"
 )
 
+// DiscordMention is the event node that triggers when someone @mentions the bot in Discord.
+const DiscordMention = "discord_mention"
+
 // Kinds lists the workflow kinds in tab order.
-var Kinds = []string{PR, Issue}
+var Kinds = []string{PR, Issue, Discord}
 
 // KindLabel names a kind for a tab.
 func KindLabel(kind string) string {
-	if kind == PR {
+	switch kind {
+	case PR:
 		return "Pull requests"
+	case Discord:
+		return "Discord"
+	default:
+		return "Issues"
 	}
-	return "Issues"
 }
 
 // NodeType is a kind of node that can be placed on a workflow's canvas.
 type NodeType struct {
-	Type    string   `json:"type"`
-	Kind    string   `json:"kind"` // the workflow it belongs to; "" for steps, which go in any
-	Label   string   `json:"label"`
-	Event   bool     `json:"event"`   // starts a chain: no input
-	Hidden  bool     `json:"-"`       // no longer offered when placing a block
-	Outputs []string `json:"outputs"` // a new node's outputs, filled by TypesFor
+	Type      string   `json:"type"`
+	Kind      string   `json:"kind"` // the workflow it belongs to; "" for steps, which go in any
+	Label     string   `json:"label"`
+	Event     bool     `json:"event"`   // starts a chain: no input
+	OnlyItems bool     `json:"-"`       // PR and Issue workflows only (uses a GitHub item or case file)
+	Hidden    bool     `json:"-"`       // no longer offered when placing a block
+	Outputs   []string `json:"outputs"` // a new node's outputs, filled by TypesFor
 }
 
 // Types are every node type, in menu order.
@@ -49,13 +58,14 @@ var Types = []NodeType{
 	{Type: "pr_draft", Kind: PR, Label: "PR Draft", Event: true},
 	{Type: "pr_activity", Kind: PR, Label: "PR Activity", Event: true},
 	{Type: "issue_opened", Kind: Issue, Label: "Issue Opened", Event: true},
+	{Type: DiscordMention, Kind: Discord, Label: "Discord Mention", Event: true},
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
-	{Type: CaseEntry, Label: "Case Entry"},
+	{Type: CaseEntry, Label: "Case Entry", OnlyItems: true},
 	{Type: Post, Label: "Post"},
 	{Type: Condition, Label: "Condition"},
-	{Type: TestRun, Label: "Test Run"},
-	{Type: Approval, Label: "Human Approval"},
+	{Type: TestRun, Label: "Test Run", OnlyItems: true},
+	{Type: Approval, Label: "Human Approval", OnlyItems: true},
 	{Type: Junction, Label: "Node"},
 	// The two blocks Post replaced: graphs saved with them load as Post nodes, but a run from before
 	// that kept one in its snapshot still names it, and the palette does not offer them.
@@ -67,7 +77,7 @@ var Types = []NodeType{
 func TypesFor(kind string) []NodeType {
 	var out []NodeType
 	for _, t := range Types {
-		if (t.Kind == kind || t.Kind == "") && !t.Hidden {
+		if (t.Kind == kind || t.Kind == "") && !t.Hidden && !(t.OnlyItems && kind == Discord) {
 			t.Outputs = Outputs(Node{Type: t.Type})
 			out = append(out, t)
 		}
@@ -179,7 +189,7 @@ const MaxNodes = 100
 // event settings that check out and step settings that can be read (a step placed but not yet set
 // up is allowed; it cannot run), and links without loops between ports the nodes have.
 func (g Graph) Check(kind string) error {
-	if kind != PR && kind != Issue {
+	if kind != PR && kind != Issue && kind != Discord {
 		return fmt.Errorf("no workflow kind %q", kind)
 	}
 	if len(g.Nodes) > MaxNodes {
@@ -188,7 +198,7 @@ func (g Graph) Check(kind string) error {
 	byID := map[string]Node{}
 	for _, n := range g.Nodes {
 		t, ok := TypeOf(n.Type)
-		if !ok || (t.Kind != kind && t.Kind != "") {
+		if !ok || (t.Kind != kind && t.Kind != "") || (t.OnlyItems && kind == Discord) {
 			return fmt.Errorf("a %s workflow has no node type %q", KindLabel(kind), n.Type)
 		}
 		if !idRE.MatchString(n.ID) {
@@ -221,7 +231,7 @@ func (g Graph) Check(kind string) error {
 		case CaseEntry:
 			_, err = CaseEntrySettingsOf(n)
 		case Post:
-			_, err = SettingsOf(n, DefaultPost())
+			_, err = SettingsOf(n, DefaultPostFor(kind))
 		case Condition:
 			_, err = SettingsOf(n, DefaultCondition())
 		case TestRun:
@@ -317,6 +327,11 @@ type EventSettings struct {
 	MaxLines     int    `json:"max_lines,omitempty"`  // changed lines above which OverLimit applies; 0 is no limit
 	OverLimit    string `json:"over_limit,omitempty"` // "skip" or "summoned"
 	WaitCI       string `json:"wait_ci,omitempty"`    // "no", "finished" or "passed"
+
+	// Discord Mention only: which channels it listens in, and cooldown between replies.
+	Channels        string `json:"channels,omitempty"`         // comma-separated channel names or IDs; "" is any channel the bot can see
+	IgnoreChannels  string `json:"ignore_channels,omitempty"`  // comma-separated channel names or IDs to skip
+	CooldownSeconds int    `json:"cooldown_seconds,omitempty"` // per-channel cooldown in seconds; 0 is none
 }
 
 // Activities are the kinds of activity on an open pull request that can run PR Activity, in the
@@ -332,8 +347,11 @@ var Activities = []struct{ Key, Label string }{
 
 // DefaultEvent is a new event node's settings.
 func DefaultEvent(typ string) EventSettings {
-	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", TrustedOnly: true}
 	t, _ := TypeOf(typ)
+	if t.Kind == Discord {
+		return EventSettings{CooldownSeconds: 10}
+	}
+	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", TrustedOnly: true}
 	if t.Kind == Issue {
 		s.SummonPhrase = "@autobot"
 		return s
@@ -364,6 +382,15 @@ var branchRE = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)
 func (s EventSettings) Check(typ string) error {
 	t, _ := TypeOf(typ)
 	kind := t.Kind
+	if kind == Discord {
+		if s.CooldownSeconds < 0 || s.CooldownSeconds > 3600 {
+			return errors.New("the cooldown is 0 to 3600 seconds")
+		}
+		if len(s.Channels) > 500 || len(s.IgnoreChannels) > 500 {
+			return errors.New("channel lists are limited to 500 characters")
+		}
+		return nil
+	}
 	switch {
 	case s.Mode != "summoned" && s.Mode != "always":
 		return errors.New("choose when it runs: only if summoned, or always")
@@ -447,11 +474,62 @@ func (s EventSettings) Summary() string {
 	return strings.Join(parts, " · ")
 }
 
+// SummaryFor is the one line an event node shows on the canvas.
+func (s EventSettings) SummaryFor(typ string) string {
+	if typ == DiscordMention {
+		parts := []string{"Any channel"}
+		if c := strings.TrimSpace(s.Channels); c != "" {
+			parts[0] = "Channels: " + c
+		}
+		if ig := strings.TrimSpace(s.IgnoreChannels); ig != "" {
+			parts = append(parts, "except "+ig)
+		}
+		if s.CooldownSeconds > 0 {
+			parts = append(parts, fmt.Sprintf("%ds cooldown", s.CooldownSeconds))
+		}
+		return strings.Join(parts, " · ")
+	}
+	return s.Summary()
+}
+
+// MatchesDiscordChannel reports whether a Discord Mention event node handles messages in a channel
+// (matching by channel name, with or without leading #, or by channel ID).
+func MatchesDiscordChannel(ev EventSettings, channelName, channelID string) bool {
+	inList := func(list string) bool {
+		wantName := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(channelName), "#"))
+		for _, item := range strings.Split(list, ",") {
+			item = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(item), "#"))
+			if item == "" {
+				continue
+			}
+			if item == channelID || (wantName != "" && item == wantName) {
+				return true
+			}
+		}
+		return false
+	}
+	if strings.TrimSpace(ev.Channels) != "" && !inList(ev.Channels) {
+		return false
+	}
+	if strings.TrimSpace(ev.IgnoreChannels) != "" && inList(ev.IgnoreChannels) {
+		return false
+	}
+	return true
+}
+
 // EventFromForm reads an event node's settings from its settings form; all returns every value of
 // a field (the activity checklist).
 func EventFromForm(typ string, get func(string) string, all func(string) []string) EventSettings {
 	t, _ := TypeOf(typ)
 	kind := t.Kind
+	if kind == Discord {
+		cd, _ := strconv.Atoi(strings.TrimSpace(get("cooldown_seconds")))
+		return EventSettings{
+			Channels:        strings.TrimSpace(get("channels")),
+			IgnoreChannels:  strings.TrimSpace(get("ignore_channels")),
+			CooldownSeconds: cd,
+		}
+	}
 	s := EventSettings{
 		Mode:         get("mode"),
 		SummonPhrase: strings.TrimSpace(get("summon_phrase")),

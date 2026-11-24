@@ -3,8 +3,18 @@
 {{with .Error}}<p class="error">{{.}}</p>{{end}}
 <form method="post" action="{{.Action}}" class="stack wide step-form test-form" target="_blank" data-native>
   <input type="hidden" name="csrf" value="{{.CSRF}}">
+  {{if eq .Kind "discord"}}
+  <label>Message <textarea name="message" rows="3" placeholder="what's the status of PR #498?" required>{{.Form.Get "message"}}</textarea></label>
+  <div class="row">
+    <label>Channel <input name="channel" value="{{or (.Form.Get "channel") "general"}}" placeholder="general" autocomplete="off"></label>
+    <label>Author <input name="author" value="{{.Form.Get "author"}}" placeholder="Your name" autocomplete="off"></label>
+  </div>
+  <label>Recent channel context (optional) <textarea name="context" rows="3" placeholder="Optional earlier messages in the channel">{{.Form.Get "context"}}</textarea></label>
+  <label class="check"><input type="checkbox" name="dry_run" checked> Dry run <span class="info" tabindex="0" data-tip="Runs the decisions and agents without posting to Discord.">ⓘ</span></label>
+  {{else}}
   <label>{{if eq .Kind "pr"}}Pull request{{else}}Issue{{end}} number <input name="item" value="{{.Form.Get "item"}}" placeholder="123" inputmode="numeric" required autocomplete="off"></label>
   <label class="check"><input type="checkbox" name="dry_run"{{if .Form.Get "dry_run"}} checked{{end}}> Dry run <span class="info" tabindex="0" data-tip="Runs the agents and decisions as a real run would, but into a case file of its own (not the item’s), with no output tags kept and nothing posted.">ⓘ</span></label>
+  {{end}}
   <div class="row"><button>Run the workflow</button><button type="button" class="secondary" data-close>Close</button></div>
 </form>
 {{end}}

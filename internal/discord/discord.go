@@ -171,6 +171,9 @@ type Message struct {
 	Text    string
 	Buttons []Button
 	Role    string // a role id this message may ping; "" pings no one
+	// ReplyTo, when set, sends the message as a reply to that message id in the same channel,
+	// pinging only the replied-to message's author (never @everyone, roles, or text mentions).
+	ReplyTo string
 }
 
 type multipartBody struct {
@@ -179,13 +182,19 @@ type multipartBody struct {
 }
 
 // body builds a message's request: its text (a long one as its beginning, with the whole text
-// attached), buttons, no previews, and mentions limited to the role given.
+// attached), buttons, no previews, and mentions limited to the role given (or the replied-to user).
 func (m Message) body(extra map[string]any) any {
 	allowed := map[string]any{"parse": []string{}}
 	if m.Role != "" {
 		allowed["roles"] = []string{m.Role}
 	}
+	if m.ReplyTo != "" {
+		allowed["replied_user"] = true
+	}
 	p := map[string]any{"allowed_mentions": allowed, "flags": suppressEmbeds}
+	if m.ReplyTo != "" {
+		p["message_reference"] = map[string]any{"message_id": m.ReplyTo, "fail_if_not_exists": false}
+	}
 	for k, v := range extra {
 		p[k] = v
 	}
@@ -258,6 +267,81 @@ func (b Bot) Send(ctx context.Context, channel string, m Message) (*Posted, erro
 		return nil, err
 	}
 	return &p, nil
+}
+
+// Reply sends m in channel as a reply to messageID. It never pings @everyone, roles, or mentions in text.
+func (b Bot) Reply(ctx context.Context, channel, messageID string, m Message) (*Posted, error) {
+	m.ReplyTo = messageID
+	return b.Send(ctx, channel, m)
+}
+
+// ChatMessage is a message read from a Discord channel, for context around a mention.
+type ChatMessage struct {
+	ID      string
+	Author  string
+	Bot     bool
+	Content string
+}
+
+// ChannelInfo returns a channel's basic metadata (ID and Name).
+func (b Bot) ChannelInfo(ctx context.Context, channelID string) (*Channel, error) {
+	var c struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Type int    `json:"type"`
+	}
+	if err := b.call(ctx, "GET", "/channels/"+channelID, nil, &c); err != nil {
+		return nil, err
+	}
+	return &Channel{ID: c.ID, Name: c.Name, Forum: c.Type == typeForum}, nil
+}
+
+// RecentMessages reads up to limit messages in channelID before beforeID (oldest first).
+func (b Bot) RecentMessages(ctx context.Context, channelID, beforeID string, limit int) ([]ChatMessage, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	path := fmt.Sprintf("/channels/%s/messages?limit=%d", channelID, limit)
+	if beforeID != "" {
+		path += "&before=" + beforeID
+	}
+	var raw []struct {
+		ID      string `json:"id"`
+		Content string `json:"content"`
+		Author  struct {
+			Username   string `json:"username"`
+			GlobalName string `json:"global_name"`
+			Bot        bool   `json:"bot"`
+		} `json:"author"`
+	}
+	if err := b.call(ctx, "GET", path, nil, &raw); err != nil {
+		return nil, err
+	}
+	// Discord returns newest first; reverse to chronological order.
+	out := make([]ChatMessage, 0, len(raw))
+	for i := len(raw) - 1; i >= 0; i-- {
+		m := raw[i]
+		name := m.Author.GlobalName
+		if name == "" {
+			name = m.Author.Username
+		}
+		out = append(out, ChatMessage{ID: m.ID, Author: name, Bot: m.Author.Bot, Content: strings.TrimSpace(m.Content)})
+	}
+	return out, nil
+}
+
+// GatewayURL asks Discord for the WebSocket Gateway URL for this bot.
+func (b Bot) GatewayURL(ctx context.Context) (string, error) {
+	var g struct {
+		URL string `json:"url"`
+	}
+	if err := b.call(ctx, "GET", "/gateway/bot", nil, &g); err != nil {
+		return "", err
+	}
+	if g.URL == "" {
+		return "", errors.New("Discord returned no gateway URL")
+	}
+	return strings.TrimRight(g.URL, "/") + "/?v=10&encoding=json", nil
 }
 
 // Edit replaces one of the bot's messages.

@@ -18,7 +18,7 @@ import (
 // workflowKind reads the kind in the URL, writing a 404 for an unknown one.
 func workflowKind(w http.ResponseWriter, r *http.Request) (string, bool) {
 	k := r.PathValue("kind")
-	if k != workflow.PR && k != workflow.Issue {
+	if k != workflow.PR && k != workflow.Issue && k != workflow.Discord {
 		http.NotFound(w, r)
 		return "", false
 	}
@@ -144,7 +144,7 @@ func (s *Server) nodeTemplates(n workflow.Node, kind string) []string {
 			return []string{c.Entry}
 		}
 	case workflow.Post:
-		if p, err := workflow.SettingsOf(n, workflow.DefaultPost()); err == nil {
+		if p, err := workflow.SettingsOf(n, workflow.DefaultPostFor(kind)); err == nil {
 			return []string{p.Message}
 		}
 	case workflow.Approval:
@@ -497,7 +497,7 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 	case workflow.CaseEntry:
 		settings, err = workflow.CaseEntrySettingsOf(n)
 	case workflow.Post:
-		settings, err = workflow.SettingsOf(n, workflow.DefaultPost())
+		settings, err = workflow.SettingsOf(n, workflow.DefaultPostFor(kind))
 	case workflow.Condition:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultCondition())
 	case workflow.TestRun:
@@ -686,7 +686,7 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		settings = c
 	case workflow.Post:
-		p := workflow.PostFromForm(f.Get)
+		p := workflow.PostFromFormFor(kind, f.Get)
 		if err = p.Check(); err == nil {
 			err = g.CheckNodeTemplates(kind, n.ID, p.Message)
 		}
@@ -718,8 +718,10 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)
-		if tag := s.optOut(ws); err == nil && workflow.Stops(e.SummonPhrase, tag) {
-			err = fmt.Errorf("the summon phrase matches the workspace's opt-out tag “%s”, so every summons would opt out", tag)
+		if kind != workflow.Discord {
+			if tag := s.optOut(ws); err == nil && workflow.Stops(e.SummonPhrase, tag) {
+				err = fmt.Errorf("the summon phrase matches the workspace's opt-out tag “%s”, so every summons would opt out", tag)
+			}
 		}
 		settings = e
 	}

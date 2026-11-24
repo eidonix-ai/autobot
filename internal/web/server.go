@@ -57,6 +57,7 @@ type Server struct {
 	addressKnown atomic.Bool
 	fails        loginFails // failed sign-ins by account
 	poll         *poller    // what the poller remembers in memory
+	discordHub   *discordHub
 	repos        *repo.Mirrors
 	running      liveRuns // the workflow runs and agent runs going on, to stop them (see stop.go)
 	slots        slots    // the runs that count against their workspace's limit (see queue.go)
@@ -117,9 +118,10 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		gh:        gh,
 		idleLimit: idleLimit,
 		live:      &live{started: time.Now(), byID: map[int64]liveStatus{}},
-		access:    &repoAccess{byWS: map[int64]repoFacts{}},
-		poll:      newPoller(),
-		pages:     map[string]*template.Template{},
+		access:     &repoAccess{byWS: map[int64]repoFacts{}},
+		poll:       newPoller(),
+		discordHub: newDiscordHub(),
+		pages:      map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
 		md:  goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(parser.WithAutoHeadingID())),
 		mux: http.NewServeMux(),

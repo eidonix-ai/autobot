@@ -214,24 +214,29 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
 		cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
 		cfg.Tools = append(cfg.Tools, s.charterTool(ws))
-		// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
-		// request's head, or the default branch's) instead of through GitHub.
-		var note string
-		sess, note, err = s.openSandbox(ctx, ws, a, token, commit, by)
-		if err != nil {
-			return 0, err
+		if kind == workflow.Discord {
+			cfg.Tools = append(cfg.Tools, s.autobotStatusTool(ws))
 		}
-		if sess != nil {
-			defer func() {
-				if !started {
-					sess.Close()
-				}
-			}()
-			cfg.System += "\n\n" + note
-			if prTools {
-				cfg.Tools = slices.DeleteFunc(cfg.Tools, func(t agent.Tool) bool { return t.Spec.Name == "read_file" || t.Spec.Name == "list_files" })
+		// With machines to use (PR/Issue workflows only — Discord mentions stay read-only),
+		// the agent gets a shell on one, and reads the code there instead of through GitHub.
+		if kind != workflow.Discord {
+			var note string
+			sess, note, err = s.openSandbox(ctx, ws, a, token, commit, by)
+			if err != nil {
+				return 0, err
 			}
-			cfg.Tools = append(cfg.Tools, agent.SandboxTools(sess)...)
+			if sess != nil {
+				defer func() {
+					if !started {
+						sess.Close()
+					}
+				}()
+				cfg.System += "\n\n" + note
+				if prTools {
+					cfg.Tools = slices.DeleteFunc(cfg.Tools, func(t agent.Tool) bool { return t.Spec.Name == "read_file" || t.Spec.Name == "list_files" })
+				}
+				cfg.Tools = append(cfg.Tools, agent.SandboxTools(sess)...)
+			}
 		}
 		cfg.Tools = s.withLocalCode(ctx, ws, token, pull, sess != nil, cfg.Tools) // the code from Autobot's own copy, when it has one
 		if a.Internet {

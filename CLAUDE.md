@@ -74,7 +74,7 @@ Autobot is a fresh start (2026-11-22) after an earlier attempt, the "triage harn
 - **One private forum** (`flare-autobot`) on the project server. Its access list is the trusted set — **anyone who can see it may approve** (no approver role, no separate approvals channel). Bots' clicks are ignored, stale buttons refused, first click wins, and who/when is recorded in the case file.
 - One forum post per case (first message holds the summary). **A private repository's cases never reach Discord.**
 - **The bot never pings `@everyone` or roles**, and suppresses link previews (`suppressEmbeds`). Webhook channels were tried and dropped.
-- **Next:** Gateway reader for Q&A / `@mention` workflows and Discord community context in orientation packets.
+- **Workflows (`discord` tab):** A third workflow canvas (`Discord Mention` → `Decision` / `Agent` / `Condition` / `Post`) driven by a lean Discord Gateway WebSocket listener (`internal/discord/gateway.go`, `internal/web/discordgateway.go`) when switched Live. Ignores bots and DMs, requires **Message Content Intent** on the bot in Discord Developer Portal, keeps Discord agents read-only (with `autobot_status`, item search, charter, and local code mirror; no shell), and replies directly to the mention while still blocking `@everyone`/role pings, embeds, and private-repo posts.
 
 ## Pinned (Derek, 2026-11-23: come back to these)
 

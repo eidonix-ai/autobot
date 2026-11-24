@@ -84,6 +84,40 @@ func (s *Server) discordStep(ctx context.Context, rs *runState, summary bool, te
 	return stepOutcome{port: "out", output: text, note: "posted on Discord"}
 }
 
+// discordReplyStep replies directly to the Discord message that triggered a Discord workflow run.
+// Respects dry runs, trial mode, private repositories, and suppresses embeds and mass pings.
+func (s *Server) discordReplyStep(ctx context.Context, rs *runState, trial bool, text string) stepOutcome {
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
+	}
+	if rs.run.DryRun {
+		return stepOutcome{port: "out", output: text, note: "dry run: not posted to Discord"}
+	}
+	if trial {
+		return stepOutcome{port: "out", output: text, note: "trial run: not posted to Discord"}
+	}
+	if rs.discord == nil || rs.discord.ChannelID == "" {
+		return stepOutcome{port: "out", output: text, note: "manual test: no Discord channel to reply in"}
+	}
+	if s.facts(ctx, rs.ws).private {
+		return stepOutcome{port: "out", output: text, note: "skipped: " + errPrivateRepo.Error()}
+	}
+	b, _ := s.bot(rs.ws)
+	if b == nil {
+		return stepOutcome{err: errors.New("this workspace has no Discord bot: configure one in workspace Settings")}
+	}
+	var err error
+	if rs.discord.MessageID != "" {
+		_, err = b.Reply(ctx, rs.discord.ChannelID, rs.discord.MessageID, discord.Message{Text: text})
+	} else {
+		_, err = b.Send(ctx, rs.discord.ChannelID, discord.Message{Text: text})
+	}
+	if err != nil {
+		return stepOutcome{err: fmt.Errorf("replying on Discord: %v", err)}
+	}
+	return stepOutcome{port: "out", output: text, note: "replied on Discord"}
+}
+
 // approvalStep asks for a person's answer: on Discord when it may, and always on the run's page,
 // then waits for it.
 func (s *Server) approvalStep(ctx context.Context, rs *runState, n workflow.Node, a workflow.ApprovalSettings, request, question string) stepOutcome {
@@ -249,6 +283,19 @@ func (s *Server) runState(ctx context.Context, id int64) (*runState, error) {
 	var g workflow.Graph
 	if err := json.Unmarshal([]byte(run.Graph), &g); err != nil {
 		return nil, err
+	}
+	if run.Kind == workflow.Discord {
+		trig := parseDiscordTrigger(run.TriggerData)
+		it := &item{kind: workflow.Discord, author: trig.Author, title: trig.Channel, body: trig.Content, url: trig.URL}
+		rs := &runState{ws: ws, run: run, g: g, it: it, discord: &trig, builtIn: trig.values(ws), tags: map[string]string{}}
+		if run.StartedByID != 0 {
+			rs.by, _ = s.st.User(run.StartedByID)
+		}
+		if c, err := s.st.Charter(ws.ID, 0); err == nil {
+			rs.builtIn["charter"] = c.Body
+		}
+		rs.builtIn["machines"] = s.machinesSummary(ws)
+		return rs, nil
 	}
 	lctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()

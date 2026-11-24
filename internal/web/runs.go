@@ -77,6 +77,9 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 	titles, authors := map[int]string{}, map[int]string{}
 	var numbers []int
 	for _, r := range runs {
+		if r.Item <= 0 {
+			continue
+		}
 		if _, ok := titles[r.Item]; !ok {
 			titles[r.Item] = ""
 			numbers = append(numbers, r.Item)
@@ -112,6 +115,19 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 		}
 		if r.Kind == workflow.Issue {
 			row.Kind = "issue"
+		} else if r.Kind == workflow.Discord {
+			trig := parseDiscordTrigger(r.TriggerData)
+			ch := trig.Channel
+			if ch != "" && !strings.HasPrefix(ch, "#") {
+				ch = "#" + ch
+			}
+			row.Kind = "discord"
+			row.ItemURL = trig.URL
+			row.Title = oneLineOf(trig.Content, 100)
+			if ch != "" {
+				row.Title = ch + " · " + row.Title
+			}
+			row.Author = trig.Author
 		}
 		var g workflow.Graph
 		json.Unmarshal([]byte(r.Graph), &g)

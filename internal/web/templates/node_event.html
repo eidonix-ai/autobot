@@ -5,6 +5,14 @@
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="version" value="">
   <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+  {{if eq .Node.Type "discord_mention"}}
+  <p class="hint">Starts when someone @mentions the workspace's Discord bot in a server channel. Messages from bots and DMs are always ignored.</p>
+  <label><span class="lbl">Channels <span class="info" tabindex="0" data-tip="Comma-separated channel names (e.g. general, support) or IDs. Leave blank to listen in any channel the bot can see.">ⓘ</span></span>
+    <input name="channels" value="{{.S.Channels}}" placeholder="Any channel the bot can see" autocomplete="off"></label>
+  <label><span class="lbl">Ignore channels <span class="info" tabindex="0" data-tip="Comma-separated channel names or IDs to skip even when listening everywhere.">ⓘ</span></span>
+    <input name="ignore_channels" value="{{.S.IgnoreChannels}}" placeholder="Optional" autocomplete="off"></label>
+  <label>Per-channel cooldown (seconds, 0 for none) <input type="number" name="cooldown_seconds" min="0" max="3600" value="{{.S.CooldownSeconds}}"></label>
+  {{else}}
   {{if eq .Node.Type "pr_activity"}}
   <fieldset>
     <legend>Activity that runs it</legend>
@@ -51,6 +59,7 @@
         </select></label>
     </div>
   </details>
+  {{end}}
   {{end}}
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>

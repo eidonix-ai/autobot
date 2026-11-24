@@ -228,6 +228,7 @@ type runState struct {
 	run     *store.WorkflowRun
 	g       workflow.Graph
 	it      *item
+	discord *DiscordTrigger // set when run.Kind == workflow.Discord
 	builtIn map[string]string
 	tags    map[string]string // output tags: the case's, then this run's
 	by      *store.User
@@ -331,6 +332,73 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	return id, nil
 }
 
+// startDiscordWorkflow starts a Discord workflow run from a Discord Mention event node.
+func (s *Server) startDiscordWorkflow(ctx context.Context, ws *store.Workspace, eventNode string, trig DiscordTrigger, dry bool, by *store.User) (int64, error) {
+	_, g, err := s.loadWorkflow(ws, workflow.Discord)
+	if err != nil {
+		return 0, err
+	}
+	var ev *workflow.Node
+	for i, n := range g.Nodes {
+		if n.ID == eventNode {
+			ev = &g.Nodes[i]
+		}
+	}
+	if ev == nil {
+		return 0, errors.New("that block is not on the canvas any more")
+	}
+	if t, _ := workflow.TypeOf(ev.Type); !t.Event {
+		return 0, errors.New("a workflow runs from an event block")
+	}
+	it := &item{kind: workflow.Discord, author: trig.Author, title: trig.Channel, body: trig.Content, url: trig.URL}
+	rs := &runState{ws: ws, g: g, it: it, discord: &trig, builtIn: trig.values(ws), tags: map[string]string{}, by: by}
+	if c, err := s.st.Charter(ws.ID, 0); err == nil {
+		rs.builtIn["charter"] = c.Body
+	}
+	rs.builtIn["machines"] = s.machinesSummary(ws)
+
+	graph, _ := json.Marshal(g)
+	tdata, _ := json.Marshal(trig)
+	var ids []string
+	for _, n := range g.Nodes {
+		ids = append(ids, n.ID)
+	}
+	ch := rs.builtIn["discord:channel"]
+	if ch == "" {
+		ch = "(manual test)"
+	}
+	note := fmt.Sprintf("Discord mention in %s by %s\n\n%s", ch, trig.Author, trig.Content)
+	if trig.URL != "" {
+		note += "\n\n" + trig.URL
+	}
+	r := store.WorkflowRun{
+		WorkspaceID: ws.ID,
+		Kind:        workflow.Discord,
+		EventNode:   eventNode,
+		Item:        0,
+		TriggerData: string(tdata),
+		DryRun:      dry,
+		Graph:       string(graph),
+		Note:        note,
+	}
+	id, queued, err := s.admit(r, ids, by)
+	if err != nil {
+		return 0, err
+	}
+	if queued {
+		return id, nil
+	}
+	run, err := s.st.WorkflowRun(id)
+	if err != nil {
+		s.st.FinishWorkflowRun(id, "failed")
+		s.releaseSlot(id)
+		return 0, err
+	}
+	rs.run = run
+	s.launch(rs)
+	return id, nil
+}
+
 // drive runs a run's steps until none can run, then ends it.
 func (s *Server) drive(rs *runState) {
 	steps, err := s.st.WorkflowSteps(rs.run.ID)
@@ -354,7 +422,12 @@ func (s *Server) drive(rs *runState) {
 			st.Status, st.StartedAt, st.FinishedAt = "skipped", now, now
 			if n.ID == rs.run.EventNode {
 				st.Status, st.Port = "done", "out"
-				st.Output = fmt.Sprintf("%s #%d: %s", workflow.DisplayName(n), rs.it.number, rs.it.title)
+				if rs.run.Kind == workflow.Discord && rs.discord != nil {
+					ch := rs.builtIn["discord:channel"]
+					st.Output = fmt.Sprintf("%s in %s by %s: %s", workflow.DisplayName(n), ch, rs.discord.Author, oneLineOf(rs.discord.Content, 120))
+				} else {
+					st.Output = fmt.Sprintf("%s #%d: %s", workflow.DisplayName(n), rs.it.number, rs.it.title)
+				}
 			}
 			save(st)
 		}
@@ -632,7 +705,7 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map
 	for suffix, v := range parts {
 		rs.tags[name+suffix] = v
 	}
-	if rs.run.DryRun { // a dry run's tags stay in memory
+	if rs.run.DryRun || rs.run.Kind == workflow.Discord { // dry runs and Discord mentions keep tags in memory
 		return
 	}
 	c, err := s.runCase(rs)
@@ -659,7 +732,7 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map
 // step's name, its summary (its report when it has none), and links to the full report and the notes as
 // published pages; a Decision's is one line: the choice, how sure the model was, and what the choice means.
 func (s *Server) writeResult(rs *runState, n workflow.Node, o stepOutcome) {
-	if rs.stopped() {
+	if rs.stopped() || rs.run.Kind == workflow.Discord {
 		return
 	}
 	kind, name := rs.run.Kind, workflow.DisplayName(n)
@@ -749,8 +822,10 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	}
 	maps.Copy(values, s.inputValues(rs, sources))
 	kind := rs.run.Kind
-	if c, err := s.runCase(rs); err == nil {
-		maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}: a dry run's are its own case's
+	if kind != workflow.Discord {
+		if c, err := s.runCase(rs); err == nil {
+			maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}: a dry run's are its own case's
+		}
 	}
 	// A [[tag]] in a template becomes a link to a page that keeps the tag's value as it is now.
 	s.fillLinks(s.runLinks(rs), s.nodeTemplates(n, kind), values)
@@ -823,7 +898,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 		}
 		return s.agentStep(ctx, rs, n, a, values)
 	case workflow.Post:
-		p, err := workflow.SettingsOf(n, workflow.DefaultPost())
+		p, err := workflow.SettingsOf(n, workflow.DefaultPostFor(kind))
 		if err == nil {
 			err = p.Check()
 		}
@@ -881,6 +956,9 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 	}
 	if rs.stopped() {
 		return stepOutcome{err: rs.errStopped()}
+	}
+	if rs.run.Kind == workflow.Discord {
+		return s.discordReplyStep(ctx, rs, p.Trial, text)
 	}
 	var reports []string
 	failed := false
@@ -1170,23 +1248,51 @@ func (s *Server) agentParts(closing bool, run *store.AgentRun) (agent.Transcript
 	return tr, map[string]string{"": whole, ".summary": summary, ".report": tr.Report, ".scratchpad": notes}
 }
 
-// runWorkflow starts a run from the event node in the URL, on the item in the form.
+// runWorkflow starts a run from the event node in the URL, on the item (or Discord message) in the form.
 func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 	ws, kind, _, g, i, ok := s.findNode(w, r)
 	if !ok {
 		return
 	}
 	n := g.Named(g.Nodes[i])
-	num, _ := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(r.PostForm.Get("item")), "#"))
 	fail := func(msg string) {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, nil, map[string]any{"Error": msg, "Form": r.PostForm})
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+	if kind == workflow.Discord {
+		msg := strings.TrimSpace(r.PostForm.Get("message"))
+		if msg == "" {
+			fail("Write a message to test.")
+			return
+		}
+		author := strings.TrimSpace(r.PostForm.Get("author"))
+		if author == "" {
+			author = me(r).Name()
+		}
+		ch := strings.TrimPrefix(strings.TrimSpace(r.PostForm.Get("channel")), "#")
+		if ch == "" {
+			ch = "general"
+		}
+		trig := DiscordTrigger{
+			Channel: ch,
+			Author:  author,
+			Content: msg,
+			Context: strings.TrimSpace(r.PostForm.Get("context")),
+		}
+		id, err := s.startDiscordWorkflow(ctx, ws, n.ID, trig, r.PostForm.Get("dry_run") == "on", me(r))
+		if err != nil {
+			fail("Not started: " + err.Error() + ".")
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("%s/workflow-runs/%d", ws.Path(), id), http.StatusSeeOther)
+		return
+	}
+	num, _ := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(r.PostForm.Get("item")), "#"))
 	if num <= 0 {
 		fail("Give the number of the pull request or issue.")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-	defer cancel()
 	id, err := s.startWorkflow(ctx, ws, kind, n.ID, num, r.PostForm.Get("dry_run") == "on", me(r))
 	if err != nil {
 		fail("Not started: " + err.Error() + ".")
@@ -1261,10 +1367,26 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 		views = append(views, v)
 	}
 	what := "pull request"
-	if run.Kind == workflow.Issue {
+	title := fmt.Sprintf("Run on #%d · %s", run.Item, ws.Name)
+	heading := fmt.Sprintf("Run on %s #%d", what, run.Item)
+	switch run.Kind {
+	case workflow.Issue:
 		what = "issue"
+		heading = fmt.Sprintf("Run on %s #%d", what, run.Item)
+	case workflow.Discord:
+		what = "Discord"
+		trig := parseDiscordTrigger(run.TriggerData)
+		ch := trig.Channel
+		if ch != "" && !strings.HasPrefix(ch, "#") {
+			ch = "#" + ch
+		}
+		if ch == "" {
+			ch = "Discord"
+		}
+		title = fmt.Sprintf("Discord run (%s) · %s", ch, ws.Name)
+		heading = fmt.Sprintf("Discord mention in %s", ch)
 	}
-	data := map[string]any{"Title": fmt.Sprintf("Run on #%d · %s", run.Item, ws.Name), "WS": ws, "Run": run, "Steps": views, "What": what}
+	data := map[string]any{"Title": title, "Heading": heading, "WS": ws, "Run": run, "Steps": views, "What": what}
 	if run.Status == "queued" {
 		data["QueueText"] = "Queued"
 		if place, ok := s.queuePlaces(ws.ID)[run.ID]; ok {

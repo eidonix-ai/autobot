@@ -34,6 +34,14 @@ type PostSettings struct {
 // with no text yet.
 func DefaultPost() PostSettings { return PostSettings{GitHub: true, Trial: true} }
 
+// DefaultPostFor is a new Post node's settings for a workflow of kind.
+func DefaultPostFor(kind string) PostSettings {
+	if kind == Discord {
+		return PostSettings{Message: "{input.report}", Discord: true}
+	}
+	return DefaultPost()
+}
+
 // Check confirms a Post node's settings are complete.
 func (s PostSettings) Check() error {
 	switch {
@@ -51,6 +59,25 @@ func (s PostSettings) Check() error {
 func PostFromForm(get func(string) string) PostSettings {
 	return PostSettings{Message: strings.TrimSpace(get("message")), GitHub: get("github") == "on", Trial: get("trial") == "on",
 		Discord: get("discord") == "on", Summary: get("summary") == "on"}
+}
+
+// PostFromFormFor reads a Post node's settings from its form for a workflow of kind.
+func PostFromFormFor(kind string, get func(string) string) PostSettings {
+	if kind == Discord {
+		return PostSettings{Message: strings.TrimSpace(get("message")), Discord: true, Trial: get("trial") == "on"}
+	}
+	return PostFromForm(get)
+}
+
+// WhereFor says where the node posts for a workflow of kind.
+func (s PostSettings) WhereFor(kind string) string {
+	if kind == Discord {
+		if s.Trial {
+			return "Discord reply (trial)"
+		}
+		return "Discord reply"
+	}
+	return s.Where()
 }
 
 // Where says where the node posts, as its card shows it: "GitHub (trial) · Discord".

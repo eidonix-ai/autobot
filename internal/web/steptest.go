@@ -30,7 +30,7 @@ type tagField struct {
 	Long               bool // a text box rather than a line
 }
 
-var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true}
+var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true, "discord:message": true, "discord:context": true}
 
 // stepTemplates is a node's settings and templates, or an error saying why it cannot be tested.
 func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, error) {
@@ -54,7 +54,7 @@ func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, e
 		}
 		return s, []string{s.Entry}, err
 	case workflow.Post:
-		s, err := workflow.SettingsOf(n, workflow.DefaultPost())
+		s, err := workflow.SettingsOf(n, workflow.DefaultPostFor(kind))
 		if err == nil {
 			err = s.Check()
 		}
@@ -111,7 +111,7 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 	for _, tpl := range templates {
 		for _, tag := range workflow.TemplateTags(tpl) {
 			tag = workflow.CanonicalTag(tag, kind)
-			if p := workflow.TagField(tag); p != "" {
+			if p := workflow.TagField(tag); p != "" && p != "discord" {
 				tag = p
 			}
 			if seen[tag] {

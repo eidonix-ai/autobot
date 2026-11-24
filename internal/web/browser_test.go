@@ -248,7 +248,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		chromedp.Evaluate(`document.querySelector('#wf-modal textarea[name=instruction]').value`, &swapped),
 		chromedp.Click(`#wf-modal .close`, chromedp.ByQuery),
 	)
-	if err != nil || !locked || unlocked || !strings.Contains(keptText, "gather the facts") || !strings.Contains(swapped, "correctness first") {
+	if err != nil || !locked || unlocked || !strings.Contains(keptText, "preparing the case file") || !strings.Contains(swapped, "correctness first") {
 		t.Fatalf("presets in the form: locked %v, unlocked %v, kept %q, swapped %q, %v", locked, !unlocked, keptText[:min(40, len(keptText))], swapped[:min(40, len(swapped))], err)
 	}
 	if a, _ := workflow.AgentSettingsOf(nodeOf(workflow.Agent), workflow.PR); a.OutputTo != "value_summary" || !a.Model.Set() {

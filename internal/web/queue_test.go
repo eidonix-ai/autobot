@@ -358,8 +358,9 @@ func TestRestartStartsQueuedRuns(t *testing.T) {
 		t.Fatalf("after a restart: %s", got)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go e.ui.RunQueue(ctx)
+	done := make(chan struct{})
+	go func() { e.ui.RunQueue(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done }) // before queueEvery is put back
 	for _, id := range []int64{q1, q2, q3} {
 		e.waitStatus(id, "done")
 	}
@@ -421,4 +422,7 @@ func TestMaxRunsSetting(t *testing.T) {
 	if !strings.Contains(body, `name="max_runs" value="2"`) {
 		t.Fatalf("the Settings page after saving:\n%s", body)
 	}
+	e.gate.openAll()
+	e.waitStatus(r1, "done")
+	e.waitStatus(r2, "done")
 }

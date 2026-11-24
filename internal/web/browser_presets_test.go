@@ -155,7 +155,7 @@ func TestBrowserPresetsCreateCopyEditRemove(t *testing.T) {
 	if _, err := e.st.PresetByKey("copy_of_terse_reviewer"); err == nil {
 		t.Fatal("the preset is still there")
 	}
-	if all, _ := e.st.Presets(); len(all) != 6 {
-		t.Fatalf("%d presets left, want 5 built-in and the first one made", len(all))
+	if all, _ := e.st.Presets(); len(all) != len(workflow.SeedPresets)+1 {
+		t.Fatalf("%d presets left, want the %d built-in and the first one made", len(all), len(workflow.SeedPresets))
 	}
 }

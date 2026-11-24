@@ -440,7 +440,7 @@ func TestPresetDropdownGroups(t *testing.T) {
 	_, page := p.be.get("/w/o/r/workflows/pr/nodes/ag")
 	shared := between(page, `<optgroup label="Shared">`, `</optgroup>`)
 	mine := between(page, `<optgroup label="Mine">`, `</optgroup>`)
-	if !strings.Contains(shared, `value="gather_information"`) || !strings.Contains(shared, `value="code_quality" data-instruction=`) || !strings.Contains(shared, " selected>Code Quality") ||
+	if !strings.Contains(shared, `value="gather_information"`) || !strings.Contains(shared, `value="code_quality" data-instruction=`) || !strings.Contains(shared, " selected>Code Review - Quality") ||
 		strings.Contains(shared, erins.Key) || !strings.Contains(mine, `value="`+erins.Key+`"`) || strings.Contains(mine, "gather_information") ||
 		strings.Contains(page, franks.Key) || strings.Contains(page, `label="In use"`) || strings.Contains(page, "Copy to my presets") {
 		t.Fatalf("erin's dropdown:\n%s", page)

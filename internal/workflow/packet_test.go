@@ -80,7 +80,14 @@ func TestGatherInformationPreset(t *testing.T) {
 		if p.Key == "gather_information" {
 			continue
 		}
-		for _, text := range []string{p.Instruction, p.IssueInstruction, p.Goal, p.Issue} {
+		texts := []string{p.Instruction, p.IssueInstruction, p.Goal, p.Issue}
+		if strings.HasPrefix(p.Key, "review_") { // the code review presets carry it in their pull request head, and nowhere else
+			if !strings.Contains(p.Instruction, "{pr:packet}") {
+				t.Errorf("review preset %s has no packet", p.Key)
+			}
+			texts = []string{p.IssueInstruction, p.Goal, p.Issue}
+		}
+		for _, text := range texts {
 			if strings.Contains(text, ":packet}") {
 				t.Errorf("preset %s carries the packet", p.Key)
 			}

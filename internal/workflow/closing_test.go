@@ -1,6 +1,9 @@
 package workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // seed is a built-in preset, which a test hands to a block as the web layer does with the stored one.
 func seed(key string) *Persona {
@@ -12,12 +15,12 @@ func seed(key string) *Persona {
 	return nil
 }
 
-// Gather Information writes its report from the scratchpad; the other presets do not, for now; a
-// Custom block has its own closing step. Report turns default to 15, also in old saved blocks.
+// Gather Information and the code review presets write their report from the scratchpad; the other
+// presets do not, for now; a Custom block has its own closing step. Report turns default to 15, also in old saved blocks.
 func TestClosingStep(t *testing.T) {
 	for i, p := range SeedPresets {
 		want := ""
-		if p.Key == "gather_information" {
+		if p.Key == "gather_information" || strings.HasPrefix(p.Key, "review_") {
 			want = ClosingReport
 		}
 		if got := (AgentSettings{Persona: p.Key, Closing: ClosingReport}).WithPreset(&SeedPresets[i]).EffectiveClosing(PR); got != want {

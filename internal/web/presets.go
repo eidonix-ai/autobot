@@ -18,13 +18,28 @@ import (
 // in). Anyone signed in can look at any preset and copy it; an admin cannot change another user's.
 
 // seedRows are the built-in presets as stored rows.
-func seedRows() []store.Preset {
+func seedRows() []store.Preset { return presetRows(workflow.SeedPresets) }
+
+// presetRows are built-in presets as stored rows.
+func presetRows(list []workflow.Persona) []store.Preset {
 	var rows []store.Preset
-	for _, p := range workflow.SeedPresets {
+	for _, p := range list {
 		rows = append(rows, store.Preset{Key: p.Key, Name: p.Name, Description: p.Description, PRInstruction: p.Instruction, PRGoal: p.Goal, PRSummary: p.Summary,
 			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing})
 	}
 	return rows
+}
+
+// reviewRows are the code review presets as stored rows.
+func reviewRows() []store.Preset { return presetRows(workflow.ReviewPresets) }
+
+// presetRenames are the seeded presets that took a code review name.
+func presetRenames() []store.PresetRename {
+	var out []store.PresetRename
+	for _, r := range workflow.PresetRenames {
+		out = append(out, store.PresetRename{Key: r.Key, From: r.From, To: r.To})
+	}
+	return out
 }
 
 // asPersona is a stored preset as a block uses it.

@@ -384,11 +384,11 @@ func TestBlocksSeeOnlyTheTagsOfTheStepsBeforeThem(t *testing.T) {
 	}
 	for _, bad := range []struct{ id, name, entry, want string }{
 		{"d", "Delta", "{gamma}", "{gamma} comes from Gamma, which does not run before this block"},
-		{"d", "Delta", "[[gamma]]", "{gamma} comes from Gamma, which does not run before this block"},
+		{"d", "Delta", "[[gamma]]", "[[gamma]] comes from Gamma, which does not run before this block"},
 		{"c", "Gamma", "see {beta}", "{beta} comes from Beta, which does not run before this block"},
 		{"a", "Alpha", "{delta}", "{delta} comes from Delta, which does not run before this block"},
-		{"d", "Delta", "{delta}", "{delta} is not a tag here"}, // its own output is not upstream, and is nobody else's to name
-		{"d", "Delta", "{nosuch}", "{nosuch} is not a tag here"},
+		{"d", "Delta", "{delta}", "{delta}: this block's own output"}, // its own output is not upstream, and is nobody else's to name
+		{"d", "Delta", "{nosuch}", "{nosuch}: no block is called Nosuch"},
 	} {
 		code, body := save(bad.id, bad.name, bad.entry)
 		if code != 400 || !strings.Contains(strings.ReplaceAll(body, "&#39;", "'"), bad.want) {

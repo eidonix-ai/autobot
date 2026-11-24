@@ -202,7 +202,7 @@ func TestPostFormPaletteAndOldBlocks(t *testing.T) {
 		{url.Values{"name": {"Say"}, "message": {"Hello"}}, "tick where to post"},
 		{url.Values{"name": {"Say"}, "message": {""}, "github": {"on"}}, "write the message"},
 		{url.Values{"name": {"Say"}, "message": {"Hello"}, "trial": {"on"}, "summary": {"on"}}, "tick where to post"},
-		{url.Values{"name": {"Say"}, "message": {"Hi {nosuch}"}, "github": {"on"}}, "{nosuch} is not a tag here"},
+		{url.Values{"name": {"Say"}, "message": {"Hi {nosuch}"}, "github": {"on"}}, "{nosuch}: no block is called Nosuch"},
 	} {
 		form, want := c.form, c.want
 		w, _ := p.st.Workflow(p.ws.ID, workflow.PR)

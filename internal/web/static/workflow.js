@@ -116,6 +116,10 @@
     var ref = (state.continues || {})[id] || '';
     el.classList.toggle('wf-reference', !!ref);
     el.querySelector('.wf-ref').textContent = ref;
+    // A block whose templates use a tag the rules do not allow is marked, with the reason beside its summary.
+    var bad = (state.problems || {})[id] || '';
+    el.classList.toggle('wf-problem', !!bad);
+    el.querySelector('.wf-sub').title = bad;
     el.querySelector('.wf-name').textContent = (state.names || {})[id] || types[editor.getNodeFromId(idToDf[id]).name].label;
   }
 
@@ -124,12 +128,22 @@
     statusEl.className = 'wf-status' + (bad ? ' bad' : '');
   }
 
+  // The bar says what is wrong with the blocks' templates, naming each block, tag and reason (the
+  // server's text), after a save (prefix "Saved") or when the page loads (prefix "").
+  function showSaved(prefix) {
+    var list = Object.keys(state.problems || {}).map(function (id) { return state.problems[id]; });
+    if (!list.length) { show(prefix || ''); return; }
+    var text = list.slice(0, 3).join(' · ') + (list.length > 3 ? ' · and ' + (list.length - 3) + ' more' : '');
+    show((prefix ? prefix + '. ' : '') + 'Needs a fix: ' + text, true);
+  }
+
   // ---- loading the saved workflow ----
   state.graph.nodes.forEach(function (n) { addNode(n.id, n.type, n.x, n.y); });
   state.graph.links.forEach(function (l) {
     if (idToDf[l.from] && idToDf[l.to]) { editor.addConnection(idToDf[l.from], idToDf[l.to], outClass(l.from, l.out), 'input_1'); }
   });
   loading = false;
+  showSaved('');
 
   // ---- Fit: the whole workflow in view, centred, at no more than full size ----
   function setView(z, x, y) {
@@ -242,12 +256,11 @@
     }).then(function (r) {
       if (r.status === 200) {
         state.version = r.body.version; state.summaries = r.body.summaries; state.names = r.body.names;
-        state.outputs = r.body.outputs; state.continues = r.body.continues;
+        state.outputs = r.body.outputs; state.continues = r.body.continues; state.problems = r.body.problems || {};
         Object.keys(sentRefs).forEach(function (id) { delete newRefs[id]; });
         Object.keys(idToDf).forEach(setSummary);
-        // A block that now uses a tag of a step that does not run before it is marked; the layout is saved anyway.
-        var bad = Object.keys(r.body.problems || {}).map(function (id) { return state.names[id] || id; });
-        if (bad.length) { show('Saved. Check the settings of ' + bad.join(', ') + ': a template uses a tag from a step that does not run before it.', true); } else { show('Saved'); }
+        // A block whose templates use a tag the rules do not allow is marked, and the bar says which; the layout is saved anyway.
+        showSaved('Saved');
       } else {
         show(r.body.error || 'Not saved.', true);
         if (r.status === 409) { offerReload(); }
@@ -470,10 +483,10 @@
       if (resp.status === 200) {
         return resp.json().then(function (body) {
           state.version = body.version; state.summaries = body.summaries; state.names = body.names;
-          state.outputs = body.outputs; state.continues = body.continues;
+          state.outputs = body.outputs; state.continues = body.continues; state.problems = body.problems || {};
           syncPorts(id, body.links || []);
           refused = '';
-          Object.keys(idToDf).forEach(setSummary); modal.hidePopover(); show(body.note ? 'Saved. ' + body.note : 'Saved');
+          Object.keys(idToDf).forEach(setSummary); modal.hidePopover(); showSaved(body.note ? 'Saved. ' + body.note : 'Saved');
         });
       }
       if (resp.headers.get('Content-Type').indexOf('application/json') === 0) {

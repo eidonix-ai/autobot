@@ -17,15 +17,15 @@ func TestCheckTemplatesOutputParts(t *testing.T) {
 	}
 	for _, tc := range []struct{ tpl, want string }{
 		{"{plain.report}", "this one is one value"},
-		{"{verdict.report}", "not a part of an output"},
-		{"{gather.confidence}", "not a part of an output"},
-		{"{gather.notes}", "see the Tags list"},
+		{"{verdict.report}", "a Decision's parts are confidence and reason"},
+		{"{gather.confidence}", "an Agent's parts are summary, report and scratchpad"},
+		{"{gather.notes}", "{gather.notes}: an Agent's parts are summary, report and scratchpad"},
 		{"{gather:report}", "use a dot, such as {gather.report}"},
 		{"{verdict:confidence}", "use a dot, such as {verdict.reason}"},
 		{"{plain:report}", "this one is one value"},
-		{"{nope.report}", "not another step's output tag"},
+		{"{nope.report}", "{nope.report}: no block is called Nope"},
 		{"{pr.title}", "use a colon"},
-		{"{pr:titel}", "fields of {pr}"},
+		{"{pr:titel}", "{pr:titel}: no such tag"},
 		{"{input.notes}", "see the Tags list for its parts"},
 		{"{input:report}", "use a dot, such as {input.report}"},
 	} {

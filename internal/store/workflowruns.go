@@ -152,8 +152,9 @@ func (s *Store) SetCaseValue(uuid, name, value, node string) error {
 }
 
 // renameCaseKeys moves the values kept under the tag old, and its parts (old.report …), of this
-// workspace's cases of a kind to the tag new. A value already under a new name is replaced.
-func renameCaseKeys(tx *sql.Tx, workspaceID int64, kind, old, new string) error {
+// workspace's cases of a kind to the tag new. A value already under a new name is replaced, or with keep
+// stays (and the old one is dropped).
+func renameCaseKeys(tx *sql.Tx, workspaceID int64, kind, old, new string, keep bool) error {
 	if old == new || old == "" || new == "" {
 		return nil
 	}
@@ -183,6 +184,18 @@ func renameCaseKeys(tx *sql.Tx, workspaceID int64, kind, old, new string) error 
 		rows.Close()
 		for _, k := range keys {
 			to := new + k.name[len(old):]
+			if keep {
+				var have int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM case_values WHERE case_uuid = ? AND name = ?`, k.uuid, to).Scan(&have); err != nil {
+					return err
+				}
+				if have > 0 {
+					if _, err := tx.Exec(`DELETE FROM case_values WHERE case_uuid = ? AND name = ?`, k.uuid, k.name); err != nil {
+						return err
+					}
+					continue
+				}
+			}
 			if _, err := tx.Exec(`DELETE FROM case_values WHERE case_uuid = ? AND name = ?`, k.uuid, to); err != nil {
 				return err
 			}

@@ -685,12 +685,24 @@ func (g Graph) OutputTags(kind, id string) OutputSet {
 // OtherEventTags lists the output tags of the steps that share no event's chain with the block id: they
 // run after other events, never in a run of this block's own chain, and what they give is what their
 // latest run on the item kept in its case. Blocks of a chain the block is in are not among them,
-// whether before it or not.
+// whether before it or not. A tag the block has upstream is not listed again, nor is its own (a reference
+// block in another chain keeps its source's tag, and a source's reference elsewhere keeps the source's).
 func (g Graph) OtherEventTags(kind, id string) OutputSet {
 	out := OutputSet{}
 	names, up, chains := g.OutputNames(kind), g.Ancestors(id), g.chains()
+	here := g.OutputTags(kind, id)
+	own := names[id] // a reference may read its source's value from another event: its tag is its source's
 	for _, n := range g.Nodes {
-		if tag, ok := names[n.ID]; ok && n.ID != id && !up[n.ID] && !sharesChain(chains, id, n.ID) {
+		if n.ID == id && IsReference(n) {
+			own = ""
+		}
+	}
+	for _, n := range g.Nodes {
+		tag, ok := names[n.ID]
+		if !ok || n.ID == id || up[n.ID] || sharesChain(chains, id, n.ID) || (own != "" && tag == own) {
+			continue
+		}
+		if _, upstream := here[tag]; !upstream {
 			out[tag] = n.Type
 		}
 	}
@@ -705,7 +717,7 @@ func (g Graph) elsewhere(kind, id string) map[string]string {
 	for _, n := range g.Nodes {
 		if tag, ok := names[n.ID]; ok && n.ID != id && !up[n.ID] && sharesChain(chains, id, n.ID) {
 			if _, dup := out[tag]; !dup {
-				out[tag] = DisplayName(n)
+				out[tag] = g.NameOf(n)
 			}
 		}
 	}
@@ -742,30 +754,65 @@ func OutputTagList(outputs OutputSet) []Tag {
 }
 
 // CheckNodeTemplates confirms that every tag the templates of node id use is built in or set by a
-// node upstream of it (OutputTags): a tag of a step that does not run before it is refused, naming
-// the step. It is checked when a node's settings are saved, not on every save of the canvas, so
-// removing a node or a link is never refused because another uses its output.
+// node upstream of it (OutputTags) or by one of another event: a tag of a step that does not run
+// before it is refused, naming the step. It is checked when a node's settings are saved, and again
+// (CheckNodeTemplates's message, headed by the block's name) on every save of the canvas, which
+// flags a block and never refuses the save: removing a node or a link is never refused because
+// another uses its output.
 func (g Graph) CheckNodeTemplates(kind, id string, templates ...string) error {
-	return checkTemplates(kind, g.usable(kind, id), g.elsewhere(kind, id), templates)
+	return g.scopeOf(kind, id).check(templates)
 }
 
 // CheckTemplates confirms that every tag the templates use is built in or in outputs, which are the
-// output tags the node may use (see CheckNodeTemplates).
+// output tags the node may use (see CheckNodeTemplates). With no workflow (a preset's text) only the
+// built-in tags are known.
 //
 // A colon is for the fields Autobot fills from a built-in parent ({pr:title}); a dot is for a part
 // of an Agent's output ({gather.report}), which no other tag has.
 func CheckTemplates(kind string, outputs OutputSet, templates ...string) error {
-	return checkTemplates(kind, outputs, nil, templates)
+	return tagScope{kind: kind, outputs: outputs, inGraph: outputs != nil}.check(templates)
 }
 
-func checkTemplates(kind string, outputs OutputSet, elsewhere map[string]string, templates []string) error {
-	for _, t := range templates {
-		tags := TemplateTags(t)
-		for _, l := range TemplateLinks(t) { // a link's label is free text: only its tag is checked
-			tags = append(tags, l.Name)
+// tagScope is what a block's templates may name: the output tags it may use, the blocks whose output it
+// may not (they do not run before it), its own tag and the blocks that keep none.
+type tagScope struct {
+	kind      string
+	outputs   OutputSet
+	elsewhere map[string]string // tag -> the name of the block it comes from
+	own       string            // the block's own tag, "" if it has none
+	untagged  map[string]Node   // the blocks that keep no tag, by the tag their name would make
+	inGraph   bool              // false for a text with no workflow (a preset): only built-in tags exist
+}
+
+func (g Graph) scopeOf(kind, id string) tagScope {
+	sc := tagScope{kind: kind, outputs: g.usable(kind, id), elsewhere: g.elsewhere(kind, id), own: g.OutputNames(kind)[id],
+		untagged: map[string]Node{}, inGraph: true}
+	for _, n := range g.Nodes {
+		if !HasOutput(n.Type) {
+			sc.untagged[Slug(DisplayName(n))] = n
 		}
-		for _, tag := range tags {
-			if err := checkTag(kind, outputs, elsewhere, tag); err != nil {
+	}
+	return sc
+}
+
+// linkInLinkRE finds a Markdown link wrapped around a [[ ]] link: [Label]([[x]]).
+var linkInLinkRE = regexp.MustCompile(`\]\(\[\[(` + tagNameExpr + `)(?:\|[^\]\n]*)?\]\]`)
+
+// check confirms every tag and link of the templates, saying what is wrong with the first that is not.
+func (sc tagScope) check(templates []string) error {
+	for _, t := range templates {
+		for _, m := range linkInLinkRE.FindAllStringSubmatch(t, -1) {
+			return fmt.Errorf("[[%s]] already makes a link: write [[%s|Label]] instead", m[1], m[1])
+		}
+		for _, m := range tagRE.FindAllStringSubmatch(t, -1) {
+			var err error
+			switch {
+			case m[1] != "":
+				err = sc.checkTag(m[1], "{"+m[1]+"}")
+			case m[2] != "": // a link's label is free text: only its tag is checked
+				err = sc.checkTag(m[2], "[["+m[2]+"]]")
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -773,46 +820,82 @@ func checkTemplates(kind string, outputs OutputSet, elsewhere map[string]string,
 	return nil
 }
 
-// checkTag checks one tag of a template. elsewhere has the output tags of the blocks that do not run
-// before it, by the name of the block.
-func checkTag(kind string, outputs OutputSet, elsewhere map[string]string, tag string) error {
-	if builtIn(tag, kind) {
+// builtInParents are the names a tag may begin with that are Autobot's, not a block's: a tag that begins
+// with one and is not built in has no such tag.
+var builtInParents = []string{"pr", "issue", "repo", "case", "charter", "input", "case_file"}
+
+// unknown says why the tag, which is no tag of the block's, is none: written is the tag as it is in the
+// text, {x} or [[x]].
+func (sc tagScope) unknown(tag, written string) error {
+	base, _, _ := strings.Cut(strings.NewReplacer(":", ".").Replace(tag), ".")
+	switch n, isUntagged := sc.untagged[base]; {
+	case strings.Contains(tag, ":") || slices.Contains(builtInParents, base):
+		return fmt.Errorf("%s: no such tag", written)
+	case !sc.inGraph:
+		return fmt.Errorf("%s: no such tag: only the built-in tags can be used here, see the Tags list", written)
+	case sc.own != "" && base == sc.own:
+		return fmt.Errorf("%s: this block's own output, which exists only once it has run", written)
+	case isUntagged:
+		return fmt.Errorf("%s: %s is a %s block, which keeps nothing under a tag", written, DisplayName(n), label(n))
+	}
+	return fmt.Errorf("%s: no block is called %s", written, NameFromTag(base))
+}
+
+// joinWords is "a", "a and b" or "a, b and c".
+func joinWords(w []string) string {
+	if len(w) < 2 {
+		return strings.Join(w, "")
+	}
+	return strings.Join(w[:len(w)-1], ", ") + " and " + w[len(w)-1]
+}
+
+// checkTag checks one tag of a template: three things can be wrong with a block's tag. It may name no
+// block (unknown), name one that does not run before this block, or name a part its output does not have.
+func (sc tagScope) checkTag(tag, written string) error {
+	if builtIn(tag, sc.kind) {
 		return nil
 	}
-	if parent, _, _ := strings.Cut(tag, "."); !has(slices.Collect(maps.Keys(outputs)), parent) {
-		if from, ok := elsewhere[parent]; ok {
-			return fmt.Errorf("{%s} comes from %s, which does not run before this block", tag, from)
+	if parent, _, _ := strings.Cut(tag, "."); !has(slices.Collect(maps.Keys(sc.outputs)), parent) {
+		if from, ok := sc.elsewhere[parent]; ok {
+			return fmt.Errorf("%s comes from %s, which does not run before this block", written, from)
 		}
 	}
 	if parent, part, dotted := strings.Cut(tag, "."); dotted {
-		typ, isOutput := outputs[parent]
+		typ, isOutput := sc.outputs[parent]
 		parts := partsOf(typ)
 		switch {
 		case parent == "input":
-			return fmt.Errorf("{%s} is not a part of {input}: see the Tags list for its parts", tag)
-		case builtIn(parent, kind):
-			return fmt.Errorf("{%s} is not a tag here: the fields of the built-in {%s} use a colon; see the Tags list", tag, parent)
+			return fmt.Errorf("%s is not a part of {input}: see the Tags list for its parts", written)
+		case builtIn(parent, sc.kind):
+			return fmt.Errorf("%s is not a tag here: the fields of the built-in {%s} use a colon; see the Tags list", written, parent)
 		case !isOutput:
-			return fmt.Errorf("{%s} is not a tag here: {%s} is not another step's output tag; see the Tags list", tag, parent)
+			return sc.unknown(tag, written)
 		case len(parts) == 0:
-			return fmt.Errorf("{%s} is not a tag here: only an Agent's or a Decision's output has parts; this one is one value, written {%s}", tag, parent)
+			return fmt.Errorf("%s is not a tag here: only an Agent's or a Decision's output has parts; this one is one value, written {%s}", written, parent)
 		case !isPart(parts, part):
-			return fmt.Errorf("{%s} is not a part of an output: see the Tags list for the parts of {%s}", tag, parent)
+			article, names := "an Agent's", make([]string, len(parts))
+			if typ == Decision {
+				article = "a Decision's"
+			}
+			for i, p := range parts {
+				names[i] = p.Name
+			}
+			return fmt.Errorf("%s: %s parts are %s", written, article, joinWords(names))
 		}
 		return nil
 	}
 	if parent := TagField(tag); parent != "" {
-		typ, isOutput := outputs[parent]
+		typ, isOutput := sc.outputs[parent]
 		switch {
 		case len(partsOf(typ)) > 0 || parent == "input":
-			return fmt.Errorf("{%s} is not a tag here: the parts of a step's output use a dot, such as {%s.%s}", tag, parent, firstPart(typ))
+			return fmt.Errorf("%s is not a tag here: the parts of a step's output use a dot, such as {%s.%s}", written, parent, firstPart(typ))
 		case isOutput:
-			return fmt.Errorf("{%s} is not a tag here: this one is one value, written {%s}", tag, parent)
+			return fmt.Errorf("%s is not a tag here: this one is one value, written {%s}", written, parent)
 		}
-		return fmt.Errorf("{%s} is not a tag here: see the Tags list for the fields of {%s}", tag, parent)
+		return sc.unknown(tag, written)
 	}
-	if _, ok := outputs[tag]; !ok {
-		return fmt.Errorf("{%s} is not a tag here: use a built-in tag or another step's output tag, or write {{%s}} for the text itself", tag, tag)
+	if _, ok := sc.outputs[tag]; !ok {
+		return sc.unknown(tag, written)
 	}
 	return nil
 }

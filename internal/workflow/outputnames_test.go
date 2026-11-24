@@ -205,7 +205,7 @@ func TestMigrateNames(t *testing.T) {
 		t.Errorf("renamed to its tag: %q with %q", byID["a"].Name, StoredOutputTo(byID["a"]))
 	}
 	// b's name stays (Verdict is taken), so its tag becomes checker and references move to it.
-	if byID["b"].Name != "Checker" || StoredOutputTo(byID["b"]) != "checker" || len(renames) != 1 || renames[0] != (TagRename{"verdict", "checker"}) {
+	if byID["b"].Name != "Checker" || StoredOutputTo(byID["b"]) != "checker" || len(renames) != 1 || renames[0] != (TagRename{Old: "verdict", New: "checker"}) {
 		t.Errorf("collision: %q with %q, renames %v", byID["b"].Name, StoredOutputTo(byID["b"]), renames)
 	}
 	if e, _ := CaseEntrySettingsOf(byID["u"]); e.Entry != "{value_summary} {checker.report} {checker}" {

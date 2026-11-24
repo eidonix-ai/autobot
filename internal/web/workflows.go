@@ -44,7 +44,11 @@ func (s *Server) loadWorkflow(ws *store.Workspace, kind string) (*store.StoredWo
 		return nil, g, err
 	}
 	migrated, renames, changed := g.MigrateNames(kind)
-	if !changed {
+	// A reference block shares its source's tag: one saved with a name of its own (Discovery 2) loses it,
+	// and what used its tag uses the source's.
+	migrated, refRenames, refChanged := migrated.MigrateReferences(kind)
+	renames = append(renames, refRenames...)
+	if !changed && !refChanged {
 		return stored, g, nil
 	}
 	b, err := json.Marshal(migrated)
@@ -53,7 +57,7 @@ func (s *Server) loadWorkflow(ws *store.Workspace, kind string) (*store.StoredWo
 	}
 	var moves []store.KeyRename
 	for _, r := range renames {
-		moves = append(moves, store.KeyRename{Old: r.Old, New: r.New})
+		moves = append(moves, store.KeyRename{Old: r.Old, New: r.New, Keep: r.Keep})
 	}
 	if _, err := s.st.SaveWorkflowRenaming(ws.ID, kind, stored.Version, string(b), nil, moves); err != nil && !errors.Is(err, store.ErrStaleWorkflow) {
 		return nil, g, err
@@ -86,7 +90,7 @@ func (s *Server) MigrateWorkflows() {
 func canvasFacts(g workflow.Graph) (map[string]string, map[string][]string) {
 	names, outputs := map[string]string{}, map[string][]string{}
 	for _, n := range g.Nodes {
-		names[n.ID], outputs[n.ID] = workflow.DisplayName(n), workflow.Outputs(n)
+		names[n.ID], outputs[n.ID] = g.NameOf(n), workflow.Outputs(n)
 	}
 	return names, outputs
 }
@@ -113,7 +117,7 @@ func continuesFacts(g workflow.Graph, kind string) map[string]string {
 func (s *Server) summaries(ws *store.Workspace, g workflow.Graph, kind string) map[string]string {
 	out := map[string]string{}
 	tags := g.OutputNames(kind)
-	problems := s.templateProblems(g, kind)
+	problems := s.templateProblemDetails(g, kind)
 	optOut := s.optOut(ws)
 	for _, n := range g.Nodes {
 		out[n.ID] = workflow.Summary(n, kind, tags[n.ID], optOut, func(m workflow.ModelRef) string { return m.Model })
@@ -155,10 +159,23 @@ func (s *Server) nodeTemplates(n workflow.Node, kind string) []string {
 	return nil
 }
 
-// templateProblems finds the blocks whose saved templates (or Condition rule) now use a tag that is
-// not a built-in one or an upstream step's: a link or a step was removed after they were saved. The
-// canvas still saves; these blocks are marked, with what is wrong.
+// templateProblems finds the blocks whose saved templates (or Condition rule) use a tag the rules do not
+// allow: a link or a step was removed after they were saved, or the text was saved before a rule
+// existed. The canvas still saves, and a block with a problem is marked, with a message that names the
+// block, the tag and the reason ("GitHub Comment: [[value.report]]: no block is called Value"). It is
+// checked when the canvas loads and on every save of it.
 func (s *Server) templateProblems(g workflow.Graph, kind string) map[string]string {
+	out := s.templateProblemDetails(g, kind)
+	for _, n := range g.Nodes {
+		if p, bad := out[n.ID]; bad {
+			out[n.ID] = g.NameOf(n) + ": " + p
+		}
+	}
+	return out
+}
+
+// templateProblemDetails is templateProblems without the name of the block, which its card shows.
+func (s *Server) templateProblemDetails(g workflow.Graph, kind string) map[string]string {
 	out := map[string]string{}
 	for _, n := range g.Nodes {
 		err := g.CheckNodeTemplates(kind, n.ID, s.nodeTemplates(n, kind)...)
@@ -197,7 +214,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	}
 	names, outputs := canvasFacts(g)
 	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": s.summaries(ws, g, kind),
-		"names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "types": workflow.TypesFor(kind)})
+		"names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "problems": s.templateProblems(g, kind), "types": workflow.TypesFor(kind)})
 	var tabs []map[string]string
 	for _, k := range workflow.Kinds {
 		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
@@ -272,6 +289,9 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 	// A new block takes the first of its type's name, then that name and 2, 3 … which no block of the
 	// workflow has (names are unique, since a name is a tag).
 	for k, i := range added {
+		if workflow.IsReference(g.Nodes[i]) {
+			continue // a reference has no name or tag of its own: it shows and writes its source's
+		}
 		// The blocks placed together are named in order: the later ones do not have a name yet.
 		before := workflow.Graph{Nodes: slices.DeleteFunc(slices.Clone(g.Nodes), func(n workflow.Node) bool {
 			return slices.ContainsFunc(added[k:], func(j int) bool { return g.Nodes[j].ID == n.ID })
@@ -497,7 +517,7 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 // nodeForm renders a node's settings form: the event, agent or decision form, by its type.
 func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws *store.Workspace, kind string, g workflow.Graph, n workflow.Node, settings any, problem string) {
 	t, _ := workflow.TypeOf(n.Type)
-	data := map[string]any{"WS": ws, "Kind": kind, "Node": n, "Type": t, "Name": workflow.DisplayName(n),
+	data := map[string]any{"WS": ws, "Kind": kind, "Node": n, "Type": t, "Name": g.NameOf(n),
 		"S": settings, "Error": problem, "Action": ws.Path() + "/workflows/" + kind + "/nodes/" + n.ID}
 	page := "node_event.html"
 	var model workflow.ModelRef
@@ -543,6 +563,12 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			sources = append([]source{{ID: st.ContinueOf, Name: "(deleted)", Selected: true}}, sources...)
 		}
 		data["Sources"] = sources
+		if st.Continues() { // a reference has no name of its own: the dialog shows its source's, read-only
+			data["ContinuesName"] = "(deleted)"
+			if src, ok := g.Source(n); ok {
+				data["ContinuesName"] = workflow.DisplayName(src)
+			}
+		}
 	case workflow.DecisionSettings:
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
@@ -591,6 +617,10 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	n := &g.Nodes[i]
 	f := r.PostForm
 	oldTag := g.OutputNames(kind)[n.ID] // its tag now: if its name changes, so does its tag
+	wasRef := workflow.IsReference(*n)
+	if wasRef {
+		oldTag = "" // a reference's tag is its source's: it has none to rename
+	}
 	n.Name = strings.TrimSpace(f.Get("name"))
 	if t, _ := workflow.TypeOf(n.Type); n.Name == t.Label {
 		n.Name = "" // the default needs no storing
@@ -686,31 +716,47 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		settings = e
 	}
+	b, merr := json.Marshal(settings)
+	if merr != nil {
+		s.fail(w, merr)
+		return
+	}
+	// A block set to continue another's conversation is a reference: it has no name of its own, and
+	// shows and writes its source's. One that stops being one needs a name again.
+	next := *n
+	next.Settings = b
+	nowRef := workflow.IsReference(next)
+	switch {
+	case nowRef:
+		n.Name = ""
+	case wasRef && n.Name == "":
+		if name := g.DefaultName(n.Type, n.ID); name != workflow.DisplayName(workflow.Node{Type: n.Type}) {
+			n.Name = name
+		}
+	}
 	if err == nil {
-		err = g.CheckName(kind, *n, workflow.DisplayName(*n))
+		next.Name = n.Name
+		err = g.CheckName(kind, next, workflow.DisplayName(next))
 	}
 	if err != nil {
 		s.nodeForm(w, r, http.StatusBadRequest, ws, kind, g, *n, settings, err.Error()+".")
 		return
 	}
-	b, err := json.Marshal(settings)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
 	n.Settings = b
 	newTag := g.OutputNames(kind)[n.ID]
-	if workflow.HasOutput(n.Type) {
+	if workflow.HasOutput(n.Type) && !nowRef {
 		*n, _ = workflow.WithOutputTo(*n, kind, newTag) // the tag as saved, which is the name's
 	}
 	var renames []store.KeyRename
 	note := ""
-	if oldTag != "" && newTag != oldTag {
+	if oldTag != "" && newTag != "" && newTag != oldTag {
 		// The block's tag is its name: renaming it rewrites the references in the others, in this save.
+		// A block that became a reference to another has that block's tag now, and a value already kept
+		// under it stays.
 		var changed []string
 		g, changed = g.Rename(kind, n.ID, oldTag, newTag)
 		n = &g.Nodes[i]
-		renames = []store.KeyRename{{Old: oldTag, New: newTag}}
+		renames = []store.KeyRename{{Old: oldTag, New: newTag, Keep: nowRef}}
 		note = fmt.Sprintf("Renamed {%s} to {%s} in %d %s", oldTag, newTag, len(changed), "block"+plural(len(changed)))
 	}
 	ports := workflow.Outputs(*n)

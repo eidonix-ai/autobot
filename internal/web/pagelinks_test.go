@@ -202,7 +202,7 @@ func TestTagsListExplainsLinks(t *testing.T) {
 	if code, out := save("[[first|Intake]] and [[first]]"); code != 200 {
 		t.Fatalf("good links: %d %s", code, out)
 	}
-	if code, out := save("[[nosuch|Intake]]"); code != 400 || !strings.Contains(out, "{nosuch} is not a tag here") {
+	if code, out := save("[[nosuch|Intake]]"); code != 400 || !strings.Contains(out, "[[nosuch]]: no block is called Nosuch") {
 		t.Errorf("a bad name with a label: %d\n%s", code, out)
 	}
 }

@@ -128,7 +128,7 @@ func TestBrowserDialogRefusedSaveMessageGoesWithTheDialog(t *testing.T) {
 		}
 		var inDialog string
 		chromedp.Run(ctx, chromedp.Text(`#wf-modal .error`, &inDialog, chromedp.ByQuery))
-		if text, bad := bar(); text != refusal || !bad || inDialog != "{nosuch} is not a tag here: use a built-in tag or another step's output tag, or write {{nosuch}} for the text itself." {
+		if text, bad := bar(); text != refusal || !bad || inDialog != "{nosuch}: no block is called Nosuch." {
 			t.Fatalf("after the refusal the bar says %q (bad %v) and the dialog %q", text, bad, inDialog)
 		}
 	}

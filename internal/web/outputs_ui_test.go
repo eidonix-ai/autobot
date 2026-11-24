@@ -86,10 +86,10 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 
 	// A misspelt part, a colon where a dot belongs and a dot on a decision's output are refused on save.
 	for tpl, want := range map[string]string{
-		"{gather.notes}":      "see the Tags list for the parts of {gather}",
+		"{gather.notes}":      "parts are summary, report and scratchpad",
 		"{gather:report}":     "use a dot, such as {gather.report}",
-		"{verdict.report}":    "not a part of an output",
-		"{gather.confidence}": "not a part of an output",
+		"{verdict.report}":    "parts are confidence and reason",
+		"{gather.confidence}": "parts are summary, report and scratchpad",
 		"{pr.title}":          "use a colon",
 	} {
 		code, _, out := b.post(base+"ce", url.Values{"csrf": {tok}, "name": {"Case entry"}, "entry": {tpl}, "finalize": {"on"}, "version": {"0"}})

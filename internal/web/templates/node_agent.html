@@ -5,7 +5,8 @@
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="version" value="">
   <div class="row">
-    <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+    {{if .ContinuesName}}<div class="ref-name"><span class="lbl">Name</span> <strong data-ref-name>{{.Name}}</strong> <span class="muted">continues {{.ContinuesName}}</span></div>
+    {{else}}<label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>{{end}}
     <label>Model
       <select name="model" data-model>
         {{if not .Models}}<option value="">No text models are assigned</option>{{end}}

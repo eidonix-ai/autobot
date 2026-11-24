@@ -37,10 +37,10 @@ func TestLinksAreChecked(t *testing.T) {
 	g := Graph{Nodes: []Node{{ID: "e", Type: "pr_ready"}, agentNode("a", "Discovery", "discovery"), agentNode("b", "Other", "other"), agentNode("c", "Later", "later")},
 		Links: []Link{{"e", "out", "a", "in"}, {"a", "out", "c", "in"}, {"e", "out", "b", "in"}}}
 	for tpl, want := range map[string]string{
-		"[[discovery.reprot]]":               "not a part of an output",
-		"[[nosuch|Intake report]]":           "{nosuch} is not a tag here",
-		"[[discovery.report|bad]] [[other]]": "{other} comes from Other, which does not run before this block",
-		"[[pr:nope]]":                        "{pr:nope} is not a tag here",
+		"[[discovery.reprot]]":               "[[discovery.reprot]]: an Agent's parts are summary, report and scratchpad",
+		"[[nosuch|Intake report]]":           "[[nosuch]]: no block is called Nosuch",
+		"[[discovery.report|bad]] [[other]]": "[[other]] comes from Other, which does not run before this block",
+		"[[pr:nope]]":                        "[[pr:nope]]: no such tag",
 	} {
 		err := g.CheckNodeTemplates(PR, "c", tpl)
 		if err == nil || !strings.Contains(err.Error(), want) {

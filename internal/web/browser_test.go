@@ -252,7 +252,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 			chromedp.SetValue(`#wf-modal textarea[name=entry]`, "Summary: {value_summary}"),
 			saveForm)
 	}
-	if err != nil || !strings.Contains(problem, "{nope} is not a tag") {
+	if err != nil || !strings.Contains(problem, "{nope}: no block is called Nope") {
 		t.Fatalf("tags: %q, %v", problem, err)
 	}
 	// A preset's Instruction is shown read-only; Custom unlocks it with the same text; another preset swaps it.

@@ -19,7 +19,7 @@ func TestTemplates(t *testing.T) {
 	if err := CheckTemplates(PR, nil, tpl); err == nil || !strings.Contains(err.Error(), "{value_summary}") {
 		t.Fatalf("unknown tag: %v", err)
 	}
-	if err := CheckTemplates(PR, map[string]bool{"value_summary": true}, tpl); err != nil {
+	if err := CheckTemplates(PR, OutputSet{"value_summary": Agent}, tpl); err != nil {
 		t.Fatal(err)
 	}
 	// Issue workflows have no pull request.

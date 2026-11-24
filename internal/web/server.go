@@ -140,6 +140,7 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		return nil, err
 	}
 	s.routes()
+	s.MigrateWorkflows() // blocks' tags are their names now: older workflows are brought up to date
 	return s, nil
 }
 

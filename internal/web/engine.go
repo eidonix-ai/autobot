@@ -233,11 +233,7 @@ type runState struct {
 
 // startWorkflow starts a run of a kind's workflow on an item from an event node, and returns its id.
 func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, eventNode string, number int, dry bool, by *store.User) (int64, error) {
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		return 0, err
-	}
-	g, err := loadGraph(stored)
+	_, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		return 0, err
 	}
@@ -528,8 +524,8 @@ type stepOutcome struct {
 	port, output, note string
 	agentRun           int64
 	err                error
-	// tags are the values an Agent's output tag takes, by suffix (see agentTags); nil for a step
-	// whose output is the tag's value.
+	// tags are the values an Agent's or a Decision's output tag takes, by suffix (see agentParts); nil
+	// for a step whose output is the tag's value.
 	tags map[string]string
 }
 
@@ -576,7 +572,19 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 				out += fmt.Sprintf("\n%s: %.1f%%", c.Name, 100*c.P)
 			}
 		}
-		return stepOutcome{port: ans.Choice, output: out}
+		// The tag is the choice; its parts are how sure the model was and why the choice means what it does.
+		parts := map[string]string{"": out, ".confidence": "", ".reason": ""}
+		for _, c := range ans.Choices {
+			if c.Name == ans.Choice {
+				parts[".confidence"] = fmt.Sprintf("%.0f%%", 100*c.P)
+			}
+		}
+		for _, c := range d.Choices {
+			if c.Name == ans.Choice {
+				parts[".reason"] = c.Description
+			}
+		}
+		return stepOutcome{port: ans.Choice, output: out, tags: parts}
 	case workflow.CaseEntry:
 		c, err := workflow.CaseEntrySettingsOf(n)
 		if err == nil {

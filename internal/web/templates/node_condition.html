@@ -12,6 +12,7 @@
         <option value="any"{{if eq .S.Match "any"}} selected{{end}}>any of these holds</option>
       </select></label>
   </div>
+  {{template "tagline" .}}
   <fieldset class="rules">
     {{if eq .Kind "pr"}}
     <div class="rule"><label class="check"><input type="checkbox" name="on_files"{{if .S.Files}} checked{{end}}> A changed file matches</label><input name="files" value="{{.S.Files}}" placeholder="kernels/* or *.cu" autocomplete="off"></div>
@@ -28,7 +29,6 @@
     <div class="rule"><label class="check"><input type="checkbox" name="on_contains"{{if .S.Contains}} checked{{end}}> Title or description contains</label><input name="contains" value="{{.S.Contains}}" autocomplete="off"></div>
     <div class="rule"><label class="check"><input type="checkbox" name="on_tag"{{if .S.Tag}} checked{{end}}> The tag</label><input name="tag" value="{{.S.Tag}}" placeholder="value_decision" autocomplete="off" spellcheck="false"><span class="muted">contains</span><input name="tag_has" value="{{.S.TagHas}}" autocomplete="off"></div>
   </fieldset>
-  {{template "outputto" .}}
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strconv"
@@ -28,6 +29,57 @@ func loadGraph(stored *store.StoredWorkflow) (workflow.Graph, error) {
 	var g workflow.Graph
 	err := json.Unmarshal([]byte(stored.Graph), &g)
 	return g, err
+}
+
+// loadWorkflow reads a workspace's workflow of a kind. One saved before a block's tag was always its
+// name is first brought up to date (workflow.MigrateNames): once, as a new version, with the values
+// kept for the cases moved to the new names.
+func (s *Server) loadWorkflow(ws *store.Workspace, kind string) (*store.StoredWorkflow, workflow.Graph, error) {
+	stored, err := s.st.Workflow(ws.ID, kind)
+	if err != nil {
+		return nil, workflow.Graph{}, err
+	}
+	g, err := loadGraph(stored)
+	if err != nil {
+		return nil, g, err
+	}
+	migrated, renames, changed := g.MigrateNames(kind)
+	if !changed {
+		return stored, g, nil
+	}
+	b, err := json.Marshal(migrated)
+	if err != nil {
+		return nil, g, err
+	}
+	var moves []store.KeyRename
+	for _, r := range renames {
+		moves = append(moves, store.KeyRename{Old: r.Old, New: r.New})
+	}
+	if _, err := s.st.SaveWorkflowRenaming(ws.ID, kind, stored.Version, string(b), nil, moves); err != nil && !errors.Is(err, store.ErrStaleWorkflow) {
+		return nil, g, err
+	}
+	if stored, err = s.st.Workflow(ws.ID, kind); err != nil {
+		return nil, g, err
+	}
+	g, err = loadGraph(stored)
+	return stored, g, err
+}
+
+// MigrateWorkflows brings every workspace's workflows up to date (see loadWorkflow); it runs when
+// Autobot starts, so no run sees a workflow from before.
+func (s *Server) MigrateWorkflows() {
+	all, err := s.st.Workspaces(&store.User{IsAdmin: true})
+	if err != nil {
+		log.Printf("migrating workflows: %v", err)
+		return
+	}
+	for i := range all {
+		for _, kind := range workflow.Kinds {
+			if _, _, err := s.loadWorkflow(&all[i], kind); err != nil {
+				log.Printf("migrating %s's %s workflow: %v", all[i].Name, kind, err)
+			}
+		}
+	}
 }
 
 // canvasFacts is what the canvas shows of each node besides its type: its name and outputs.
@@ -138,12 +190,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	g, err := loadGraph(stored)
+	stored, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -188,12 +235,7 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "The canvas sent something unreadable; reload the page.")
 		return
 	}
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	old, err := loadGraph(stored)
+	_, old, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -227,14 +269,18 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 		}
 		g.Nodes = append(g.Nodes, node)
 	}
-	// A new block's output is kept under a tag from its name from the start, which it keeps when
-	// renamed, and which no other block's tag changes by.
-	for _, i := range added {
-		if !workflow.HasOutput(g.Nodes[i].Type) || workflow.StoredOutputTo(g.Nodes[i]) != "" {
-			continue
+	// A new block takes the first of its type's name, then that name and 2, 3 … which no block of the
+	// workflow has (names are unique, since a name is a tag).
+	for k, i := range added {
+		// The blocks placed together are named in order: the later ones do not have a name yet.
+		before := workflow.Graph{Nodes: slices.DeleteFunc(slices.Clone(g.Nodes), func(n workflow.Node) bool {
+			return slices.ContainsFunc(added[k:], func(j int) bool { return g.Nodes[j].ID == n.ID })
+		})}
+		name := before.DefaultName(g.Nodes[i].Type, "")
+		if t, _ := workflow.TypeOf(g.Nodes[i].Type); name != t.Label {
+			g.Nodes[i].Name = name
 		}
-		tag := g.FreeOutputTag(kind, workflow.Slug(workflow.DisplayName(g.Nodes[i])), g.Nodes[i].ID)
-		if node, err := workflow.WithOutputTo(g.Nodes[i], kind, tag); err == nil {
+		if node, err := workflow.WithOutputTo(g.Nodes[i], kind, workflow.Slug(workflow.DisplayName(g.Nodes[i]))); err == nil {
 			g.Nodes[i] = node
 		}
 	}
@@ -353,6 +399,12 @@ func (s *Server) checkModel(ws *store.Workspace, m workflow.ModelRef, decisions 
 
 // storeGraph checks and saves a workflow and answers with its new version and summaries.
 func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind string, base int, g workflow.Graph, actor *store.User) {
+	s.storeGraphWith(w, ws, kind, base, g, actor, nil, "")
+}
+
+// storeGraphWith is storeGraph, moving the values kept under the tags renamed to their new names in the
+// same save, and answering with a note to show on the canvas's bar.
+func (s *Server) storeGraphWith(w http.ResponseWriter, ws *store.Workspace, kind string, base int, g workflow.Graph, actor *store.User, renames []store.KeyRename, note string) {
 	if err := g.Check(kind); err != nil {
 		jsonError(w, http.StatusBadRequest, "Not saved: "+err.Error()+".")
 		return
@@ -362,7 +414,7 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 		s.fail(w, err)
 		return
 	}
-	version, err := s.st.SaveWorkflow(ws.ID, kind, base, string(b), actor)
+	version, err := s.st.SaveWorkflowRenaming(ws.ID, kind, base, string(b), actor, renames)
 	if errors.Is(err, store.ErrStaleWorkflow) {
 		jsonError(w, http.StatusConflict, "Someone else changed this workflow while you were editing it. Reload to see their changes.")
 		return
@@ -375,7 +427,7 @@ func (s *Server) storeGraph(w http.ResponseWriter, ws *store.Workspace, kind str
 	w.Header().Set("Content-Type", "application/json")
 	problems := s.templateProblems(g, kind)
 	json.NewEncoder(w).Encode(map[string]any{"version": version, "summaries": s.summaries(ws, g, kind), "names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "links": g.Links,
-		"problems": problems})
+		"problems": problems, "note": note})
 }
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
@@ -394,12 +446,7 @@ func (s *Server) findNode(w http.ResponseWriter, r *http.Request) (*store.Worksp
 	if !ok {
 		return nil, "", nil, workflow.Graph{}, 0, false
 	}
-	stored, err := s.st.Workflow(ws.ID, kind)
-	if err != nil {
-		s.fail(w, err)
-		return nil, "", nil, workflow.Graph{}, 0, false
-	}
-	g, err := loadGraph(stored)
+	stored, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		s.fail(w, err)
 		return nil, "", nil, workflow.Graph{}, 0, false
@@ -528,11 +575,8 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 			data["Models"] = models
 		}
 		data["Tags"], data["OutputTags"] = workflow.Tags(kind), workflow.OutputTagList(g.OutputTags(kind, n.ID))
-		// What the "Output to" box shows: the block's tag, or what was typed in a form that was refused.
-		data["OutputTo"] = g.OutputNames(kind)[n.ID]
-		if v := strings.TrimSpace(r.PostForm.Get("output_to")); r.Method == http.MethodPost && v != "" {
-			data["OutputTo"] = v
-		}
+		data["OtherTags"] = workflow.OutputTagList(g.OtherEventTags(kind, n.ID))
+		data["Tag"] = g.OutputNames(kind)[n.ID] // the block's tag, its name in snake case: "" for a block with none
 	}
 	s.renderFragment(w, r, status, page, data)
 }
@@ -546,18 +590,10 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	n := &g.Nodes[i]
 	f := r.PostForm
+	oldTag := g.OutputNames(kind)[n.ID] // its tag now: if its name changes, so does its tag
 	n.Name = strings.TrimSpace(f.Get("name"))
 	if t, _ := workflow.TypeOf(n.Type); n.Name == t.Label {
 		n.Name = "" // the default needs no storing
-	}
-	// The block's output tag: what the form says, or from its name when it says nothing. A block that
-	// is renamed keeps the tag the form shows, which is its old one.
-	if workflow.HasOutput(n.Type) {
-		tag := strings.TrimSpace(f.Get("output_to"))
-		if tag == "" {
-			tag = g.FreeOutputTag(kind, workflow.Slug(workflow.DisplayName(*n)), n.ID)
-		}
-		f.Set("output_to", tag)
 	}
 	var settings any
 	var err error
@@ -650,8 +686,8 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		settings = e
 	}
-	if err == nil && workflow.HasOutput(n.Type) {
-		err = g.CheckOutputTag(kind, *n, f.Get("output_to"))
+	if err == nil {
+		err = g.CheckName(kind, *n, workflow.DisplayName(*n))
 	}
 	if err != nil {
 		s.nodeForm(w, r, http.StatusBadRequest, ws, kind, g, *n, settings, err.Error()+".")
@@ -663,6 +699,20 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.Settings = b
+	newTag := g.OutputNames(kind)[n.ID]
+	if workflow.HasOutput(n.Type) {
+		*n, _ = workflow.WithOutputTo(*n, kind, newTag) // the tag as saved, which is the name's
+	}
+	var renames []store.KeyRename
+	note := ""
+	if oldTag != "" && newTag != oldTag {
+		// The block's tag is its name: renaming it rewrites the references in the others, in this save.
+		var changed []string
+		g, changed = g.Rename(kind, n.ID, oldTag, newTag)
+		n = &g.Nodes[i]
+		renames = []store.KeyRename{{Old: oldTag, New: newTag}}
+		note = fmt.Sprintf("Renamed {%s} to {%s} in %d %s", oldTag, newTag, len(changed), "block"+plural(len(changed)))
+	}
 	ports := workflow.Outputs(*n)
 	links := g.Links[:0]
 	for _, l := range g.Links {
@@ -672,7 +722,7 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	g.Links = links
 	base, _ := strconv.Atoi(f.Get("version"))
-	s.storeGraph(w, ws, kind, base, g, me(r))
+	s.storeGraphWith(w, ws, kind, base, g, me(r), renames, note)
 }
 
 // renderFragment executes a page's "content" without the layout, for HTML loaded into a modal.

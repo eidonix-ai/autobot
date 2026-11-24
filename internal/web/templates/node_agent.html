@@ -17,6 +17,7 @@
         <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
       </select></label>
   </div>
+  {{template "tagline" .}}
   {{if .Missing}}<p class="error">The preset “{{.S.Persona}}” no longer exists. Choose another preset, or Custom.</p>{{end}}
   {{with .Foreign}}<p class="muted">This preset is {{.Owner}}'s. <a href="/presets/{{.ID}}" target="_blank" rel="noopener">Copy to my presets</a></p>{{end}}
   <div class="row">
@@ -67,8 +68,7 @@
         <option value="">No check</option>
         {{range .Verifiers}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
-    {{template "outputto" .}}
-  </div>
+    </div>
   <div class="row">
     <label>Turn limit <input type="number" name="max_turns" min="1" max="500" value="{{.S.MaxTurns}}"></label>
     <label data-when-report{{if ne .Closing "report"}} hidden{{end}}>Turns to write the report <input type="number" name="report_turns" min="1" max="200" value="{{.ReportTurns}}"></label>

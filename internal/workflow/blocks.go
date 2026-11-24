@@ -72,7 +72,7 @@ func (s ConditionSettings) Check(kind string) error {
 // ConditionFromForm reads a Condition node's settings from its form: each rule's box, then its value.
 func ConditionFromForm(get func(string) string) ConditionSettings {
 	on := func(k string) bool { return get("on_"+k) == "on" }
-	s := ConditionSettings{Match: get("match"), OutputTo: strings.TrimSpace(get("output_to"))}
+	s := ConditionSettings{Match: get("match")}
 	if on("files") {
 		s.Files = strings.TrimSpace(get("files"))
 	}
@@ -221,7 +221,7 @@ func (s TestRunSettings) Check() error {
 
 // TestRunFromForm reads a Test Run node's settings from its form.
 func TestRunFromForm(get func(string) string) TestRunSettings {
-	s := TestRunSettings{Script: strings.TrimSpace(get("script")), OutputTo: strings.TrimSpace(get("output_to"))}
+	s := TestRunSettings{Script: strings.TrimSpace(get("script"))}
 	s.Machine, _ = strconv.ParseInt(get("machine"), 10, 64)
 	s.GPUs, _ = strconv.Atoi(get("gpus"))
 	s.Minutes, _ = strconv.Atoi(get("minutes"))

@@ -5,10 +5,10 @@
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="version" value="">
   <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+  {{template "tagline" .}}
   <label>Entry <textarea name="entry" rows="6" class="code" spellcheck="false" required>{{.S.Entry}}</textarea></label>
   {{template "tags" .}}
   <label class="check"><input type="checkbox" name="finalize"{{if .S.Finalize}} checked{{end}}> Finalize the entry <span class="info" tabindex="0" data-tip="A finalized entry is appended to the case file and can no longer be edited. Unfinalized, it stays a draft that this step's next run revises.">ⓘ</span></label>
-  {{template "outputto" .}}
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

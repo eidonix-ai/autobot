@@ -46,7 +46,7 @@ func TestEveryStepKeepsItsOutputUnderItsName(t *testing.T) {
 		// Two hops from the agent, with a block between that is not an agent.
 		node("end", workflow.CaseEntry, "End note", workflow.CaseEntrySettings{Entry: "END {discovery.report} | {mid_note} | {is_pr}", Finalize: true}),
 		// Down a Decision's branch: the agent's parts, and the decision's own answer.
-		node("yes", workflow.CaseEntry, "Yes branch", workflow.CaseEntrySettings{Entry: "YES S=[{discovery.summary}] N=[{discovery.scratchpad}] W=[{discovery}] D={route}", Finalize: true}),
+		node("yes", workflow.CaseEntry, "Yes branch", workflow.CaseEntrySettings{Entry: "YES S=[{discovery.summary}] N=[{discovery.scratchpad}] W=[{discovery}] D={route} C={route.confidence} R={route.reason}", Finalize: true}),
 		node("no", workflow.CaseEntry, "No branch", workflow.CaseEntrySettings{Entry: "NO", Finalize: true}),
 		// A merge of two branches reads the tags of both, which neither is the step before.
 		node("join", workflow.CaseEntry, "Joined", workflow.CaseEntrySettings{Entry: "JOIN {discovery.report} | {mid_note} | {yes_branch}", Finalize: true}),
@@ -78,7 +78,7 @@ func TestEveryStepKeepsItsOutputUnderItsName(t *testing.T) {
 	want := map[string]string{
 		"mid":  "MID THE REPORT",
 		"end":  "END THE REPORT | MID THE REPORT | " + steps["cond"].Output,
-		"yes":  "YES S=[THE SUMMARY] N=[" + notes + "] W=[## Summary\n\nTHE SUMMARY\n\n## Report\n\nTHE REPORT\n\n## Notes\n\n" + notes + "] D=yes",
+		"yes":  "YES S=[THE SUMMARY] N=[" + notes + "] W=[## Summary\n\nTHE SUMMARY\n\n## Report\n\nTHE REPORT\n\n## Notes\n\n" + notes + "] D=yes C=80% R=It should.",
 		"join": "JOIN THE REPORT | MID THE REPORT | " + steps["yes"].Output,
 	}
 	for id, w := range want {
@@ -95,7 +95,7 @@ func TestEveryStepKeepsItsOutputUnderItsName(t *testing.T) {
 	// Each step's output is kept per case under the step's name, with an Agent's parts.
 	v := c.caseValues()
 	for tag, w := range map[string]string{
-		"discovery.report": "THE REPORT", "discovery.summary": "THE SUMMARY", "route": "yes",
+		"discovery.report": "THE REPORT", "discovery.summary": "THE SUMMARY", "route": "yes", "route.confidence": "80%", "route.reason": "It should.",
 		"is_pr": steps["cond"].Output, "mid_note": "MID THE REPORT", "end_note": want["end"], "yes_branch": want["yes"],
 		"joined": want["join"],
 	} {
@@ -126,18 +126,21 @@ func TestInputStillWorksButIsNotListed(t *testing.T) {
 	}
 }
 
-var outputToValue = regexp.MustCompile(`name="output_to" value="([^"]*)"`)
-
-// formTag is the output tag a block's settings form shows.
+// formTag is the tag a block's settings form shows, read-only under its name; "" when it shows none.
 func (c *contEnv) formTag(id string) string {
 	c.t.Helper()
 	code, body := c.b.get("/w/o/r/workflows/pr/nodes/" + id)
-	m := outputToValue.FindStringSubmatch(body)
-	if code != 200 || m == nil {
-		c.t.Fatalf("the form of %s: %d\n%s", id, code, body)
+	if code != 200 || strings.Contains(body, `name="output_to"`) {
+		c.t.Fatalf("the form of %s: %d (it has an Output to box: %v)\n%s", id, code, strings.Contains(body, `name="output_to"`), body)
+	}
+	m := blockTagRE.FindStringSubmatch(body)
+	if m == nil {
+		return ""
 	}
 	return m[1]
 }
+
+var blockTagRE = regexp.MustCompile(`<p class="blocktag">Tag <code>\{([^}]*)\}</code>`)
 
 func (c *contEnv) storedGraph() workflow.Graph {
 	c.t.Helper()
@@ -147,32 +150,32 @@ func (c *contEnv) storedGraph() workflow.Graph {
 	return g
 }
 
-// A block saved before output tags existed behaves as if its tag were its name's: the Tags list
-// offers it, the form shows it, the card shows it and templates may use it. Saving the block stores it.
-func TestOldBlockGetsItsNamesSlug(t *testing.T) {
+func (c *contEnv) version() int {
+	w, _ := c.st.Workflow(c.ws.ID, workflow.PR)
+	return w.Version
+}
+
+// A block's tag is its name in snake case: the dialog shows it under the name, read-only, with no
+// Output to box; the Tags list of a later block offers it; a block with no tag (an event, a Post) shows none.
+func TestTagIsTheNameInSnakeCase(t *testing.T) {
 	c := newContEnv(t, nil)
-	c.saveGraph(append(append([]workflow.Node{}, events...),
-		node("old", workflow.CaseEntry, "Value Proposition", map[string]any{"entry": "x", "finalize": true}),
-		caseEntryNode("use", "User", "{value_proposition}")), [2]string{"ev1", "old"}, [2]string{"old", "use"})
-	if got := c.formTag("old"); got != "value_proposition" {
-		t.Fatalf("the form shows %q", got)
+	post := workflow.DefaultPost()
+	post.Message = "x"
+	c.saveGraph(append(append([]workflow.Node{}, events...), node("old", workflow.CaseEntry, "Value Proposition", map[string]any{"entry": "x", "finalize": true}),
+		caseEntryNode("use", "User", "{value_proposition}"), node("po", workflow.Post, "Say it", post)),
+		[2]string{"ev1", "old"}, [2]string{"old", "use"}, [2]string{"use", "po"})
+	for id, want := range map[string]string{"old": "value_proposition", "use": "user", "ev1": "", "po": ""} {
+		if got := c.formTag(id); got != want {
+			t.Errorf("the form of %s shows the tag %q, want %q", id, got, want)
+		}
 	}
 	_, body := c.b.get("/w/o/r/workflows/pr/nodes/use")
-	if !strings.Contains(body, "<code>{value_proposition}</code>") {
+	if !strings.Contains(body, "<dt><code>{value_proposition}</code>") {
 		t.Errorf("the Tags list lacks it:\n%s", body)
 	}
-	if stored := workflow.StoredOutputTo(c.storedGraph().Nodes[2]); stored != "" {
-		t.Fatalf("reading stored it: %q", stored)
-	}
-	// A template of another block may use it, saved or not.
-	code, _, out := c.b.post("/w/o/r/workflows/pr/nodes/use", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(c.version()))},
-		"name": {"User"}, "entry": {"Using {value_proposition}"}, "finalize": {"on"}, "output_to": {"user"}}) // the form says what it showed
-	if code != 200 {
-		t.Fatalf("%d %s", code, out)
-	}
-	// Saving the old block stores the tag, as its form showed it.
-	code, _, out = c.b.post("/w/o/r/workflows/pr/nodes/old", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(c.version()))},
-		"name": {"Value Proposition"}, "entry": {"x"}, "finalize": {"on"}, "output_to": {"value_proposition"}})
+	// Saved, the tag is kept (for older readers) as the name's, whatever the form sends.
+	code, _, out := c.b.post("/w/o/r/workflows/pr/nodes/old", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(c.version()))},
+		"name": {"Value Proposition"}, "entry": {"x"}, "finalize": {"on"}, "output_to": {"sneaky"}})
 	if code != 200 {
 		t.Fatalf("%d %s", code, out)
 	}
@@ -181,93 +184,182 @@ func TestOldBlockGetsItsNamesSlug(t *testing.T) {
 	}
 }
 
-func (c *contEnv) version() int {
-	w, _ := c.st.Workflow(c.ws.ID, workflow.PR)
-	return w.Version
-}
-
-// A new block gets its tag from its name when it is placed, and again when its settings are first saved
-// with the box empty; the second of a name gets _2; renaming the block keeps its tag; and a tag another
-// block has is refused.
-func TestNewBlocksNameTheirOutputAndRenamingKeepsIt(t *testing.T) {
+// A new block is named after its type, then with 2, 3 … where the workflow has a block of that name; a
+// name that is another block's (an event's too, compared by its tag) or a built-in tag is refused.
+func TestNewBlocksGetFreeNamesAndDuplicatesAreRefused(t *testing.T) {
 	c := newContEnv(t, nil)
 	c.saveGraph(events)
 	nodes := []map[string]any{{"id": "ev1", "type": "pr_ready"}, {"id": "ev2", "type": "pr_activity"},
-		{"id": "one", "type": "case_entry", "x": 1, "y": 1}, {"id": "two", "type": "case_entry", "x": 2, "y": 2}, {"id": "ag", "type": "agent", "x": 3, "y": 3}}
+		{"id": "one", "type": "case_entry", "x": 1, "y": 1}, {"id": "two", "type": "case_entry", "x": 2, "y": 2}, {"id": "three", "type": "case_entry", "x": 3, "y": 3},
+		{"id": "ag", "type": "agent", "x": 4, "y": 4}, {"id": "ag2", "type": "agent", "x": 5, "y": 5}}
 	code, answer := c.layout(nodes, []workflow.Link{})
 	if code != 200 {
 		t.Fatalf("layout %d %v", code, answer)
 	}
-	// The cards show the tag.
+	names := answer["names"].(map[string]any)
+	for id, want := range map[string]string{"one": "Case Entry", "two": "Case Entry 2", "three": "Case Entry 3", "ag": "Agent", "ag2": "Agent 2", "ev1": "PR First Ready"} {
+		if names[id] != want {
+			t.Errorf("%s is named %v, want %s", id, names[id], want)
+		}
+	}
 	sums := answer["summaries"].(map[string]any)
-	if sums["one"] != "Appends a finalized entry · → {case_entry}" || sums["two"] != "Appends a finalized entry · → {case_entry_2}" || sums["ag"] != "Choose a model · → {agent}" {
+	if sums["two"] != "Appends a finalized entry · → {case_entry_2}" || sums["ag"] != "Choose a model · → {agent}" {
 		t.Errorf("the cards say %v", sums)
 	}
-	for id, want := range map[string]string{"one": "case_entry", "two": "case_entry_2", "ag": "agent"} {
+	for id, want := range map[string]string{"one": "case_entry", "two": "case_entry_2", "ag2": "agent_2"} {
 		if got := c.formTag(id); got != want {
 			t.Errorf("%s: the form shows %q, want %q", id, got, want)
 		}
-		var stored string
-		for _, n := range c.storedGraph().Nodes {
-			if n.ID == id {
-				stored = workflow.StoredOutputTo(n)
-			}
-		}
-		if stored != want {
-			t.Errorf("%s: stored %q, want %q", id, stored, want)
-		}
 	}
-	// Deleting the first block does not change the second's tag.
+	// Deleting the first does not rename the others.
 	if code, _ := c.layout(append(append([]map[string]any{}, nodes[:2]...), nodes[3:]...), []workflow.Link{}); code != 200 {
 		t.Fatal(code)
 	}
 	if got := c.formTag("two"); got != "case_entry_2" {
 		t.Errorf("after deleting the first: %q", got)
 	}
-	save := func(id string, form url.Values) (int, string) {
-		form.Set("csrf", c.csrf)
-		form.Set("version", itoa(int64(c.version())))
-		form.Set("entry", "text")
-		form.Set("finalize", "on")
-		code, _, body := c.b.post("/w/o/r/workflows/pr/nodes/"+id, form)
+	save := func(id, name string) (int, string) {
+		code, _, body := c.b.post("/w/o/r/workflows/pr/nodes/"+id, url.Values{"csrf": {c.csrf}, "version": {itoa(int64(c.version()))},
+			"name": {name}, "entry": {"text"}, "finalize": {"on"}})
 		return code, body
 	}
-	// Renamed in the settings, with the box as the form showed it: the tag stays.
-	if code, body := save("two", url.Values{"name": {"Second entry"}, "output_to": {"case_entry_2"}}); code != 200 {
-		t.Fatalf("%d %s", code, body)
-	}
-	if got := c.formTag("two"); got != "case_entry_2" {
-		t.Errorf("after the rename the form shows %q", got)
-	}
-	var renamed workflow.Node
-	for _, n := range c.storedGraph().Nodes {
-		if n.ID == "two" {
-			renamed = n
+	for name, want := range map[string]string{"case entry 3": "another block is already named Case Entry 3", "Pr Title": "built-in tag", "Case": "built-in tag",
+		"When ready": "", "pr first ready": "another block is already named PR First Ready", "???": "needs a letter or a digit"} {
+		code, body := save("two", name)
+		if want == "" {
+			if code != 200 {
+				t.Errorf("%q refused: %d %s", name, code, body)
+			}
+			continue
 		}
-	}
-	if renamed.Name != "Second entry" || workflow.StoredOutputTo(renamed) != "case_entry_2" {
-		t.Errorf("renamed: %q with %q", renamed.Name, workflow.StoredOutputTo(renamed))
-	}
-	// An empty box takes the name's slug.
-	agentForm := func(tag string) url.Values {
-		return url.Values{"name": {"Value Proposition"}, "output_to": {tag}, "persona": {"custom"}, "instruction": {"x"}, "goal": {"y"},
-			"max_turns": {"5"}, "max_minutes": {"5"}, "rerun": {"resume"}, "model": {itoa(c.prov.ID) + ":m"}}
-	}
-	if code, body := save("ag", agentForm("")); code != 200 {
-		t.Fatalf("%d %s", code, body)
-	}
-	if got := c.formTag("ag"); got != "value_proposition" {
-		t.Errorf("an empty box: %q", got)
-	}
-	// Another block's tag, and a built-in one, are refused with a message, and nothing is saved.
-	for tag, want := range map[string]string{"case_entry_2": "already the output of Second entry", "pr_title": "built-in", "input": "built-in", "case": "built-in"} {
-		code, body := save("ag", agentForm(tag))
 		if code != 400 || !strings.Contains(body, want) {
-			t.Errorf("%s: %d, want %q:\n%s", tag, code, want, body)
+			t.Errorf("%q: %d, want %q:\n%s", name, code, want, body)
 		}
 	}
-	if got := c.formTag("ag"); got != "value_proposition" {
-		t.Errorf("a refused save changed the tag to %q", got)
+	if got := c.formTag("two"); got != "when_ready" {
+		t.Errorf("the tag after the one accepted rename: %q", got)
+	}
+}
+
+// Renaming a block rewrites every reference to its tag in the workflow's other blocks, in the same
+// save: {x}, {x.part}, [[x]], [[x.part|Label]] and a Condition's tag field, not {{x}} nor {xs}; the
+// values kept for the cases move to the new names; the answer says what was done; and the other kind
+// of workflow is not touched.
+func TestRenamingABlockRewritesItsReferences(t *testing.T) {
+	c := newContEnv(t, nil)
+	entry := func(text string) workflow.CaseEntrySettings { return workflow.CaseEntrySettings{Entry: text} }
+	cond := workflow.ConditionSettings{Match: "all", Tag: "discovery", TagHas: "ok"}
+	post := workflow.DefaultPost()
+	post.Message = "Post [[discovery.report|The report]]"
+	// An issue workflow with a block of the same name, which must not be touched.
+	issueEntry, _ := json.Marshal(entry("Issue {discovery}"))
+	ig, _ := json.Marshal(workflow.Graph{Nodes: []workflow.Node{{ID: "ie", Type: "issue_opened"}, {ID: "x", Type: workflow.CaseEntry, Name: "Discovery"}, {ID: "y", Type: workflow.CaseEntry, Name: "Other", Settings: issueEntry}},
+		Links: []workflow.Link{{From: "ie", Out: "out", To: "x", In: "in"}, {From: "x", Out: "out", To: "y", In: "in"}}})
+	if _, err := c.st.SaveWorkflow(c.ws.ID, workflow.Issue, 0, string(ig), c.admin); err != nil {
+		t.Fatal(err)
+	}
+	pg, _ := json.Marshal(workflow.Graph{Nodes: append(append([]workflow.Node{}, events...), caseEntryNode("a", "Discovery", "found"),
+		caseEntryNode("b", "Uses it", "{discovery} {discovery.report} [[discovery]] [[discovery.report|Intake]] {{discovery}} {discoveries} [[[[discovery]]"),
+		node("c", workflow.Condition, "Looks ok", cond), node("po", workflow.Post, "Say it", post)),
+		Links: []workflow.Link{{From: "ev1", Out: "out", To: "a", In: "in"}, {From: "a", Out: "out", To: "b", In: "in"}, {From: "a", Out: "out", To: "c", In: "in"}, {From: "c", Out: "yes", To: "po", In: "in"}}})
+	if _, err := c.st.SaveWorkflow(c.ws.ID, workflow.PR, c.version(), string(pg), c.admin); err != nil {
+		t.Fatal(err)
+	}
+	// Values kept for a pull request's case and for an issue's.
+	pr, _, _ := c.st.OpenCase(c.ws, 1, "pr", "t", "opened")
+	is, _, _ := c.st.OpenCase(c.ws, 2, "issue", "t", "opened")
+	for _, cs := range []string{pr.UUID, is.UUID} {
+		for tag, v := range map[string]string{"discovery": "W", "discovery.report": "R", "discovery.summary": "S", "discoveryx": "NOT", "other": "O"} {
+			c.st.SetCaseValue(cs, tag, v, "a")
+		}
+	}
+	w, _ := c.st.Workflow(c.ws.ID, workflow.PR)
+	code, _, out := c.b.post("/w/o/r/workflows/pr/nodes/a", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(w.Version))}, "name": {"Intake Notes"}, "entry": {"found"}, "finalize": {"on"}})
+	if code != 200 || !strings.Contains(out, `"note":"Renamed {discovery} to {intake_notes} in 3 blocks"`) {
+		t.Fatalf("%d %s", code, out)
+	}
+	g := c.storedGraph()
+	byID := map[string]workflow.Node{}
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
+	if e, _ := workflow.CaseEntrySettingsOf(byID["b"]); e.Entry != "{intake_notes} {intake_notes.report} [[intake_notes]] [[intake_notes.report|Intake]] {{discovery}} {discoveries} [[[[discovery]]" {
+		t.Errorf("the entry: %q", e.Entry)
+	}
+	if cs, _ := workflow.SettingsOf(byID["c"], workflow.DefaultCondition()); cs.Tag != "intake_notes" || cs.TagHas != "ok" {
+		t.Errorf("the Condition: %+v", cs)
+	}
+	if p, _ := workflow.SettingsOf(byID["po"], workflow.DefaultPost()); p.Message != "Post [[intake_notes.report|The report]]" {
+		t.Errorf("the Post: %q", p.Message)
+	}
+	if byID["a"].Name != "Intake Notes" || workflow.StoredOutputTo(byID["a"]) != "intake_notes" {
+		t.Errorf("the renamed block: %q %q", byID["a"].Name, workflow.StoredOutputTo(byID["a"]))
+	}
+	// The values moved, for pull requests' cases only.
+	got, _ := c.st.CaseValues(pr.UUID)
+	if got["intake_notes"] != "W" || got["intake_notes.report"] != "R" || got["intake_notes.summary"] != "S" || got["discovery"] != "" || got["discovery.report"] != "" || got["discoveryx"] != "NOT" || got["other"] != "O" {
+		t.Errorf("a pull request's values: %v", got)
+	}
+	if got, _ := c.st.CaseValues(is.UUID); got["discovery"] != "W" || got["intake_notes"] != "" {
+		t.Errorf("an issue's values were touched: %v", got)
+	}
+	// The issue workflow is as it was.
+	iw, _ := c.st.Workflow(c.ws.ID, workflow.Issue)
+	if iw.Graph != string(ig) && !strings.Contains(iw.Graph, `Issue {discovery}`) {
+		t.Errorf("the issue workflow changed: %s", iw.Graph)
+	}
+	// A name that does not change the tag changes nothing else.
+	w, _ = c.st.Workflow(c.ws.ID, workflow.PR)
+	_, _, out = c.b.post("/w/o/r/workflows/pr/nodes/a", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(w.Version))}, "name": {"Intake notes!"}, "entry": {"found"}, "finalize": {"on"}})
+	if strings.Contains(out, "Renamed") {
+		t.Errorf("a rename that kept the tag said %s", out)
+	}
+}
+
+// A workflow saved before tags were names, with a block whose Output to is not its name's, is brought up
+// to date once, as a new version: the block is renamed to its tag, so what uses the tag still works; where
+// another block has that name the block keeps its own and the references and the kept values move.
+func TestOldOutputToIsMigratedOnce(t *testing.T) {
+	c := newContEnv(t, nil)
+	custom := func(tag string) workflow.AgentSettings {
+		a := workflow.DefaultAgent(workflow.PR)
+		a.OutputTo = tag
+		return a
+	}
+	c.saveGraph(append(append([]workflow.Node{}, events...),
+		node("a", workflow.Agent, "Gatherer", custom("value_summary")),
+		node("b", workflow.Agent, "Checker", custom("verdict")),
+		caseEntryNode("v", "Verdict", "unrelated"),
+		caseEntryNode("u", "User", "{value_summary.report} {verdict}")),
+		[2]string{"ev1", "a"}, [2]string{"a", "b"}, [2]string{"b", "v"}, [2]string{"v", "u"})
+	cs, _, _ := c.st.OpenCase(c.ws, 1, "pr", "t", "opened")
+	c.st.SetCaseValue(cs.UUID, "value_summary", "W", "a")
+	c.st.SetCaseValue(cs.UUID, "verdict", "V", "b")
+	before := c.version()
+	c.ui.MigrateWorkflows()
+	g := c.storedGraph()
+	byID := map[string]workflow.Node{}
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
+	if byID["a"].Name != "Value summary" || byID["b"].Name != "Checker" || c.version() != before+1 {
+		t.Errorf("names %q and %q, version %d (was %d)", byID["a"].Name, byID["b"].Name, c.version(), before)
+	}
+	if e, _ := workflow.CaseEntrySettingsOf(byID["u"]); e.Entry != "{value_summary.report} {checker}" {
+		t.Errorf("the reference to the one that was renamed: %q", e.Entry)
+	}
+	if v, _ := c.st.CaseValues(cs.UUID); v["value_summary"] != "W" || v["checker"] != "V" || v["verdict"] != "" {
+		t.Errorf("values %v", v)
+	}
+	// Once.
+	c.ui.MigrateWorkflows()
+	if c.version() != before+1 {
+		t.Errorf("migrated again: version %d", c.version())
+	}
+	// And a workflow read before any run or edit is migrated then, too.
+	c.saveGraph(append(append([]workflow.Node{}, events...), node("a", workflow.Agent, "Gatherer", custom("kept_tag"))), [2]string{"ev1", "a"})
+	if got := c.formTag("a"); got != "kept_tag" {
+		t.Errorf("an old block opened in the dialog: %q", got)
 	}
 }
 
@@ -309,20 +401,21 @@ func TestBlocksSeeOnlyTheTagsOfTheStepsBeforeThem(t *testing.T) {
 		return body
 	}
 	d := tagsOf("d")
-	if !strings.Contains(d, "<code>{alpha}</code>") || !strings.Contains(d, "<code>{beta}</code>") || strings.Contains(d, "<code>{gamma}</code>") || strings.Contains(d, "<code>{delta}</code>") {
+	if !strings.Contains(d, "<dt><code>{alpha}</code>") || !strings.Contains(d, "<dt><code>{beta}</code>") || strings.Contains(d, "<dt><code>{gamma}</code>") || strings.Contains(d, "<dt><code>{delta}</code>") {
 		t.Errorf("the Tags list of D:\n%s", d)
 	}
 	cc := tagsOf("c")
-	if !strings.Contains(cc, "<code>{alpha}</code>") || strings.Contains(cc, "<code>{beta}</code>") || strings.Contains(cc, "<code>{delta}</code>") {
+	if !strings.Contains(cc, "<dt><code>{alpha}</code>") || strings.Contains(cc, "<dt><code>{beta}</code>") || strings.Contains(cc, "<dt><code>{delta}</code>") {
 		t.Errorf("the Tags list of C:\n%s", cc)
 	}
-	// Removing the link B → D leaves D, which uses {alpha} and {beta}, with nothing upstream: the layout saves, and D is marked.
+	// Replacing the link B → D by one from the event leaves D, which uses {alpha} and {beta}, in their chain
+	// with neither upstream: the layout saves, and D is marked.
 	save("d", "Delta", "{alpha} and {beta}")
 	var nodes []map[string]any
 	for _, n := range c.storedGraph().Nodes {
 		nodes = append(nodes, map[string]any{"id": n.ID, "type": n.Type, "x": n.X, "y": n.Y})
 	}
-	code, answer := c.layout(nodes, []workflow.Link{{From: "ev1", Out: "out", To: "a", In: "in"}, {From: "a", Out: "out", To: "b", In: "in"}, {From: "a", Out: "out", To: "c", In: "in"}})
+	code, answer := c.layout(nodes, []workflow.Link{{From: "ev1", Out: "out", To: "a", In: "in"}, {From: "a", Out: "out", To: "b", In: "in"}, {From: "a", Out: "out", To: "c", In: "in"}, {From: "ev1", Out: "out", To: "d", In: "in"}})
 	if code != 200 {
 		t.Fatalf("the layout was not saved: %d %v", code, answer)
 	}
@@ -384,3 +477,79 @@ func TestPostingBlockHasNoOutputTag(t *testing.T) {
 }
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
+
+// Another event's steps may be used too: those of a chain the block is not in give what their latest run
+// on the item kept. With E1 → Discovery → Check and E1 → Sibling, and E2 → Recheck: Recheck may use
+// {discovery} and {check}; Check may use Discovery's but not Sibling's, nor Recheck's, which it does not
+// share a chain with... and Recheck's only if it is not in a chain of Check's.
+func TestStepsOfOtherEventsMayBeUsed(t *testing.T) {
+	c := newContEnv(t, nil)
+	graph := func(extra ...[2]string) {
+		c.saveGraph(append(append([]workflow.Node{}, events...), caseEntryNode("d", "Discovery", "DISCOVERED"), caseEntryNode("k", "Check", "CHECKED"),
+			caseEntryNode("s", "Sibling", "SIB"), caseEntryNode("r", "Recheck", "x"), caseEntryNode("m", "Merge", "x")),
+			append([][2]string{{"ev1", "d"}, {"d", "k"}, {"ev1", "s"}, {"ev2", "r"}}, extra...)...)
+	}
+	graph()
+	save := func(id, name, entry string) (int, string) {
+		code, _, body := c.b.post("/w/o/r/workflows/pr/nodes/"+id, url.Values{"csrf": {c.csrf}, "version": {itoa(int64(c.version()))},
+			"name": {name}, "entry": {entry}, "finalize": {"on"}})
+		return code, strings.ReplaceAll(body, "&#39;", "'")
+	}
+	// Another chain's tags are allowed; the stored value is what renders; and it is empty before it ever ran.
+	if code, body := save("r", "Recheck", "D=[{discovery}] K=[{check}] S=[{sibling}] L=[[discovery]]"); code != 200 {
+		t.Fatalf("another chain's tags: %d\n%s", code, body)
+	}
+	steps := c.run("ev2")
+	if !strings.HasPrefix(steps["r"].Output, "D=[] K=[] S=[] L=[Discovery](") {
+		t.Errorf("before the other chain ever ran: %q", steps["r"].Output)
+	}
+	c.run("ev1")
+	steps = c.run("ev2")
+	if got := steps["r"].Output; !strings.HasPrefix(got, "D=[DISCOVERED] K=[CHECKED] S=[SIB] L=[Discovery](") {
+		t.Errorf("after it ran: %q", got)
+	}
+	// Within a chain only what is upstream: Check may use Discovery's, not Sibling's, and a step of another chain only if it shares none.
+	for _, c1 := range []struct {
+		id, name, entry, want string
+		ok                    bool
+	}{
+		{"k", "Check", "{discovery}", "", true},
+		{"k", "Check", "{sibling}", "{sibling} comes from Sibling, which does not run before this block", false},
+		{"d", "Discovery", "{check}", "{check} comes from Check, which does not run before this block", false},
+		{"k", "Check", "{recheck}", "", true},
+		{"s", "Sibling", "{discovery}", "{discovery} comes from Discovery, which does not run before this block", false},
+	} {
+		code, body := save(c1.id, c1.name, c1.entry)
+		if c1.ok != (code == 200) || (!c1.ok && !strings.Contains(body, c1.want)) {
+			t.Errorf("%s with %s: %d, want ok=%v %q\n%s", c1.id, c1.entry, code, c1.ok, c1.want, body)
+		}
+	}
+	// A block in two chains (E1 → M and E2 → M): it shares one with Discovery (E1's) and one with Recheck (E2's), so it may
+	// use neither unless upstream; Check, in E1's only, may use Recheck's.
+	graph([2]string{"ev1", "m"}, [2]string{"ev2", "m"})
+	for entry, want := range map[string]string{"{discovery}": "{discovery} comes from Discovery", "{recheck}": "{recheck} comes from Recheck", "{check}": "{check} comes from Check"} {
+		if code, body := save("m", "Merge", entry); code != 400 || !strings.Contains(body, want) {
+			t.Errorf("a block in two chains with %s: %d\n%s", entry, code, body)
+		}
+	}
+	// The Tags list groups them apart, with their parts as usual.
+	_, form := c.b.get("/w/o/r/workflows/pr/nodes/k")
+	i := strings.Index(form, "From other events (their last run on this item)")
+	if i < 0 || !strings.Contains(form[i:], "<dt><code>{recheck}</code>") || strings.Contains(form[i:], "<dt><code>{discovery}</code>") || !strings.Contains(form[:i], "<dt><code>{discovery}</code>") {
+		t.Errorf("the Tags list of Check:\n%s", form)
+	}
+	// A link made later that puts the block in a chain with a step it used from another event flags it,
+	// and the layout still saves.
+	graph()
+	save("r", "Recheck", "{discovery}")
+	var nodes []map[string]any
+	for _, n := range c.storedGraph().Nodes {
+		nodes = append(nodes, map[string]any{"id": n.ID, "type": n.Type, "x": n.X, "y": n.Y})
+	}
+	links := append(append([]workflow.Link{}, c.storedGraph().Links...), workflow.Link{From: "ev1", Out: "out", To: "r", In: "in"})
+	code, answer := c.layout(nodes, links)
+	problems, _ := answer["problems"].(map[string]any)
+	if code != 200 || len(problems) != 1 || !strings.Contains(problems["r"].(string), "{discovery} comes from Discovery, which does not run before this block") {
+		t.Errorf("a link into a shared chain: %d %v", code, answer["problems"])
+	}
+}

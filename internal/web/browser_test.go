@@ -81,7 +81,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		json.Unmarshal([]byte(w.Graph), &g)
 		return g
 	}
-	waitSaved := chromedp.Poll(`document.getElementById('wf-status').textContent === 'Saved'`, nil, chromedp.WithPollingTimeout(10*time.Second))
+	waitSaved := chromedp.Poll(`document.getElementById('wf-status').textContent.indexOf('Saved') === 0`, nil, chromedp.WithPollingTimeout(10*time.Second))
 	rightClick := func(x, y float64) chromedp.Action {
 		return chromedp.MouseClickXY(x, y, chromedp.ButtonType(input.Right))
 	}
@@ -217,20 +217,41 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		t.Fatalf("after dropping a choice: %d ports, links %+v, %v", ports, g.Links, err)
 	}
 
-	// An agent's output tag is stored, and another step may use it; an unknown tag is refused.
+	// An agent is named, which gives its output the tag {value_summary}; a step after it may use the tag
+	// (one that is not after it may not); an unknown tag is refused.
 	var problem string
 	err = chromedp.Run(ctx,
 		place("Agent", 700, 250),
-		chromedp.Click(`#node-5 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal input[name=output_to]`),
-		chromedp.SetValue(`#wf-modal input[name=output_to]`, "value_summary"),
+		chromedp.Click(`#node-5 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal input[name=name]`),
+		chromedp.SetValue(`#wf-modal input[name=name]`, "Value summary"),
 		saveForm,
-		chromedp.Click(`#node-4 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal textarea[name=entry]`),
-		chromedp.SetValue(`#wf-modal textarea[name=entry]`, "{nope}"),
-		chromedp.Click(`#wf-modal form.node-form button:not([type])`),
-		chromedp.WaitVisible(`#wf-modal p.error`), chromedp.Text(`#wf-modal p.error`, &problem),
-		chromedp.SetValue(`#wf-modal textarea[name=entry]`, "Summary: {value_summary}"),
-		saveForm,
+		chromedp.Poll(`!document.getElementById('wf-modal').matches(':popover-open')`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		center(`#node-5 .output_1`, &from), center(`#node-4 .input_1`, &to),
 	)
+	var renamed string
+	chromedp.Run(ctx, chromedp.Text(`#wf-status`, &renamed, chromedp.ByQuery))
+	if renamed != "Saved. Renamed {agent} to {value_summary} in 0 blocks" {
+		t.Fatalf("the bar after naming the agent: %q", renamed)
+	}
+	if err == nil { // the points are known now
+		err = chromedp.Run(ctx,
+			chromedp.Evaluate(`document.getElementById('wf-status').textContent = ''`, nil),
+			chromedp.MouseEvent(input.MouseMoved, from[0], from[1]),
+			chromedp.MouseEvent(input.MousePressed, from[0], from[1], chromedp.ButtonLeft, chromedp.ClickCount(1)),
+			chromedp.MouseEvent(input.MouseMoved, (from[0]+to[0])/2, (from[1]+to[1])/2, chromedp.ButtonLeft),
+			chromedp.MouseEvent(input.MouseMoved, to[0], to[1], chromedp.ButtonLeft),
+			chromedp.MouseEvent(input.MouseReleased, to[0], to[1], chromedp.ButtonLeft, chromedp.ClickCount(1)),
+			waitSaved)
+	}
+	if err == nil {
+		err = chromedp.Run(ctx,
+			chromedp.Click(`#node-4 .wf-title`, chromedp.ByQuery), chromedp.WaitVisible(`#wf-modal textarea[name=entry]`),
+			chromedp.SetValue(`#wf-modal textarea[name=entry]`, "{nope}"),
+			chromedp.Click(`#wf-modal form.node-form button:not([type])`),
+			chromedp.WaitVisible(`#wf-modal p.error`), chromedp.Text(`#wf-modal p.error`, &problem),
+			chromedp.SetValue(`#wf-modal textarea[name=entry]`, "Summary: {value_summary}"),
+			saveForm)
+	}
 	if err != nil || !strings.Contains(problem, "{nope} is not a tag") {
 		t.Fatalf("tags: %q, %v", problem, err)
 	}
@@ -252,7 +273,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	if err != nil || !locked || unlocked || !strings.Contains(keptText, "preparing the case file") || !strings.Contains(swapped, "correctness first") {
 		t.Fatalf("presets in the form: locked %v, unlocked %v, kept %q, swapped %q, %v", locked, !unlocked, keptText[:min(40, len(keptText))], swapped[:min(40, len(swapped))], err)
 	}
-	if a, _ := workflow.AgentSettingsOf(nodeOf(workflow.Agent), workflow.PR); a.OutputTo != "value_summary" || !a.Model.Set() {
+	if a, _ := workflow.AgentSettingsOf(nodeOf(workflow.Agent), workflow.PR); workflow.StoredOutputTo(nodeOf(workflow.Agent)) != "value_summary" || !a.Model.Set() {
 		t.Fatalf("agent settings %+v", a)
 	}
 	if c, _ := workflow.CaseEntrySettingsOf(nodeOf(workflow.CaseEntry)); c.Entry != "Summary: {value_summary}" || !c.Finalize {

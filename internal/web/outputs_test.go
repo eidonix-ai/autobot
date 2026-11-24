@@ -184,9 +184,9 @@ func TestInputAfterAnAgentAnAnotherStepAndAMerge(t *testing.T) {
 		// After a step that is not an agent: its output, twice, and no notes.
 		"after": "SIDE TEXT | SIDE TEXT | SIDE TEXT | [] | SIDE TEXT",
 		// Several in: each under its name.
-		"merge":      "## Researcher\n\nTHE REPORT\n\n## Side\n\nSIDE TEXT",
-		"mergeall":   "## Researcher\n\n" + bundle + "\n\n## Side\n\nSIDE TEXT",
-		"mergenotes": "## Researcher\n\n" + notesText + "\n\n## Side\n\n|## Researcher\n\nTHE SUMMARY\n\n## Side\n\nSIDE TEXT",
+		"merge":      "## Gather\n\nTHE REPORT\n\n## Side\n\nSIDE TEXT",
+		"mergeall":   "## Gather\n\n" + bundle + "\n\n## Side\n\nSIDE TEXT",
+		"mergenotes": "## Gather\n\n" + notesText + "\n\n## Side\n\n|## Gather\n\nTHE SUMMARY\n\n## Side\n\nSIDE TEXT",
 	}
 	for id, w := range want {
 		if steps[id].Status != "done" || steps[id].Output != w {

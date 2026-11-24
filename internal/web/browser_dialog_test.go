@@ -168,3 +168,47 @@ func TestBrowserDialogRefusedSaveMessageGoesWithTheDialog(t *testing.T) {
 		t.Errorf("after a save the bar says %q (bad %v)", text, bad)
 	}
 }
+
+// Right-clicking a link on the canvas offers Delete link, which takes the link away and saves the layout.
+func TestBrowserDialogRightClickALinkDeletesIt(t *testing.T) {
+	e := newEnv(t)
+	admin := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", admin, "", "")
+	g := workflow.Graph{Nodes: []workflow.Node{{ID: "ev", Type: "pr_ready", X: 100, Y: 200}, {ID: "ce", Type: workflow.CaseEntry, Name: "Note", X: 600, Y: 300,
+		Settings: json.RawMessage(`{"entry":"x","finalize":true}`)}}, Links: []workflow.Link{{From: "ev", Out: "out", To: "ce", In: "in"}}}
+	gb, _ := json.Marshal(g)
+	if _, err := e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(gb), admin); err != nil {
+		t.Fatal(err)
+	}
+	ctx, done := chromeContext(t)
+	defer done()
+	var at [2]float64
+	err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1400, 900),
+		chromedp.Navigate(e.srv.URL+"/login?next="+url.QueryEscape("/w/o/r/workflows/pr")),
+		chromedp.SendKeys(`input[name=username]`, "derek"),
+		chromedp.SendKeys(`input[name=password]`, "password-1234"),
+		chromedp.Submit(`input[name=password]`),
+		chromedp.WaitVisible(`#wf .drawflow`),
+		chromedp.WaitVisible(`#wf .connection .main-path`, chromedp.ByQuery),
+		// The middle of the line, on the screen.
+		chromedp.Evaluate(`(function(){var p=document.querySelector('#wf .connection .main-path'), pt=p.getPointAtLength(p.getTotalLength()/2), m=p.getScreenCTM();
+			return [pt.x*m.a+pt.y*m.c+m.e, pt.x*m.b+pt.y*m.d+m.f]})()`, &at),
+		chromedp.ActionFunc(func(c context.Context) error { // at is known only now
+			return chromedp.MouseClickXY(at[0], at[1], chromedp.ButtonType(input.Right)).Do(c)
+		}),
+		chromedp.Click(`//div[@id="wf-menu"]/button[normalize-space()="Delete link"]`, chromedp.BySearch),
+		chromedp.Poll(`document.getElementById('wf-status').textContent === 'Saved'`, nil, chromedp.WithPollingTimeout(10*time.Second)),
+	)
+	if err != nil {
+		t.Fatalf("right-clicking the link at %v: %v", at, err)
+	}
+	var drawn int
+	chromedp.Run(ctx, chromedp.Evaluate(`document.querySelectorAll('#wf .connection').length`, &drawn))
+	w, _ := e.st.Workflow(ws.ID, workflow.PR)
+	var saved workflow.Graph
+	json.Unmarshal([]byte(w.Graph), &saved)
+	if drawn != 0 || len(saved.Links) != 0 || len(saved.Nodes) != 2 {
+		t.Fatalf("after Delete link: %d lines drawn, stored links %+v, %d nodes", drawn, saved.Links, len(saved.Nodes))
+	}
+}

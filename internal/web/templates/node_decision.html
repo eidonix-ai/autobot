@@ -12,6 +12,7 @@
         {{range .Models}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
   </div>
+  {{template "tagline" .}}
   <label>Context <textarea name="context" rows="4" class="code" spellcheck="false">{{.S.Context}}</textarea></label>
   <label>Question <textarea name="question" rows="2" spellcheck="false" required>{{.S.Question}}</textarea></label>
   {{template "tags" .}}
@@ -23,8 +24,7 @@
         <option value="decision"{{if eq .S.Output "decision"}} selected{{end}}>The decision only</option>
         <option value="probabilities"{{if eq .S.Output "probabilities"}} selected{{end}}>The decision and each choice's probability</option>
       </select></label>
-    {{template "outputto" .}}
-  </div>
+    </div>
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

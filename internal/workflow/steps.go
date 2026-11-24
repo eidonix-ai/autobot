@@ -59,7 +59,7 @@ func (s CaseEntrySettings) Check() error {
 
 // CaseEntryFromForm reads a case entry's settings from its form.
 func CaseEntryFromForm(get func(string) string) CaseEntrySettings {
-	return CaseEntrySettings{Entry: strings.TrimSpace(get("entry")), Finalize: get("finalize") == "on", OutputTo: strings.TrimSpace(get("output_to"))}
+	return CaseEntrySettings{Entry: strings.TrimSpace(get("entry")), Finalize: get("finalize") == "on"}
 }
 
 // ModelRef names a model on a provider. Which models a workspace may use is the web layer's to
@@ -97,7 +97,7 @@ type AgentSettings struct {
 	MaxMinutes      int      `json:"max_minutes"`            // wall time before it is stopped
 	Rerun           string   `json:"rerun"`                  // run again on the same item: "resume" its conversation, or start "fresh"
 	FollowUp        string   `json:"follow_up"`              // resume: a template sent as the next message; "" sends the instruction again
-	OutputTo        string   `json:"output_to,omitempty"`
+	OutputTo        string   `json:"output_to,omitempty"`    // the block's tag as saved; the tag is the name in snake case (OutputNames)
 
 	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
 	// the item this block continues: it sends its own Instruction and Done when as the next message of
@@ -371,7 +371,6 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 		Rerun:         get("rerun"),
 		Closing:       get("closing"),
 		FollowUp:      strings.TrimSpace(get("follow_up")),
-		OutputTo:      strings.TrimSpace(get("output_to")),
 		Machines:      []int64{},
 	}
 	if s.ContinueOf = get("continue_of"); s.ContinueOf != "" {
@@ -410,7 +409,6 @@ func DecisionFromForm(get func(string) string) DecisionSettings {
 		Context:  strings.TrimSpace(get("context")),
 		Question: strings.TrimSpace(get("question")),
 		Output:   get("output"),
-		OutputTo: strings.TrimSpace(get("output_to")),
 	}
 	for _, line := range strings.Split(get("choices"), "\n") {
 		if line = strings.TrimSpace(line); line == "" {
@@ -445,8 +443,25 @@ var OutputParts = []Tag{
 	{"scratchpad", "its notes in full", false},
 }
 
-func isOutputPart(name string) bool {
-	return slices.ContainsFunc(OutputParts, func(p Tag) bool { return p.Name == name })
+// DecisionParts are the parts of a Decision's output: the tag itself is the choice.
+var DecisionParts = []Tag{
+	{"confidence", "the chosen answer's probability, as a percentage", false},
+	{"reason", "the description given to the chosen choice", false},
+}
+
+// partsOf are the parts of the output of a block of type typ: none for any but an Agent or a Decision.
+func partsOf(typ string) []Tag {
+	switch typ {
+	case Agent:
+		return OutputParts
+	case Decision:
+		return DecisionParts
+	}
+	return nil
+}
+
+func isPart(parts []Tag, name string) bool {
+	return slices.ContainsFunc(parts, func(p Tag) bool { return p.Name == name })
 }
 
 var commonTags = []Tag{
@@ -649,9 +664,10 @@ func Render(text string, values map[string]string) string {
 	})
 }
 
-// OutputSet is the output tags a workflow's nodes set: true for an Agent's, which has parts
-// ({gather.report}), false for any other step's, which is one value.
-type OutputSet map[string]bool
+// OutputSet is the output tags a workflow's nodes set, each with the type of the block that sets it:
+// an Agent's has parts ({gather.report}), a Decision's has two ({choice.confidence}), any other
+// step's is one value.
+type OutputSet map[string]string
 
 // OutputTags lists the output tags a block may use: those of the steps upstream of it, which have a
 // path of links leading into it. A step's output reaches only the steps after it.
@@ -660,21 +676,34 @@ func (g Graph) OutputTags(kind, id string) OutputSet {
 	names, up := g.OutputNames(kind), g.Ancestors(id)
 	for _, n := range g.Nodes {
 		if tag, ok := names[n.ID]; ok && up[n.ID] {
-			// Only an Agent's output has parts. (Two blocks with one tag, which an older canvas allowed,
-			// count as an Agent's if either is.)
-			out[tag] = out[tag] || n.Type == Agent
+			out[tag] = n.Type
 		}
 	}
 	return out
 }
 
-// elsewhere lists the output tags of the blocks that are not upstream of the block id, and not it,
-// with the name of the block each comes from.
+// OtherEventTags lists the output tags of the steps that share no event's chain with the block id: they
+// run after other events, never in a run of this block's own chain, and what they give is what their
+// latest run on the item kept in its case. Blocks of a chain the block is in are not among them,
+// whether before it or not.
+func (g Graph) OtherEventTags(kind, id string) OutputSet {
+	out := OutputSet{}
+	names, up, chains := g.OutputNames(kind), g.Ancestors(id), g.chains()
+	for _, n := range g.Nodes {
+		if tag, ok := names[n.ID]; ok && n.ID != id && !up[n.ID] && !sharesChain(chains, id, n.ID) {
+			out[tag] = n.Type
+		}
+	}
+	return out
+}
+
+// elsewhere lists the output tags of the blocks the block id may not use, with the name of the block each
+// comes from: those of its own chains that are not upstream of it (siblings, and what comes after it).
 func (g Graph) elsewhere(kind, id string) map[string]string {
 	out := map[string]string{}
-	names, up := g.OutputNames(kind), g.Ancestors(id)
+	names, up, chains := g.OutputNames(kind), g.Ancestors(id), g.chains()
 	for _, n := range g.Nodes {
-		if tag, ok := names[n.ID]; ok && n.ID != id && !up[n.ID] {
+		if tag, ok := names[n.ID]; ok && n.ID != id && !up[n.ID] && sharesChain(chains, id, n.ID) {
 			if _, dup := out[tag]; !dup {
 				out[tag] = DisplayName(n)
 			}
@@ -683,17 +712,29 @@ func (g Graph) elsewhere(kind, id string) map[string]string {
 	return out
 }
 
-// OutputTagList is what the Tags list shows of the outputs: each tag, with an Agent's parts after
-// it, in order.
+// usable are the output tags the block id may use: upstream's, and other events'.
+func (g Graph) usable(kind, id string) OutputSet {
+	out := g.OtherEventTags(kind, id)
+	for tag, typ := range g.OutputTags(kind, id) {
+		out[tag] = typ
+	}
+	return out
+}
+
+// OutputTagList is what the Tags list shows of the outputs: each tag, with the parts of an Agent's or
+// a Decision's after it, in order.
 func OutputTagList(outputs OutputSet) []Tag {
 	var list []Tag
 	for _, name := range slices.Sorted(maps.Keys(outputs)) {
-		if !outputs[name] {
-			list = append(list, Tag{name, "another step's output", false})
-			continue
+		about := "another step's output"
+		switch outputs[name] {
+		case Agent:
+			about = "its summary, report and notes"
+		case Decision:
+			about = "the choice"
 		}
-		list = append(list, Tag{name, "its summary, report and notes", false})
-		for _, p := range OutputParts {
+		list = append(list, Tag{name, about, false})
+		for _, p := range partsOf(outputs[name]) {
 			list = append(list, Tag{name + "." + p.Name, p.About, false})
 		}
 	}
@@ -705,7 +746,7 @@ func OutputTagList(outputs OutputSet) []Tag {
 // the step. It is checked when a node's settings are saved, not on every save of the canvas, so
 // removing a node or a link is never refused because another uses its output.
 func (g Graph) CheckNodeTemplates(kind, id string, templates ...string) error {
-	return checkTemplates(kind, g.OutputTags(kind, id), g.elsewhere(kind, id), templates)
+	return checkTemplates(kind, g.usable(kind, id), g.elsewhere(kind, id), templates)
 }
 
 // CheckTemplates confirms that every tag the templates use is built in or in outputs, which are the
@@ -744,7 +785,8 @@ func checkTag(kind string, outputs OutputSet, elsewhere map[string]string, tag s
 		}
 	}
 	if parent, part, dotted := strings.Cut(tag, "."); dotted {
-		isAgent, isOutput := outputs[parent]
+		typ, isOutput := outputs[parent]
+		parts := partsOf(typ)
 		switch {
 		case parent == "input":
 			return fmt.Errorf("{%s} is not a part of {input}: see the Tags list for its parts", tag)
@@ -752,20 +794,20 @@ func checkTag(kind string, outputs OutputSet, elsewhere map[string]string, tag s
 			return fmt.Errorf("{%s} is not a tag here: the fields of the built-in {%s} use a colon; see the Tags list", tag, parent)
 		case !isOutput:
 			return fmt.Errorf("{%s} is not a tag here: {%s} is not another step's output tag; see the Tags list", tag, parent)
-		case !isAgent:
-			return fmt.Errorf("{%s} is not a tag here: only an Agent's output has parts; this one is one value, written {%s}", tag, parent)
-		case !isOutputPart(part):
+		case len(parts) == 0:
+			return fmt.Errorf("{%s} is not a tag here: only an Agent's or a Decision's output has parts; this one is one value, written {%s}", tag, parent)
+		case !isPart(parts, part):
 			return fmt.Errorf("{%s} is not a part of an output: see the Tags list for the parts of {%s}", tag, parent)
 		}
 		return nil
 	}
 	if parent := TagField(tag); parent != "" {
-		isAgent, isOutput := outputs[parent]
+		typ, isOutput := outputs[parent]
 		switch {
-		case isAgent || parent == "input":
-			return fmt.Errorf("{%s} is not a tag here: the parts of a step's output use a dot, such as {%s.report}", tag, parent)
+		case len(partsOf(typ)) > 0 || parent == "input":
+			return fmt.Errorf("{%s} is not a tag here: the parts of a step's output use a dot, such as {%s.%s}", tag, parent, firstPart(typ))
 		case isOutput:
-			return fmt.Errorf("{%s} is not a tag here: only an Agent's output has parts; this one is one value, written {%s}", tag, parent)
+			return fmt.Errorf("{%s} is not a tag here: this one is one value, written {%s}", tag, parent)
 		}
 		return fmt.Errorf("{%s} is not a tag here: see the Tags list for the fields of {%s}", tag, parent)
 	}
@@ -865,4 +907,12 @@ func Summary(n Node, kind, tag, optOut string, models func(ModelRef) string) str
 		return ""
 	}
 	return stepSummary(n, kind, tag, models)
+}
+
+// firstPart is a part of the output of a block of type typ, for an example in a message.
+func firstPart(typ string) string {
+	if p := partsOf(typ); len(p) > 0 {
+		return p[min(1, len(p)-1)].Name
+	}
+	return "report"
 }

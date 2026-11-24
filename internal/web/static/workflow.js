@@ -312,6 +312,17 @@
   root.addEventListener('contextmenu', function (e) {
     e.preventDefault();
     if (placing) { stopPlacing(); return; }
+    var conn = e.target.closest('.connection');
+    if (conn) {
+      // A link: Drawflow names its two ends and their ports in its classes.
+      var cls = Array.prototype.slice.call(conn.classList);
+      var end = function (prefix) { var c = cls.filter(function (x) { return x.indexOf(prefix) === 0; })[0]; return c ? c.slice(prefix.length) : ''; };
+      var port = function (re) { return cls.filter(function (x) { return re.test(x); })[0]; };
+      openMenu(e.clientX, e.clientY, [{ label: 'Delete link', run: function () {
+        editor.removeSingleConnection(end('node_out_node-'), end('node_in_node-'), port(/^output_\d+$/), port(/^input_\d+$/));
+      } }]);
+      return;
+    }
     var node = e.target.closest('.drawflow-node');
     if (node) {
       var dfid = node.id.replace('node-', '');
@@ -462,7 +473,7 @@
           state.outputs = body.outputs; state.continues = body.continues;
           syncPorts(id, body.links || []);
           refused = '';
-          Object.keys(idToDf).forEach(setSummary); modal.hidePopover(); show('Saved');
+          Object.keys(idToDf).forEach(setSummary); modal.hidePopover(); show(body.note ? 'Saved. ' + body.note : 'Saved');
         });
       }
       if (resp.headers.get('Content-Type').indexOf('application/json') === 0) {

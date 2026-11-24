@@ -26,8 +26,8 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 	d.OutputTo = "verdict"
 	ce := workflow.CaseEntrySettings{Entry: "{gather} {gather.report} {verdict} {input.summary} {previous_output}", Finalize: true}
 	g := workflow.Graph{Nodes: []workflow.Node{
-		{ID: "ag", Type: workflow.Agent, Name: "Gatherer", Settings: raw(a)},
-		{ID: "de", Type: workflow.Decision, Settings: raw(d)},
+		{ID: "ag", Type: workflow.Agent, Name: "Gather", Settings: raw(a)},
+		{ID: "de", Type: workflow.Decision, Name: "Verdict", Settings: raw(d)},
 		{ID: "ce", Type: workflow.CaseEntry, Settings: raw(ce)},
 	}, Links: []workflow.Link{{From: "de", Out: "yes", To: "ag", In: "in"}, {From: "ag", Out: "out", To: "ce", In: "in"}}}
 	if _, err := e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(raw(g)), derek); err != nil {
@@ -46,7 +46,9 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 		`<dt class="field"><code>{gather.summary}</code></dt><dd>the summary</dd>`,
 		`<dt class="field"><code>{gather.report}</code></dt><dd>the full report</dd>`,
 		`<dt class="field"><code>{gather.scratchpad}</code></dt><dd>its notes in full</dd>`,
-		`<dt><code>{verdict}</code></dt><dd>another step&#39;s output</dd>`,
+		`<dt><code>{verdict}</code></dt><dd>the choice</dd>`,
+		`<dt class="field"><code>{verdict.confidence}</code></dt><dd>the chosen answer&#39;s probability, as a percentage</dd>`,
+		`<dt class="field"><code>{verdict.reason}</code></dt><dd>the description given to the chosen choice</dd>`,
 		`<dt><code>{case}</code></dt><dd><span class="auto" title="Filled in by Autobot; it cannot be set">auto</span> the item&#39;s case file so far</dd>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -54,14 +56,14 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 		}
 	}
 	// {input} and its parts, and the old {previous_output}, are no longer listed (templates that use them still work).
-	for _, not := range []string{"{verdict.", "{previous_output}</code></dt>", `{gather.summary}</code></dt><dd><span class="auto"`,
+	for _, not := range []string{"{verdict.report}", "{previous_output}</code></dt>", `{gather.summary}</code></dt><dd><span class="auto"`,
 		"<code>{input}</code>", "<code>{input.summary}</code>", "<code>{input.report}</code>", "<code>{input.scratchpad}</code>"} {
 		if strings.Contains(body, not) {
 			t.Errorf("the Tags list has %s", not)
 		}
 	}
 	// The Agent block's own output is not offered to it.
-	if _, body := b.get(base + "ag"); strings.Contains(body, "<code>{gather}</code>") || !strings.Contains(body, "<code>{verdict}</code>") {
+	if _, body := b.get(base + "ag"); strings.Contains(body, "<dt><code>{gather}</code>") || !strings.Contains(body, "<dt><code>{verdict}</code>") {
 		t.Error("an agent is offered its own output")
 	}
 
@@ -84,10 +86,11 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 
 	// A misspelt part, a colon where a dot belongs and a dot on a decision's output are refused on save.
 	for tpl, want := range map[string]string{
-		"{gather.notes}":   "see the Tags list for the parts of {gather}",
-		"{gather:report}":  "use a dot, such as {gather.report}",
-		"{verdict.report}": "this one is one value",
-		"{pr.title}":       "use a colon",
+		"{gather.notes}":      "see the Tags list for the parts of {gather}",
+		"{gather:report}":     "use a dot, such as {gather.report}",
+		"{verdict.report}":    "not a part of an output",
+		"{gather.confidence}": "not a part of an output",
+		"{pr.title}":          "use a colon",
 	} {
 		code, _, out := b.post(base+"ce", url.Values{"csrf": {tok}, "name": {"Case entry"}, "entry": {tpl}, "finalize": {"on"}, "version": {"0"}})
 		if code != http.StatusBadRequest || !strings.Contains(out, want) {

@@ -26,8 +26,9 @@ import (
 // A step none of whose links fired is skipped, and so on downstream, which is how a decision routes
 // and how a fork rejoins. Independent steps run at the same time. Each step's output is the
 // {input} of the steps it links to (several, when links merge, each under its node's name), and a
-// step's "Output to" tag is kept for the case. A dry run writes nothing: no case file,
-// no output tags, nothing posted.
+// step's "Output to" tag is kept for the case. A dry run posts nothing and keeps no output tags
+// (they stay in memory), and it never reads or writes the item's case file: it has a case file of its
+// own, opened where a real run would open the item's, that gets everything the real one would.
 
 const maxDiff = 200_000 // characters of a pull request's diff given to {pr:diff}
 
@@ -229,6 +230,31 @@ type runState struct {
 	builtIn map[string]string
 	tags    map[string]string // output tags: the case's, then this run's
 	by      *store.User
+	// ctx is the run's: a person's stop cancels it (see stop.go), and every step's context derives from it.
+	// It is nil for a state built by hand in a test.
+	ctx context.Context
+}
+
+// context is the run's context.
+func (rs *runState) context() context.Context {
+	if rs.ctx == nil {
+		return context.Background()
+	}
+	return rs.ctx
+}
+
+// stopped says whether a person has stopped the run. From then on nothing it runs may write a tag, a
+// case entry or a post.
+func (rs *runState) stopped() bool { return rs.ctx != nil && agent.IsStopped(rs.ctx) }
+
+// errStopped is how a step ends that a person's stop cut short.
+func (rs *runState) errStopped() error {
+	if rs.ctx != nil {
+		if cause := context.Cause(rs.ctx); cause != nil {
+			return cause
+		}
+	}
+	return agent.ErrStopped
 }
 
 // startWorkflow starts a run of a kind's workflow on an item from an event node, and returns its id.
@@ -255,11 +281,14 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	}
 	rs := &runState{ws: ws, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}, by: by}
 	rs.builtIn["repo:opt_out"] = s.optOut(ws)
-	var caseFile *store.Case
+	var caseFile *store.Case // whether the item has a case file is part of the event's verdict
 	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
 		caseFile = c
-		if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
-			return 0, err
+		// A dry run reads nothing of the real case file: its tags start empty, and it has a case of its own.
+		if !dry {
+			if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
+				return 0, err
+			}
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return 0, err
@@ -291,10 +320,7 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	rs.run = run
-	go func() {
-		defer survive(fmt.Sprintf("workflow run %d", rs.run.ID), func(msg string) { s.st.FinishWorkflowRun(rs.run.ID, "failed") })
-		s.drive(rs)
-	}()
+	s.launch(rs)
 	return id, nil
 }
 
@@ -329,28 +355,32 @@ func (s *Server) drive(rs *runState) {
 	for _, l := range rs.g.Links {
 		incoming[l.To] = append(incoming[l.To], l)
 	}
-	// firedFrom are the sources of a step: the finished steps whose links into it fired. A Node
-	// (Junction) only connects, so the step after it has the steps that fired into the Node as its
-	// sources, as if their links went to it directly; a step reached twice counts once.
-	var firedFrom func(id string) []source
-	firedFrom = func(id string) []source {
+	// inputsFrom are the sources of a step: the steps linked into it, each with whether its link fired
+	// (it finished, on the output the link leaves from) or is missing (failed, skipped, or went another
+	// way). A Node (Junction) only connects, so the step after it has the Node's own sources as its
+	// own, as if their links went to it directly; a step reached twice counts once, and as fired if
+	// any of its links fired.
+	var inputsFrom func(id string) []source
+	inputsFrom = func(id string) []source {
 		var out []source
 		add := func(s source) {
-			if !slices.ContainsFunc(out, func(o source) bool { return o.node.ID == s.node.ID }) {
-				out = append(out, s)
+			for i, o := range out {
+				if o.node.ID == s.node.ID {
+					out[i].missing = o.missing && s.missing
+					return
+				}
 			}
+			out = append(out, s)
 		}
 		for _, l := range incoming[id] {
 			src := steps[l.From]
-			switch {
-			case src.Status != "done" || src.Port != l.Out:
-			case nodes[l.From].Type == workflow.Junction:
-				for _, s := range firedFrom(l.From) {
+			if nodes[l.From].Type == workflow.Junction {
+				for _, s := range inputsFrom(l.From) {
 					add(s)
 				}
-			default:
-				add(source{nodes[l.From], src})
+				continue
 			}
+			add(source{node: nodes[l.From], step: src, missing: src.Status != "done" || src.Port != l.Out})
 		}
 		return out
 	}
@@ -368,7 +398,7 @@ func (s *Server) drive(rs *runState) {
 				o := stepOutcome{err: errors.New("the step crashed")}
 				defer func() { results <- finished{n.ID, o} }()
 				defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
-				ctx, cancel := context.WithTimeout(context.Background(), 15*24*time.Hour)
+				ctx, cancel := context.WithTimeout(rs.context(), 15*24*time.Hour)
 				defer cancel()
 				o = s.awaitApproval(ctx, rs, n)
 			}(n)
@@ -378,6 +408,9 @@ func (s *Server) drive(rs *runState) {
 		for progressed := true; progressed; {
 			progressed = false
 			for _, n := range rs.g.Nodes {
+				if rs.stopped() { // a stopped run starts nothing more
+					break
+				}
 				st := steps[n.ID]
 				if st.Status != "pending" {
 					continue
@@ -407,7 +440,7 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
-				sources := firedFrom(n.ID) // copied here: the steps change while this one runs
+				sources := inputsFrom(n.ID) // copied here: the steps change while this one runs
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
 				// they came down its own branch or another, and the run goes on adding to the map.
 				tags := maps.Clone(rs.tags)
@@ -425,6 +458,14 @@ func (s *Server) drive(rs *runState) {
 		f := <-results
 		running--
 		st := steps[f.id]
+		if rs.stopped() { // whatever it came to, it ended after the stop: it writes nothing
+			st.Status, st.FinishedAt, st.Port, st.Output, st.Error = "stopped", time.Now(), "", "", ""
+			if f.o.agentRun != 0 {
+				st.AgentRun = f.o.agentRun
+			}
+			save(st)
+			continue
+		}
 		st.FinishedAt, st.Port, st.Output, st.AgentRun = time.Now(), f.o.port, f.o.output, f.o.agentRun
 		st.Status = "done"
 		if f.o.err != nil {
@@ -438,6 +479,15 @@ func (s *Server) drive(rs *runState) {
 			s.writeResult(rs, nodes[f.id], f.o)
 		}
 	}
+	if rs.stopped() { // the person's stop marks the run, its steps and its approvals
+		by := ""
+		var stop *agent.StopError
+		if errors.As(context.Cause(rs.ctx), &stop) {
+			by = stop.By
+		}
+		s.markStopped(rs.run.ID, by)
+		return
+	}
 	status := "done"
 	for _, st := range steps {
 		if st.Status == "failed" {
@@ -449,10 +499,26 @@ func (s *Server) drive(rs *runState) {
 	}
 }
 
-// source is a finished step a link fired from, as the step after it sees it.
+// source is a finished step linked into another, as the step after it sees it: one whose link fired,
+// or a missing one (it failed, was skipped, or went another way).
 type source struct {
-	node workflow.Node
-	step store.WorkflowStep
+	node    workflow.Node
+	step    store.WorkflowStep
+	missing bool
+}
+
+// why says why a missing source gave nothing.
+func (src source) why() string {
+	switch src.step.Status {
+	case "failed":
+		if msg := oneLineOf(src.step.Error, 120); msg != "" {
+			return "failed: " + msg
+		}
+		return "failed"
+	case "done":
+		return "took its “" + src.step.Port + "” output"
+	}
+	return src.step.Status // skipped
 }
 
 // outputParts are the suffixes of the values a step hands on, as keepTag stores an output tag's:
@@ -460,26 +526,50 @@ type source struct {
 var outputParts = []string{"", ".summary", ".report", ".scratchpad"}
 
 // inputValues are the values of {input} and its parts for a step, from the links that fired into
-// it: one step's as they are, several each under the name of the node it came from. A step that is
-// not an agent hands on its output, as both its summary and its report, and has no notes.
+// it: one step's as they are, several each under the name of the node it came from. Then come the
+// steps linked in that failed or were stopped, each under its name with why ("## Correctness (failed:
+// the model could not be reached)"), so that a step that reads a join knows a source is missing. A step that is not an agent hands on its output, as both its summary and its report, and
+// has no notes.
 func (s *Server) inputValues(rs *runState, sources []source) map[string]string {
-	all := make([]map[string]string, len(sources))
-	for i, src := range sources {
+	var fired, missing []source
+	for _, src := range sources {
+		switch {
+		case !src.missing:
+			fired = append(fired, src)
+		case src.step.Status == "failed" || src.step.Status == "stopped":
+			// Only a step that broke is named: a branch not taken (skipped, or another output
+			// of a decision) is how routing works, not a gap.
+			missing = append(missing, src)
+		}
+	}
+	all := make([]map[string]string, len(fired))
+	for i, src := range fired {
 		all[i] = s.stepParts(rs, src)
 	}
 	out := map[string]string{}
 	for _, suffix := range outputParts {
-		if len(sources) == 1 {
-			out["input"+suffix] = all[0][suffix]
-			continue
-		}
 		var parts []string
-		for i, src := range sources {
-			parts = append(parts, "## "+workflow.DisplayName(src.node)+"\n\n"+all[i][suffix])
+		switch {
+		case len(fired) == 1:
+			if text := all[0][suffix]; text != "" || len(missing) == 0 {
+				parts = append(parts, text)
+			}
+		default:
+			for i, src := range fired {
+				parts = append(parts, "## "+workflow.DisplayName(src.node)+"\n\n"+all[i][suffix])
+			}
+		}
+		for _, src := range missing {
+			parts = append(parts, "## "+workflow.DisplayName(src.node)+" ("+src.why()+")")
 		}
 		out["input"+suffix] = strings.Join(parts, "\n\n")
 	}
 	return out
+}
+
+// firedOnly are the sources whose links fired.
+func firedOnly(sources []source) []source {
+	return slices.DeleteFunc(slices.Clone(sources), func(src source) bool { return src.missing })
 }
 
 // stepParts are what a finished step hands on, by suffix. An agent's are rebuilt from its run, so
@@ -504,7 +594,7 @@ func (s *Server) stepParts(rs *runState, src source) map[string]string {
 // last write left.
 func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map[string]string) {
 	name := rs.g.OutputNames(rs.run.Kind)[n.ID]
-	if name == "" {
+	if name == "" || rs.stopped() {
 		return
 	}
 	if parts == nil {
@@ -513,10 +603,10 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map
 	for suffix, v := range parts {
 		rs.tags[name+suffix] = v
 	}
-	if rs.run.DryRun {
+	if rs.run.DryRun { // a dry run's tags stay in memory
 		return
 	}
-	c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
+	c, err := s.runCase(rs)
 	if errors.Is(err, store.ErrNotFound) {
 		if c, err = s.caseForRun(rs); err != nil {
 			log.Printf("workflow run %d: %v", rs.run.ID, err)
@@ -535,12 +625,12 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map
 
 // writeResult adds a finished Agent's or Decision's result to the case file, as a finalized entry under
 // the step's name, unless its "Write to the case file" box is off. A run adds an entry every time: the
-// case file is a record, nothing is replaced. A dry run writes nothing, and neither does a step that
-// took no part (an agent with no conversation to continue). An Agent's entry is a heading with the
+// case file is a record, nothing is replaced. A dry run writes to its own case file, and a step that
+// took no part writes nothing (an agent with no conversation to continue). An Agent's entry is a heading with the
 // step's name, its summary (its report when it has none), and links to the full report and the notes as
 // published pages; a Decision's is one line: the choice, how sure the model was, and what the choice means.
 func (s *Server) writeResult(rs *runState, n workflow.Node, o stepOutcome) {
-	if rs.run.DryRun {
+	if rs.stopped() {
 		return
 	}
 	kind, name := rs.run.Kind, workflow.DisplayName(n)
@@ -561,7 +651,7 @@ func (s *Server) writeResult(rs *runState, n workflow.Node, o stepOutcome) {
 			links += " · [[" + tag + ".scratchpad|Notes]]"
 		}
 		values := maps.Clone(rs.tags)
-		s.fillLinks(rs.ws, rs.it.number, []string{links}, values, s.runPublisher(rs))
+		s.fillLinks(s.runLinks(rs), []string{links}, values)
 		text = "## " + name + "\n\n" + summary + "\n\n" + workflow.Render(links, values)
 	case workflow.Decision:
 		d, err := workflow.DecisionSettingsOf(n, kind)
@@ -580,13 +670,27 @@ func (s *Server) writeResult(rs *runState, n workflow.Node, o stepOutcome) {
 	}
 }
 
+// runCase is the case file a run writes to, if it has opened one: the item's for a run, the run's
+// own for a dry run, which never looks at the item's.
+func (s *Server) runCase(rs *runState) (*store.Case, error) {
+	if rs.run.DryRun {
+		return s.st.DryCase(rs.run.ID)
+	}
+	return s.st.CaseByNumber(rs.ws.ID, rs.it.number)
+}
+
+// caseForRun opens the case file a run writes to: the item's, or for a dry run a case of its own.
 func (s *Server) caseForRun(rs *runState) (*store.Case, error) {
 	et, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		et = time.UTC
 	}
-	c, _, err := s.st.OpenCase(rs.ws, rs.it.number, rs.it.kind, rs.it.title,
-		fmt.Sprintf("Opened by a workflow run, %s.", time.Now().In(et).Format("Jan 2, 2006 3:04 PM MST")))
+	opened := fmt.Sprintf("Opened by a workflow run, %s.", time.Now().In(et).Format("Jan 2, 2006 3:04 PM MST"))
+	if rs.run.DryRun {
+		c, _, err := s.st.OpenDryCase(rs.ws, rs.run.ID, rs.it.number, rs.it.kind, rs.it.title, store.DryHeadline(rs.run.ID)+" "+opened)
+		return c, err
+	}
+	c, _, err := s.st.OpenCase(rs.ws, rs.it.number, rs.it.kind, rs.it.title, opened)
 	return c, err
 }
 
@@ -605,7 +709,7 @@ type stepOutcome struct {
 // that have finished) and the output of the steps linked into it.
 func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
 	if n.Type == workflow.Junction { // a Node does no work: its output is what came into it
-		return stepOutcome{port: "out", output: s.inputValues(rs, sources)["input"]}
+		return stepOutcome{port: "out", output: s.inputValues(rs, firedOnly(sources))["input"]}
 	}
 	values := map[string]string{}
 	for k, v := range tags {
@@ -616,17 +720,16 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	}
 	maps.Copy(values, s.inputValues(rs, sources))
 	kind := rs.run.Kind
-	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
-		maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}
+	if c, err := s.runCase(rs); err == nil {
+		maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}: a dry run's are its own case's
 	}
-	// A [[tag]] in a template becomes a link to a page that keeps the tag's value as it is now; a dry
-	// run publishes nothing.
-	s.fillLinks(rs.ws, rs.it.number, s.nodeTemplates(n, kind), values, s.runPublisher(rs))
+	// A [[tag]] in a template becomes a link to a page that keeps the tag's value as it is now.
+	s.fillLinks(s.runLinks(rs), s.nodeTemplates(n, kind), values)
 	limit := 4 * time.Hour
 	if n.Type == workflow.Approval {
 		limit = 15 * 24 * time.Hour // a person may take up to two weeks
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	ctx, cancel := context.WithTimeout(rs.context(), limit)
 	defer cancel()
 	switch n.Type {
 	case workflow.Decision:
@@ -669,11 +772,11 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 			return stepOutcome{err: err}
 		}
 		text := strings.TrimSpace(workflow.Render(c.Entry, values))
-		if rs.run.DryRun {
-			return stepOutcome{port: "out", output: text, note: "dry run: not written"}
-		}
 		if err := s.writeEntry(rs, n, text, c.Finalize); err != nil {
 			return stepOutcome{err: err}
+		}
+		if rs.run.DryRun {
+			return stepOutcome{port: "out", output: text, note: "dry run: written to the dry run's case file"}
 		}
 		return stepOutcome{port: "out", output: text}
 	case workflow.Agent:
@@ -742,8 +845,8 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 	if text == "" {
 		return stepOutcome{err: errors.New("the message came out empty")}
 	}
-	if rs.run.DryRun {
-		return stepOutcome{port: "out", output: text, note: "dry run: not posted"}
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
 	}
 	var reports []string
 	failed := false
@@ -762,7 +865,11 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 		report("GitHub", s.commentStep(ctx, rs, n, p.Trial, text))
 	}
 	if p.Discord {
-		report("Discord", s.discordStep(ctx, rs, p.Summary, text))
+		if rs.run.DryRun {
+			report("Discord", stepOutcome{note: "dry run: not posted"})
+		} else {
+			report("Discord", s.discordStep(ctx, rs, p.Summary, text))
+		}
 	}
 	if failed {
 		return stepOutcome{err: errors.New(strings.Join(reports, "; "))}
@@ -770,12 +877,18 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 	return stepOutcome{port: "out", output: text, note: strings.Join(reports, "; ")}
 }
 
-// commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
-// file. Every run adds a comment; none is ever edited.
+// commentStep posts a comment on the item, or, in a trial or a dry run, writes what it would post
+// into the case file (a dry run's own). Every run adds a comment; none is ever edited.
 func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, trial bool, text string) stepOutcome {
-	if trial {
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
+	}
+	if trial || rs.run.DryRun {
 		if err := s.writeEntry(rs, n, "**Would post on GitHub:**\n\n"+text, true); err != nil {
 			return stepOutcome{err: err}
+		}
+		if rs.run.DryRun {
+			return stepOutcome{port: "out", output: text, note: "dry run: written to the dry run's case file, not posted"}
 		}
 		return stepOutcome{port: "out", output: text, note: "trial run: written to the case file, not posted"}
 	}
@@ -826,6 +939,10 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 	for {
 		select {
 		case <-ctx.Done():
+			s.st.RequestCancel(run.ID) // the test run on the machine stops too
+			if rs.stopped() {
+				return stepOutcome{err: rs.errStopped()}
+			}
 			return stepOutcome{err: errors.New("stopped waiting for the test run")}
 		case <-deadline:
 			s.st.RequestCancel(run.ID)
@@ -856,7 +973,10 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 // writeEntry writes a case entry under the node's name: it revises the node's open draft, or
 // starts one, and finalizes it when asked.
 func (s *Server) writeEntry(rs *runState, n workflow.Node, text string, finalize bool) error {
-	c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
+	if rs.stopped() {
+		return rs.errStopped()
+	}
+	c, err := s.runCase(rs)
 	if errors.Is(err, store.ErrNotFound) {
 		c, err = s.caseForRun(rs)
 	}
@@ -900,7 +1020,7 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 	waited := time.Now()
 	var id int64
 	for {
-		id, err = s.startAgent(rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
+		id, err = s.startAgent(rs.context(), rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
 		if !errors.Is(err, store.ErrThreadBusy) {
 			break
 		}
@@ -909,6 +1029,9 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		}
 		select {
 		case <-ctx.Done():
+			if rs.stopped() {
+				return stepOutcome{err: rs.errStopped()}
+			}
 			return stepOutcome{err: errors.New("stopped waiting for the conversation's run in progress")}
 		case <-time.After(convWait):
 		}
@@ -919,11 +1042,21 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 	if err != nil {
 		return stepOutcome{err: err}
 	}
+	// The page of a running step links to its agent run, and a Stop there stops the whole workflow run.
+	if err := s.st.SetStepAgentRun(rs.run.ID, n.ID, id); err != nil {
+		log.Printf("workflow run %d: %v", rs.run.ID, err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return stepOutcome{agentRun: id, err: errors.New("the agent did not end in time")}
 		case <-time.After(agentPoll):
+		}
+		if rs.stopped() { // the agent was stopped with the run; give it a moment to close its session
+			s.running.wait(liveKey{agent: true, id: id})
+			return stepOutcome{agentRun: id, err: rs.errStopped()}
+		}
+		if ctx.Err() != nil {
+			return stepOutcome{agentRun: id, err: errors.New("the agent did not end in time")}
 		}
 		run, err := s.st.AgentRun(id)
 		if err != nil {
@@ -1073,6 +1206,11 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 	if run.Kind == workflow.Issue {
 		what = "issue"
 	}
-	s.render(w, r, http.StatusOK, "workflow_run.html", map[string]any{"Title": fmt.Sprintf("Run on #%d · %s", run.Item, ws.Name),
-		"WS": ws, "Run": run, "Steps": views, "What": what})
+	data := map[string]any{"Title": fmt.Sprintf("Run on #%d · %s", run.Item, ws.Name), "WS": ws, "Run": run, "Steps": views, "What": what}
+	if run.DryRun { // the dry run's own case file, once it has opened one
+		if c, err := s.st.DryCase(run.ID); err == nil {
+			data["DryCase"] = c
+		}
+	}
+	s.render(w, r, http.StatusOK, "workflow_run.html", data)
 }

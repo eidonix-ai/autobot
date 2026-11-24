@@ -309,7 +309,7 @@ func slimSummary(summary string) string {
 
 // RunsPruned counts what PruneRuns removed.
 type RunsPruned struct {
-	TestLogs, Conversations, StepOutputs, Orphans, Pages int
+	TestLogs, Conversations, StepOutputs, Orphans, Pages, DryCases int
 }
 
 // Retention of run details, by age.
@@ -321,6 +321,7 @@ const (
 // PruneRuns deletes what has outlived its keeping, as of at; run it daily.
 //   - Test-run output and workflow-step output older than 30 days: the rows keep status, port,
 //     times and a one-line summary.
+//   - A dry run's case file, with its published pages, 30 days after the run ended (PruneDryCases).
 //   - A published page ([[tag]] in a template) is deleted on the same schedule as a conversation: 30
 //     days after its item closed, or after it was made when the item is not known (PrunePages).
 //   - A conversation is kept while its pull request or issue is open, and deleted 30 days after it
@@ -410,7 +411,10 @@ func (s *Store) PruneRuns(at time.Time, complete func(ws int64) bool) (RunsPrune
 	if err != nil {
 		return p, err
 	}
-	p.Pages, err = s.PrunePages(at, complete)
+	if p.Pages, err = s.PrunePages(at, complete); err != nil {
+		return p, err
+	}
+	p.DryCases, err = s.PruneDryCases(at)
 	return p, err
 }
 

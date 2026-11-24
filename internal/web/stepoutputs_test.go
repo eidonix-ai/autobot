@@ -110,8 +110,8 @@ func TestEveryStepKeepsItsOutputUnderItsName(t *testing.T) {
 	}
 }
 
-// {input} still works for a step after another, and {previous_output} with it, though neither is listed.
-func TestInputStillWorksButIsNotListed(t *testing.T) {
+// {input} works for a step after another, and is listed; the old {previous_output} still works, unlisted.
+func TestInputIsListedAndPreviousOutputStillWorks(t *testing.T) {
 	c := newContEnv(t, nil)
 	c.saveGraph(append(append([]workflow.Node{}, events...),
 		caseEntryNode("one", "First", "ONE"), caseEntryNode("two", "Second", "I=[{input}] P=[{previous_output}] T=[{first}]")),
@@ -121,7 +121,7 @@ func TestInputStillWorksButIsNotListed(t *testing.T) {
 		t.Fatalf("%q", steps["two"].Output)
 	}
 	_, body := c.b.get("/w/o/r/workflows/pr/nodes/two")
-	if strings.Contains(body, "<code>{input}</code>") || strings.Contains(body, "{previous_output}</code>") || !strings.Contains(body, "<code>{first}</code>") {
+	if !strings.Contains(body, "<code>{input}</code>") || strings.Contains(body, "{previous_output}</code>") || !strings.Contains(body, "<code>{first}</code>") {
 		t.Errorf("the Tags list:\n%s", body)
 	}
 }

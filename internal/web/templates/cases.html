@@ -18,4 +18,16 @@
 </tr>{{end}}</tbody>
 </table></div>
 {{end}}
+{{if .DryCases}}
+<h2>Dry runs</h2>
+<div class="scroll"><table class="list dense cases">
+<thead><tr><th>Case</th><th>Title</th><th>Lines</th><th>Changed</th></tr></thead>
+<tbody>{{range .DryCases}}<tr>
+  <td class="nowrap"><a href="{{$.WS.Path}}/dry-cases/{{.DryRunOf}}">{{.Label}}</a> <span class="muted">dry run</span></td>
+  <td><a href="{{$.WS.Path}}/dry-cases/{{.DryRunOf}}" class="plainlink">{{.Title}}</a></td>
+  <td>{{.Lines}}</td>
+  <td class="muted nowrap">{{tsShort .UpdatedAt}}</td>
+</tr>{{end}}</tbody>
+</table></div>
+{{end}}
 {{end}}

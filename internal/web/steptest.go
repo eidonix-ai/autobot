@@ -163,7 +163,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A test publishes nothing: a [[tag]] shows its link's label and says so.
-	s.fillLinks(ws, itemNumber(values), s.nodeTemplates(n, kind), values, nil)
+	s.fillLinks(s.testLinks(ws, itemNumber(values)), s.nodeTemplates(n, kind), values)
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
@@ -183,7 +183,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		st, err := withSourceModel(g, kind, st)
 		var id int64
 		if err == nil {
-			id, err = s.startAgent(ws, kind, n, st, values, me(r), true, itemNumber(values))
+			id, err = s.startAgent(context.Background(), ws, kind, n, st, values, me(r), true, itemNumber(values))
 		}
 		if err != nil {
 			data["Error"] = err.Error()
@@ -416,7 +416,7 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range subRows {
 		v := subView{Name: row.Name, Title: row.Title, Status: map[string]string{"running": "Running", agent.Met: "Finished (met)", agent.Blocked: "Finished (blocked)",
-			agent.Budget: "Out of budget", agent.Unfinished: "Stopped without finishing", agent.Failed: "Failed"}[row.Status]}
+			agent.Budget: "Out of budget", agent.Unfinished: "Stopped without finishing", agent.Failed: "Failed", agent.Stopped: "Stopped"}[row.Status]}
 		var st agent.Transcript
 		json.Unmarshal([]byte(row.Summary), &st)
 		v.Line = fmt.Sprintf("%d turn%s · %d tokens in%s, %d out", st.Turns, plural(st.Turns), st.In, cacheSuffix(st.In, st.Cached), st.Out)
@@ -440,7 +440,7 @@ func (s *Server) agentRun(w http.ResponseWriter, r *http.Request) {
 		s.md.Convert([]byte(tr.Summary), &summary)
 	}
 	outcome := map[string]string{"running": "Running", agent.Met: "Goal met", agent.Blocked: "Blocked",
-		agent.Budget: "Out of budget", agent.Unfinished: "Stopped without finishing", agent.Failed: "Failed"}[run.Status]
+		agent.Budget: "Out of budget", agent.Unfinished: "Stopped without finishing", agent.Failed: "Failed", agent.Stopped: "Stopped"}[run.Status]
 	dot := map[string]string{"running": "busy", agent.Met: "on"}[run.Status]
 	if dot == "" {
 		dot = "off"

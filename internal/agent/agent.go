@@ -40,8 +40,35 @@ const (
 	Blocked    = "blocked"    // finished, unable to meet the goal, and saying why
 	Budget     = "budget"     // out of turns or time
 	Unfinished = "unfinished" // kept answering without finishing
-	Failed     = "failed"     // the model could not be reached, or the run was stopped
+	Failed     = "failed"     // the model could not be reached
+	Stopped    = "stopped"    // a person stopped it
 )
+
+// ErrStopped is the cause of a context that a person stopped (see StopError), as opposed to one that
+// ran out of time: a stopped run ends at once and goes on to no closing step.
+var ErrStopped = errors.New("stopped")
+
+// StopError is the cause a person's stop gives a context: who stopped it.
+type StopError struct{ By string }
+
+func (e *StopError) Error() string        { return "stopped by " + e.By }
+func (e *StopError) Is(target error) bool { return target == ErrStopped }
+
+// IsStopped says whether a person has stopped ctx.
+func IsStopped(ctx context.Context) bool { return errors.Is(context.Cause(ctx), ErrStopped) }
+
+// detached is a context with a time limit of its own that a stop of ctx (but not its running out of
+// time) ends at once: the closing sessions get their own time, and a person can still stop them.
+func detached(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
+	tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), limit)
+	cctx, cancelCause := context.WithCancelCause(tctx)
+	stop := context.AfterFunc(ctx, func() {
+		if IsStopped(ctx) {
+			cancelCause(context.Cause(ctx))
+		}
+	})
+	return cctx, func() { stop(); cancelCause(context.Canceled); cancel() }
+}
 
 // PlanItem is one step of the agent's own plan.
 type PlanItem struct {
@@ -222,6 +249,9 @@ func availableOn(names []string) string {
 // started with, whatever cfg says; a tool it has that cfg does not answers that it is not available.
 func Run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 	tr := run(ctx, cfg, conv)
+	if IsStopped(ctx) { // a stop that came as the run was ending still ends it stopped
+		tr.Outcome, tr.Error = Stopped, context.Cause(ctx).Error()
+	}
 	tr.EnsureSummary()
 	return tr
 }
@@ -276,6 +306,9 @@ func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			tr.Outcome, tr.Error = Failed, err.Error()
 			if ctx.Err() != nil {
 				tr.Outcome, tr.Error = Budget, "stopped at the time limit without finishing"
+			}
+			if IsStopped(ctx) {
+				tr.Outcome, tr.Error = Stopped, context.Cause(ctx).Error()
 			}
 			save()
 			return tr

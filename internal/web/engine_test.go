@@ -67,6 +67,7 @@ func TestWorkflowRun(t *testing.T) {
 	if steps["de"].Port != "yes" || steps["ya"].Status != "done" || steps["no"].Status != "skipped" || steps["jn"].Status != "done" {
 		t.Fatalf("routing: %+v", steps)
 	}
+	// A branch not taken is how routing works: the join is given only what ran.
 	if got := steps["jn"].Output; got != "Decided yes after: Going deep on Retry uploads." {
 		t.Fatalf("join output %q", got)
 	}

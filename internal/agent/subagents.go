@@ -125,6 +125,8 @@ func outcomeText(tr *Transcript) string {
 		return "stopped without finishing (out of turns or time)"
 	case Unfinished:
 		return "ended without finishing"
+	case Stopped:
+		return "stopped by a person"
 	}
 	return "failed (" + tr.Error + ")"
 }

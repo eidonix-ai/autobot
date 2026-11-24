@@ -2,8 +2,15 @@
 {{define "content"}}
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> / <a href="{{.WS.Path}}/workflows/{{.Run.Kind}}">Workflows</a> /</p>
 <h1>Run on {{.What}} #{{.Run.Item}}{{if .Run.DryRun}} <span class="muted">dry run</span>{{end}}</h1>
-<p class="status" id="run-status" data-live><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
-  {{if eq .Run.Status "running"}}Running{{else if eq .Run.Status "done"}}Finished{{else}}Failed{{end}} · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}</p>
+<div id="run-status" data-live>
+<p class="status"><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
+  {{if eq .Run.Status "running"}}Running{{else if eq .Run.Status "done"}}Finished{{else if eq .Run.Status "stopped"}}Stopped{{else}}Failed{{end}} · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if eq .Run.Status "stopped"}} · stopped by {{.Run.StoppedBy}} {{ts .Run.StoppedAt}}{{end}}</p>
+{{with .DryCase}}<p><a href="{{$.WS.Path}}/dry-cases/{{$.Run.ID}}">Case file (dry run)</a></p>{{end}}
+{{if eq .Run.Status "running"}}<form method="post" action="{{.WS.Path}}/workflow-runs/{{.Run.ID}}/stop" class="row">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button class="danger">Stop</button>
+</form>{{end}}
+</div>
 <section class="panel"><h2>The event</h2><pre class="verdict">{{.Run.Note}}</pre></section>
 <section class="panel"><h2>Steps</h2>
 <ol class="steps" id="run-steps" data-live data-live-list>

@@ -18,8 +18,8 @@ func (s *Server) Retain(ctx context.Context) {
 			p, err := s.st.PruneRuns(time.Now(), func(ws int64) bool { return index.Ready(s.st, ws) })
 			if err != nil {
 				log.Printf("run retention: %v", err)
-			} else if p.TestLogs+p.StepOutputs+p.Conversations+p.Pages > 0 {
-				log.Printf("run retention: deleted %d test-run logs, %d conversations and %d published pages, shortened %d step outputs", p.TestLogs, p.Conversations, p.Pages, p.StepOutputs)
+			} else if p.TestLogs+p.StepOutputs+p.Conversations+p.Pages+p.DryCases > 0 {
+				log.Printf("run retention: deleted %d test-run logs, %d conversations, %d published pages and %d dry-run case files, shortened %d step outputs", p.TestLogs, p.Conversations, p.Pages, p.DryCases, p.StepOutputs)
 			}
 		}()
 		select {

@@ -214,7 +214,29 @@ func (s *Server) openCase(w http.ResponseWriter, r *http.Request) (*store.Worksp
 	return ws, c, true
 }
 
+// openDryCase resolves the dry run's case in a workspace page's URL.
+func (s *Server) openDryCase(w http.ResponseWriter, r *http.Request) (*store.Workspace, *store.Case, bool) {
+	ws, ok := s.openWorkspace(w, r)
+	if !ok {
+		return nil, nil, false
+	}
+	run, _ := strconv.ParseInt(r.PathValue("run"), 10, 64)
+	c, err := s.st.DryCase(run)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && c.WorkspaceID != ws.ID) {
+		http.NotFound(w, r)
+		return nil, nil, false
+	}
+	if err != nil {
+		s.fail(w, err)
+		return nil, nil, false
+	}
+	return ws, c, true
+}
+
 func casePath(ws *store.Workspace, c *store.Case) string {
+	if c.DryRunOf != 0 {
+		return ws.Path() + "/dry-cases/" + strconv.FormatInt(c.DryRunOf, 10)
+	}
 	return ws.Path() + "/cases/" + strconv.Itoa(c.Number)
 }
 
@@ -223,6 +245,19 @@ func (s *Server) casePage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.showCase(w, r, ws, c)
+}
+
+// dryCasePage is a dry run's case file: the same page, with no Edit.
+func (s *Server) dryCasePage(w http.ResponseWriter, r *http.Request) {
+	ws, c, ok := s.openDryCase(w, r)
+	if !ok {
+		return
+	}
+	s.showCase(w, r, ws, c)
+}
+
+func (s *Server) showCase(w http.ResponseWriter, r *http.Request, ws *store.Workspace, c *store.Case) {
 	contributions, err := s.st.Contributions(c.UUID)
 	if err != nil {
 		s.fail(w, err)
@@ -237,7 +272,16 @@ func (s *Server) casePage(w http.ResponseWriter, r *http.Request) {
 	for i, x := range contributions {
 		newest[len(contributions)-1-i] = x
 	}
-	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Newest": newest,
+	var runs []runRow
+	if c.DryRunOf == 0 { // the runs on the item; a dry run's case belongs to one run
+		list, err := s.st.WorkflowRunsOfItem(ws.ID, c.Number, 20)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		runs = s.runRows(ws, list)
+	}
+	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Newest": newest, "Runs": runs,
 		"HTML": template.HTML(html.String()), "API": publicURL(r) + "/api/v1/cases/" + c.UUID, "Private": s.facts(r.Context(), ws).private}
 	if r.URL.Query().Has("saved") {
 		data["Notice"] = "Saved."
@@ -341,11 +385,16 @@ func (s *Server) casesPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	dry, err := s.st.FindDryCases(ws.ID, q, 200)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	total, err := s.st.CaseCount(ws.ID)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	s.render(w, r, http.StatusOK, "cases.html", map[string]any{"Title": "Case files · " + ws.Name, "WS": ws,
-		"Cases": cases, "Q": q, "Total": total})
+		"Cases": cases, "DryCases": dry, "Q": q, "Total": total})
 }

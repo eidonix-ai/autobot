@@ -488,13 +488,12 @@ var commonTags = []Tag{
 	{"case:link", "the link to the case file as a page (a private repository's needs its secret)", true},
 }
 
-// inputTags are {input} and its parts: what the step before produced. Every step's output is kept
-// under its own tag now, so they are no longer listed, but templates saved with them still work.
+// inputTags are {input} and its parts: what the steps linked into a block produced.
 var inputTags = []Tag{
-	{"input", "what the step before produced: its summary, report and notes", false},
-	{"input.summary", "the summary", false},
-	{"input.report", "the full report", false},
-	{"input.scratchpad", "its notes in full", false},
+	{"input", "everything linked into this block, each under its block's name, once all of them have finished (failed or skipped ones are named too)", false},
+	{"input.summary", "their summaries", false},
+	{"input.report", "their full reports", false},
+	{"input.scratchpad", "their notes in full", false},
 }
 
 var prTags = []Tag{
@@ -539,14 +538,15 @@ var oldTags = map[string]string{
 
 // Tags lists the built-in tags of a workflow kind, as the Tags list shows them.
 func Tags(kind string) []Tag {
+	item := prTags
 	if kind == Issue {
-		return append(append([]Tag{}, issueTags...), commonTags...)
+		item = issueTags
 	}
-	return append(append([]Tag{}, prTags...), commonTags...)
+	return slices.Concat(item, commonTags, inputTags)
 }
 
-// AllTags is Tags and the tags still accepted but no longer listed ({input} and its parts).
-func AllTags(kind string) []Tag { return append(Tags(kind), inputTags...) }
+// AllTags is Tags: every tag a template may use.
+func AllTags(kind string) []Tag { return Tags(kind) }
 
 // CanonicalTag is a tag's current name: an old name (pr_title) becomes its new one (pr:title), and
 // {case_file} the case file of the kind's item.

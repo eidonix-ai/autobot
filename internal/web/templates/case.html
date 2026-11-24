@@ -2,7 +2,8 @@
 <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
 <div class="titlebar">
   <h1>{{.Case.Label}}: {{.Case.Title}}</h1>
-  <a class="button secondary" href="{{.WS.Path}}/cases/{{.Case.Number}}/edit">Edit</a>
+  {{if .Case.DryRunOf}}<a class="button secondary" href="{{.WS.Path}}/workflow-runs/{{.Case.DryRunOf}}">The dry run</a>
+  {{else}}<a class="button secondary" href="{{.WS.Path}}/cases/{{.Case.Number}}/edit">Edit</a>{{end}}
 </div>
 <article class="panel markdown">{{.HTML}}</article>
 
@@ -15,6 +16,18 @@
 </details>
 {{end}}
 </section>
+
+{{if .Runs}}<section class="panel">
+<h2>Workflow runs</h2>
+<div class="scroll"><table class="list dense runs">
+<tbody>{{range .Runs}}<tr>
+  <td class="muted nowrap">{{ts .Started}}</td>
+  <td>{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
+  <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
+  <td><a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></td>
+</tr>{{end}}</tbody>
+</table></div>
+</section>{{end}}
 
 <section class="panel">
 <h2>For contributors' agents</h2>

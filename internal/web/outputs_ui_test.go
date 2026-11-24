@@ -55,9 +55,14 @@ func TestTagsListAndTestBoxShowTheOutputParts(t *testing.T) {
 			t.Errorf("the Tags list lacks %s", want)
 		}
 	}
-	// {input} and its parts, and the old {previous_output}, are no longer listed (templates that use them still work).
-	for _, not := range []string{"{verdict.report}", "{previous_output}</code></dt>", `{gather.summary}</code></dt><dd><span class="auto"`,
-		"<code>{input}</code>", "<code>{input.summary}</code>", "<code>{input.report}</code>", "<code>{input.scratchpad}</code>"} {
+	// {input} and its parts are listed, with what they hold; the old {previous_output} is not (templates that use it still work).
+	for _, want := range []string{`<dt><code>{input}</code></dt><dd>everything linked into this block, each under its block&#39;s name, once all of them have finished (failed or skipped ones are named too)</dd>`,
+		`<dt class="field"><code>{input.summary}</code></dt>`, `<dt class="field"><code>{input.report}</code></dt>`, `<dt class="field"><code>{input.scratchpad}</code></dt>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the Tags list lacks %s", want)
+		}
+	}
+	for _, not := range []string{"{verdict.report}", "{previous_output}</code></dt>", `{gather.summary}</code></dt><dd><span class="auto"`} {
 		if strings.Contains(body, not) {
 			t.Errorf("the Tags list has %s", not)
 		}

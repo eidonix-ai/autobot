@@ -118,8 +118,9 @@ func TestLinkToNoCaseFileAndToAnEmptyValue(t *testing.T) {
 	}
 }
 
-// A test of one block from the canvas, and a dry run, publish nothing: the link says so.
-func TestATestAndADryRunPublishNothing(t *testing.T) {
+// A test of one block from the canvas publishes nothing: the link says so. A dry run publishes into
+// its own case file, never the item's.
+func TestATestPublishesNothingADryRunPublishesToItsOwnCase(t *testing.T) {
 	c := newContEnv(t, nil)
 	c.st.SetSetting(publicAddressKey, "https://autobot.example.com")
 	c.saveGraph(append(append([]workflow.Node{}, events...),
@@ -131,11 +132,21 @@ func TestATestAndADryRunPublishNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	steps := c.finish(id)
-	if want := "See First (not published in a test) and Label here (not published in a test) and Case file (not opened yet)"; steps["b"].Output != want {
+	dry, err := c.st.DryCase(id)
+	if err != nil {
+		t.Fatalf("the dry run has no case file: %v", err)
+	}
+	pages, _ := c.st.PagesOf(dry.UUID)
+	if len(pages) != 1 || pages[0].Tag != "first" {
+		t.Fatalf("pages of the dry run's case: %+v", pages)
+	}
+	want := "See [First](https://autobot.example.com/p/" + pages[0].UUID + ".html) and [Label here](https://autobot.example.com/p/" + pages[0].UUID +
+		".html) and [Case file](https://autobot.example.com/api/v1/cases/" + dry.UUID + ".html)"
+	if steps["b"].Output != want {
 		t.Errorf("a dry run: %q, want %q", steps["b"].Output, want)
 	}
 	if _, err := c.st.CaseByNumber(c.ws.ID, 1); err == nil {
-		t.Error("a dry run opened a case")
+		t.Error("a dry run opened the item's case")
 	}
 	// The Test box of the block on the canvas.
 	code, _, body := c.b.post("/w/o/r/workflows/pr/nodes/b/test", url.Values{"csrf": {c.csrf}, "tag_first": {"x"}})

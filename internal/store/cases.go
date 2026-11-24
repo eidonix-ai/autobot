@@ -22,6 +22,9 @@ type Case struct {
 	Version     int
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	// DryRunOf is the workflow run a dry run's case belongs to: a case of its own, never the item's,
+	// that the run writes to instead. 0 for a real case. Number is the item's, for either.
+	DryRunOf int64
 }
 
 // Lines is how many lines the case file has.
@@ -33,6 +36,11 @@ func (c Case) Label() string {
 		return fmt.Sprintf("PR #%d", c.Number)
 	}
 	return fmt.Sprintf("Issue #%d", c.Number)
+}
+
+// DryHeadline is the first line of a dry run's case file.
+func DryHeadline(run int64) string {
+	return fmt.Sprintf("**Dry run of workflow run %d: not a real case file.**", run)
 }
 
 // Contribution is one addition to a case file, or a person's edit of it.
@@ -63,16 +71,19 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-const caseCols = `uuid, workspace_id, number, kind, title, contents, version, created_at, updated_at`
+const caseCols = `uuid, workspace_id, number, kind, title, contents, version, created_at, updated_at, dry_run_of, item`
 
 func scanCase(row scanner) (*Case, error) {
 	var c Case
-	var created, updated int64
-	if err := row.Scan(&c.UUID, &c.WorkspaceID, &c.Number, &c.Kind, &c.Title, &c.Contents, &c.Version, &created, &updated); err != nil {
+	var created, updated, item int64
+	if err := row.Scan(&c.UUID, &c.WorkspaceID, &c.Number, &c.Kind, &c.Title, &c.Contents, &c.Version, &created, &updated, &c.DryRunOf, &item); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if c.DryRunOf != 0 { // its number column is minus the run's id: the item's is in item
+		c.Number = int(item)
 	}
 	c.CreatedAt, c.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
 	return &c, nil
@@ -118,12 +129,70 @@ func (s *Store) OpenCase(ws *Workspace, number int, kind, title, firstLine strin
 	return c, true, err
 }
 
+// OpenDryCase returns the case of a dry run, creating it if the run has none yet: a case of its own
+// for the item, flagged as the run's, whose title says so. It is never the item's real case, and the
+// item's real case is never touched. It starts, as OpenCase's does, with one line by Autobot.
+func (s *Store) OpenDryCase(ws *Workspace, run int64, number int, kind, title, firstLine string) (*Case, bool, error) {
+	if kind != "pr" && kind != "issue" {
+		return nil, false, fmt.Errorf("case kind %q is not pr or issue", kind)
+	}
+	if run <= 0 {
+		return nil, false, errors.New("a dry-run case belongs to a run")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	if c, err := scanCase(tx.QueryRow(`SELECT `+caseCols+` FROM cases WHERE dry_run_of = ?`, run)); err == nil {
+		return c, false, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, false, err
+	}
+	id, t := newUUID(), now()
+	if _, err := tx.Exec(`INSERT INTO cases (uuid, workspace_id, number, kind, title, contents, created_at, updated_at, dry_run_of, item)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, ws.ID, -run, kind, title+" (dry run)", firstLine+"\n", t, t, run, number); err != nil {
+		return nil, false, err
+	}
+	if _, err := tx.Exec(`INSERT INTO case_contributions (case_uuid, author, kind, start_line, end_line, started_at, finalized_at)
+		VALUES (?, 'Autobot', 'system', 1, 1, ?, ?)`, id, t, t); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	c, err := s.Case(id)
+	return c, true, err
+}
+
+// DryCase returns a dry run's case, or ErrNotFound when the run has not opened one.
+func (s *Store) DryCase(run int64) (*Case, error) {
+	return scanCase(s.db.QueryRow(`SELECT `+caseCols+` FROM cases WHERE dry_run_of = ? AND dry_run_of != 0`, run))
+}
+
+// KeepDryCase is how long a dry run's case file and its pages are kept after the run ended.
+const KeepDryCase = 30 * 24 * time.Hour
+
+// PruneDryCases deletes the dry-run cases, with their entries and published pages, whose run ended
+// more than 30 days before at (or whose run is gone). It returns how many.
+func (s *Store) PruneDryCases(at time.Time) (int, error) {
+	res, err := s.db.Exec(`DELETE FROM cases WHERE dry_run_of != 0 AND (
+		dry_run_of IN (SELECT id FROM workflow_runs WHERE status != 'running' AND finished_at != 0 AND finished_at < ?)
+		OR dry_run_of NOT IN (SELECT id FROM workflow_runs))`, at.Add(-KeepDryCase).Unix())
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 // Case looks a case up by its uuid.
 func (s *Store) Case(uuid string) (*Case, error) {
 	return scanCase(s.db.QueryRow(`SELECT `+caseCols+` FROM cases WHERE uuid = ?`, uuid))
 }
 
-// CaseByNumber looks a workspace's case up by its issue or pull request number.
+// CaseByNumber looks a workspace's case up by its issue or pull request number. A dry run's case is
+// never found this way, whatever its item's number.
 func (s *Store) CaseByNumber(workspaceID int64, number int) (*Case, error) {
 	return scanCase(s.db.QueryRow(`SELECT `+caseCols+` FROM cases WHERE workspace_id = ? AND number = ?`, workspaceID, number))
 }
@@ -131,7 +200,7 @@ func (s *Store) CaseByNumber(workspaceID int64, number int) (*Case, error) {
 // Cases lists a workspace's cases, most recently changed first, without their contents.
 func (s *Store) Cases(workspaceID int64, limit int) ([]Case, error) {
 	rows, err := s.db.Query(`SELECT `+strings.Replace(caseCols, "contents", "''", 1)+` FROM cases
-		WHERE workspace_id = ? ORDER BY updated_at DESC, number DESC LIMIT ?`, workspaceID, limit)
+		WHERE workspace_id = ? AND dry_run_of = 0 ORDER BY updated_at DESC, number DESC LIMIT ?`, workspaceID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -396,6 +465,7 @@ type CaseSummary struct {
 	Title     string
 	Lines     int
 	UpdatedAt time.Time
+	DryRunOf  int64 // the run of a dry run's case; 0 for a real one
 }
 
 // Label is how the case is named: "PR #459" or "Issue #12".
@@ -403,13 +473,23 @@ func (c CaseSummary) Label() string { return Case{Number: c.Number, Kind: c.Kind
 
 // FindCases lists a workspace's cases, most recently changed first, matching q when it is not
 // empty: a number (with or without #) matches that issue or PR, anything else matches the title.
+// Real cases only: FindDryCases lists the dry runs'.
 func (s *Store) FindCases(workspaceID int64, q string, limit int) ([]CaseSummary, error) {
+	return s.findCases(workspaceID, q, limit, false)
+}
+
+// FindDryCases is FindCases for the cases of dry runs.
+func (s *Store) FindDryCases(workspaceID int64, q string, limit int) ([]CaseSummary, error) {
+	return s.findCases(workspaceID, q, limit, true)
+}
+
+func (s *Store) findCases(workspaceID int64, q string, limit int, dry bool) ([]CaseSummary, error) {
 	q = strings.TrimSpace(q)
-	query := `SELECT number, kind, title, length(contents) - length(replace(contents, char(10), '')), updated_at
-		FROM cases WHERE workspace_id = ?`
-	args := []any{workspaceID}
+	query := `SELECT CASE WHEN dry_run_of != 0 THEN item ELSE number END, kind, title, length(contents) - length(replace(contents, char(10), '')), updated_at, dry_run_of
+		FROM cases WHERE workspace_id = ? AND (dry_run_of != 0) = ?`
+	args := []any{workspaceID, dry}
 	if n, err := strconv.Atoi(strings.TrimPrefix(q, "#")); err == nil {
-		query += ` AND number = ?`
+		query += ` AND CASE WHEN dry_run_of != 0 THEN item ELSE number END = ?`
 		args = append(args, n)
 	} else if q != "" {
 		query += ` AND title LIKE ? ESCAPE '\'`
@@ -426,7 +506,7 @@ func (s *Store) FindCases(workspaceID int64, q string, limit int) ([]CaseSummary
 	for rows.Next() {
 		var c CaseSummary
 		var at int64
-		if err := rows.Scan(&c.Number, &c.Kind, &c.Title, &c.Lines, &at); err != nil {
+		if err := rows.Scan(&c.Number, &c.Kind, &c.Title, &c.Lines, &at, &c.DryRunOf); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt = time.Unix(at, 0)
@@ -435,9 +515,9 @@ func (s *Store) FindCases(workspaceID int64, q string, limit int) ([]CaseSummary
 	return out, rows.Err()
 }
 
-// CaseCount is how many cases a workspace has.
+// CaseCount is how many real cases a workspace has.
 func (s *Store) CaseCount(workspaceID int64) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT count(*) FROM cases WHERE workspace_id = ?`, workspaceID).Scan(&n)
+	err := s.db.QueryRow(`SELECT count(*) FROM cases WHERE workspace_id = ? AND dry_run_of = 0`, workspaceID).Scan(&n)
 	return n, err
 }

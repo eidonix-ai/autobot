@@ -130,11 +130,13 @@ func RunClosing(ctx context.Context, research Config, conv *Conversation, w Writ
 	if strings.TrimSpace(tr.Report) != "" {
 		research.Pad.Add(store.PadEntry{Author: "main", Title: researchSummary, Importance: store.High, Description: firstLine(tr.Report, 160), Body: tr.Report})
 	}
-	if tr.Outcome != Failed {
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTurnTime)
+	if tr.Outcome != Failed && tr.Outcome != Stopped {
+		sctx, cancel := detached(ctx, saveTurnTime)
 		SaveTurn(sctx, research, conv, tr)
 		cancel()
-		if wt := writeReport(ctx, research, tr, w); strings.TrimSpace(wt.Report) != "" {
+		if IsStopped(ctx) { // stopped during the save turn: no report is written
+			tr.Outcome, tr.Error = Stopped, context.Cause(ctx).Error()
+		} else if wt := writeReport(ctx, research, tr, w); strings.TrimSpace(wt.Report) != "" {
 			tr.Report, tr.Summary = wt.Report, wt.Summary // else the research's own report, and its summary, stay
 		}
 	}
@@ -162,7 +164,7 @@ func writeReport(ctx context.Context, research Config, tr *Transcript, w Writer)
 			research.Save(tr)
 		}
 	}
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.Time)
+	wctx, cancel := detached(ctx, w.Time)
 	defer cancel()
 	cfg.Now = research.Now
 	cfg.Deadline = time.Now().Add(w.Time)

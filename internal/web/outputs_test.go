@@ -210,7 +210,7 @@ func TestInputPartsComeFromTheAgentRun(t *testing.T) {
 	c.saveGraph(append(append([]workflow.Node{}, events...), a), [2]string{"ev1", "A"})
 	steps := c.run("ev1")
 	rs := &runState{run: &store.WorkflowRun{Kind: workflow.PR}}
-	got := c.ui.stepParts(rs, source{a, steps["A"]})
+	got := c.ui.stepParts(rs, source{node: a, step: steps["A"]})
 	if got[".summary"] != "THE SUMMARY" || got[".report"] != "THE REPORT" || got[".scratchpad"] != notesText || !strings.HasPrefix(got[""], "## Summary\n\nTHE SUMMARY") {
 		t.Fatalf("%q", got)
 	}

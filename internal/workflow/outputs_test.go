@@ -43,9 +43,9 @@ func TestCheckTemplatesOutputParts(t *testing.T) {
 	}
 }
 
-// {input} is what the step before produced, in every kind of workflow, with its parts; it and the
-// old name {previous_output} are still accepted and still mean the same, but neither is listed
-// any more: every step's output is kept under its own tag.
+// {input} is what the steps linked into a block produced, in every kind of workflow, with its parts,
+// and is listed with them (and says failed and skipped sources are named); the old name
+// {previous_output} is still accepted and still means {input.report}, but is not listed.
 func TestInputTag(t *testing.T) {
 	for _, kind := range []string{PR, Issue} {
 		if err := CheckTemplates(kind, nil, "{input} {input.summary} {input.report} {input.scratchpad} {previous_output}"); err != nil {
@@ -59,9 +59,12 @@ func TestInputTag(t *testing.T) {
 			t.Errorf("%s: the old name is listed", kind)
 		}
 		for _, name := range []string{"input", "input.summary", "input.report", "input.scratchpad"} {
-			if _, ok := listed[name]; ok {
-				t.Errorf("%s: {%s} is listed", kind, name)
+			if _, ok := listed[name]; !ok {
+				t.Errorf("%s: {%s} is not listed", kind, name)
 			}
+		}
+		if !strings.Contains(listed["input"].About, "everything linked into this block") || !strings.Contains(listed["input"].About, "failed or skipped ones are named too") {
+			t.Errorf("%s: {input} is described as %q", kind, listed["input"].About)
 		}
 		all := map[string]Tag{}
 		for _, tag := range AllTags(kind) {

@@ -26,6 +26,8 @@ func (s *Server) toDiscord(ctx context.Context, rs *runState) (*discord.Bot, str
 	forum, _ := s.st.DiscordForum(rs.ws.ID)
 	b, _ := s.bot(rs.ws)
 	switch {
+	case rs.stopped():
+		return nil, "", "", rs.errStopped()
 	case rs.run.DryRun:
 		return nil, "", "", errors.New("dry run: nothing posted")
 	case b == nil || forum == "":
@@ -33,7 +35,7 @@ func (s *Server) toDiscord(ctx context.Context, rs *runState) (*discord.Bot, str
 	case s.facts(ctx, rs.ws).private:
 		return nil, "", "", errPrivateRepo
 	}
-	cs, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
+	cs, err := s.runCase(rs)
 	if errors.Is(err, store.ErrNotFound) {
 		cs, err = s.caseForRun(rs)
 	}
@@ -85,6 +87,9 @@ func (s *Server) discordStep(ctx context.Context, rs *runState, summary bool, te
 // approvalStep asks for a person's answer: on Discord when it may, and always on the run's page,
 // then waits for it.
 func (s *Server) approvalStep(ctx context.Context, rs *runState, n workflow.Node, a workflow.ApprovalSettings, request string) stepOutcome {
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
+	}
 	ap, err := s.st.OpenApproval(rs.run.ID, n.ID, request, time.Now().Add(time.Duration(a.Hours)*time.Hour))
 	if err != nil {
 		return stepOutcome{err: err}
@@ -121,6 +126,8 @@ func approvalMessage(n workflow.Node, ap *store.Approval) discord.Message {
 		return discord.Message{Text: head + "\n\n" + ap.Request + "\n\n_Answer by " + ap.ExpiresAt.In(eastern).Format("Jan 2, 3:04 PM") + " ET._", Buttons: buttons}
 	case "timed_out":
 		head = "**No answer in time** · " + workflow.DisplayName(n)
+	case "stopped":
+		head = fmt.Sprintf("**The run was stopped** by %s · %s ET · %s", ap.DecidedBy, ap.DecidedAt.In(eastern).Format("Jan 2, 3:04 PM"), workflow.DisplayName(n))
 	default:
 		head = fmt.Sprintf("**%s** by %s on %s · %s", map[string]string{"approved": "Approved", "denied": "Denied"}[ap.Status],
 			ap.DecidedBy, ap.DecidedOn, ap.DecidedAt.In(eastern).Format("Jan 2, 3:04 PM")+" ET")
@@ -140,6 +147,9 @@ var eastern = func() *time.Location {
 // answer in the case file and on Discord.
 func (s *Server) awaitApproval(ctx context.Context, rs *runState, n workflow.Node) stepOutcome {
 	for {
+		if rs.stopped() { // a stopped run's approval is closed by the stop, and records nothing
+			return stepOutcome{err: rs.errStopped()}
+		}
 		ap, err := s.st.ApprovalFor(rs.run.ID, n.ID)
 		if err != nil {
 			return stepOutcome{err: err}
@@ -154,10 +164,8 @@ func (s *Server) awaitApproval(ctx context.Context, rs *runState, n workflow.Nod
 			if ap.DecidedBy != "" {
 				out = fmt.Sprintf("%s by %s on %s, %s ET", what, ap.DecidedBy, ap.DecidedOn, ap.DecidedAt.In(eastern).Format("Jan 2, 2006 3:04 PM"))
 			}
-			if !rs.run.DryRun {
-				if err := s.writeEntry(rs, n, "**"+workflow.DisplayName(n)+":** "+out+".\n\n> "+strings.ReplaceAll(ap.Request, "\n", "\n> "), true); err != nil {
-					log.Printf("workflow run %d: %v", rs.run.ID, err)
-				}
+			if err := s.writeEntry(rs, n, "**"+workflow.DisplayName(n)+":** "+out+".\n\n> "+strings.ReplaceAll(ap.Request, "\n", "\n> "), true); err != nil {
+				log.Printf("workflow run %d: %v", rs.run.ID, err)
 			}
 			if ap.Message != "" && ap.DecidedOn != "Discord" { // a click on Discord updates its own message
 				if b, _ := s.bot(rs.ws); b != nil {
@@ -168,6 +176,9 @@ func (s *Server) awaitApproval(ctx context.Context, rs *runState, n workflow.Nod
 		}
 		select {
 		case <-ctx.Done():
+			if rs.stopped() {
+				return stepOutcome{err: rs.errStopped()}
+			}
 			return stepOutcome{err: errors.New("stopped waiting for the answer")}
 		case <-time.After(2 * time.Second):
 		}
@@ -210,7 +221,7 @@ func (s *Server) resume(ctx context.Context, id int64) error {
 	}
 	rs := &runState{ws: ws, run: run, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}}
 	rs.builtIn["repo:opt_out"] = s.optOut(ws)
-	if c, err := s.st.CaseByNumber(ws.ID, run.Item); err == nil {
+	if c, err := s.st.CaseByNumber(ws.ID, run.Item); err == nil && !run.DryRun { // a dry run reads nothing of the real case
 		if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
 			return err
 		}
@@ -220,10 +231,7 @@ func (s *Server) resume(ctx context.Context, id int64) error {
 	}
 	rs.builtIn["machines"] = s.machinesSummary(ws)
 
-	go func() {
-		defer survive(fmt.Sprintf("workflow run %d", id), func(string) { s.st.FinishWorkflowRun(id, "failed") })
-		s.drive(rs)
-	}()
+	s.launch(rs)
 	return nil
 }
 
@@ -311,6 +319,8 @@ func approvalSummary(ap *store.Approval) string {
 		return fmt.Sprintf("%s by %s on %s", ap.Status, ap.DecidedBy, ap.DecidedOn)
 	case "timed_out":
 		return "no answer came in time"
+	case "stopped":
+		return "the run was stopped by " + ap.DecidedBy
 	}
 	return "still waiting"
 }

@@ -15,17 +15,19 @@ type WorkflowRun struct {
 	Item        int    // the pull request or issue
 	DryRun      bool   // writes nothing: no case file, no output tags, nothing posted
 	Graph       string // the workflow as it was when the run started
-	Status      string // running, done or failed
+	Status      string // running, done, failed or stopped
 	Note        string // how the event's conditions stood when it started
 	StartedBy   string
 	StartedAt   time.Time
 	FinishedAt  time.Time
+	StoppedBy   string // the name of the person who stopped it
+	StoppedAt   time.Time
 }
 
 // WorkflowStep is one node's part in a run.
 type WorkflowStep struct {
 	NodeID     string
-	Status     string // pending, running, waiting (for a person), done, skipped or failed
+	Status     string // pending, running, waiting (for a person), done, skipped, failed or stopped
 	Port       string // the output it took (a decision's choice); "" until done
 	Output     string
 	Error      string
@@ -72,19 +74,88 @@ func (s *Store) SetWorkflowStep(run int64, st WorkflowStep) error {
 	return err
 }
 
-// FinishWorkflowRun ends a run.
+// FinishWorkflowRun ends a run that is still running: a run a person stopped stays stopped.
 func (s *Store) FinishWorkflowRun(id int64, status string) error {
-	_, err := s.db.Exec(`UPDATE workflow_runs SET status = ?, finished_at = ? WHERE id = ?`, status, now(), id)
+	_, err := s.db.Exec(`UPDATE workflow_runs SET status = ?, finished_at = ? WHERE id = ? AND status = 'running'`, status, now(), id)
 	return err
+}
+
+// StopWorkflowRun ends a running run as stopped by a person: the run, its steps that were running
+// or waiting, their agent runs and the approvals still open all become stopped. It returns the
+// approvals it closed, for the caller to say so where they were asked, and does nothing, and
+// returns none, for a run that is not running (a second stop, or a run that just ended).
+func (s *Store) StopWorkflowRun(id int64, by string) (bool, []Approval, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, nil, err
+	}
+	defer tx.Rollback()
+	t := now()
+	res, err := tx.Exec(`UPDATE workflow_runs SET status = 'stopped', stopped_by = ?, stopped_at = ?, finished_at = ? WHERE id = ? AND status = 'running'`, by, t, t, id)
+	if err != nil {
+		return false, nil, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return false, nil, nil
+	}
+	if _, err := tx.Exec(`UPDATE workflow_steps SET status = 'stopped', finished_at = ? WHERE run_id = ? AND status IN ('running', 'waiting')`, t, id); err != nil {
+		return false, nil, err
+	}
+	// The agent runs of its steps that are not over, or that ended as stopped without learning who stopped them.
+	mine := `id IN (SELECT agent_run FROM workflow_steps WHERE run_id = ? AND agent_run != 0) AND status IN ('running', 'stopped') AND stopped_at = 0`
+	if _, err := tx.Exec(`UPDATE sub_agents SET status = 'stopped', finished_at = ? WHERE status = 'running' AND run_id IN (SELECT id FROM agent_runs WHERE `+mine+`)`, t, id); err != nil {
+		return false, nil, err
+	}
+	if _, err := tx.Exec(`UPDATE agent_runs SET status = 'stopped', stopped_by = ?, stopped_at = ?, finished_at = CASE WHEN finished_at = 0 THEN ? ELSE finished_at END WHERE `+mine, by, t, t, id); err != nil {
+		return false, nil, err
+	}
+	rows, err := tx.Query(approvalSelect+` WHERE run_id = ? AND status = 'pending'`, id)
+	if err != nil {
+		return false, nil, err
+	}
+	var closed []Approval
+	for rows.Next() {
+		a, err := scanApprovalRow(rows)
+		if err != nil {
+			rows.Close()
+			return false, nil, err
+		}
+		a.Status, a.DecidedBy, a.DecidedOn, a.DecidedAt = "stopped", by, "Autobot", time.Unix(t, 0)
+		closed = append(closed, *a)
+	}
+	rows.Close()
+	if _, err := tx.Exec(`UPDATE approvals SET status = 'stopped', decided_by = ?, decided_on = 'Autobot', decided_at = ? WHERE run_id = ? AND status = 'pending'`, by, t, id); err != nil {
+		return false, nil, err
+	}
+	return true, closed, tx.Commit()
+}
+
+// SetStepAgentRun records the agent run a running step has started, so that its page can be found
+// from the run and the run stopped from it.
+func (s *Store) SetStepAgentRun(run int64, node string, agentRun int64) error {
+	_, err := s.db.Exec(`UPDATE workflow_steps SET agent_run = ? WHERE run_id = ? AND node_id = ? AND status = 'running'`, agentRun, run, node)
+	return err
+}
+
+// WorkflowOfAgentRun is the workflow run an agent run is a step of, if it is one.
+func (s *Store) WorkflowOfAgentRun(agentRun int64) (int64, bool) {
+	var id int64
+	err := s.db.QueryRow(`SELECT run_id FROM workflow_steps WHERE agent_run = ? ORDER BY run_id DESC LIMIT 1`, agentRun).Scan(&id)
+	return id, err == nil
 }
 
 // WorkflowRun returns one run, or ErrNotFound.
 func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
+	return scanWorkflowRun(s.db.QueryRow(workflowRunSelect+` WHERE w.id = ?`, id))
+}
+
+const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, ` + authorName + `,
+	w.started_at, w.finished_at, w.stopped_by, w.stopped_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by`
+
+func scanWorkflowRun(row scanner) (*WorkflowRun, error) {
 	var r WorkflowRun
-	var started, finished int64
-	err := s.db.QueryRow(`SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, `+authorName+`,
-		w.started_at, w.finished_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by WHERE w.id = ?`, id).
-		Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &started, &finished)
+	var started, finished, stopped int64
+	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &started, &finished, &r.StoppedBy, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -95,7 +166,43 @@ func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
 	if finished != 0 {
 		r.FinishedAt = time.Unix(finished, 0)
 	}
+	if stopped != 0 {
+		r.StoppedAt = time.Unix(stopped, 0)
+	}
 	return &r, nil
+}
+
+func (s *Store) queryWorkflowRuns(where string, args ...any) ([]WorkflowRun, error) {
+	rows, err := s.db.Query(workflowRunSelect+` WHERE `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkflowRun
+	for rows.Next() {
+		r, err := scanWorkflowRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
+// WorkflowRuns lists a workspace's workflow runs for the Runs page: every run still going, newest
+// first, then the most recent recent runs that have ended.
+func (s *Store) WorkflowRuns(workspaceID int64, recent int) ([]WorkflowRun, error) {
+	going, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status = 'running' ORDER BY w.id DESC`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	ended, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status != 'running' ORDER BY w.id DESC LIMIT ?`, workspaceID, recent)
+	return append(going, ended...), err
+}
+
+// WorkflowRunsOfItem lists the runs of a workspace on one pull request or issue, newest first.
+func (s *Store) WorkflowRunsOfItem(workspaceID int64, item, limit int) ([]WorkflowRun, error) {
+	return s.queryWorkflowRuns(`w.workspace_id = ? AND w.item = ? ORDER BY w.id DESC LIMIT ?`, workspaceID, item, limit)
 }
 
 // WorkflowSteps returns a run's steps by node id.

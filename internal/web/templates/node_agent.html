@@ -83,6 +83,7 @@
     <label class="check"><input type="radio" name="rerun" value="fresh"{{if eq .S.Rerun "fresh"}} checked{{end}}> Start fresh</label>
   </fieldset>
   <label>Follow-up, when it resumes <textarea name="follow_up" rows="2" class="code" spellcheck="false" placeholder="Empty: the instruction is sent again">{{.S.FollowUp}}</textarea></label>
+  <label class="check"><input type="checkbox" name="case_entry"{{if .S.WritesToCase}} checked{{end}}> Write to the case file <span class="info" tabindex="0" data-tip="Adds this step's result to the case file when it finishes.">ⓘ</span></label>
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

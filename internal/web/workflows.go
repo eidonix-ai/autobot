@@ -504,6 +504,8 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		settings, err = workflow.SettingsOf(n, workflow.DefaultTestRun())
 	case workflow.Approval:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultApproval(kind))
+	case workflow.Junction:
+		settings = workflow.JunctionSettings{}
 	default:
 		settings, err = workflow.EventSettingsOf(n)
 	}
@@ -579,6 +581,8 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page = "node_condition.html"
 	case workflow.ApprovalSettings:
 		page = "node_approval.html"
+	case workflow.JunctionSettings:
+		page = "node_junction.html"
 	case workflow.TestRunSettings:
 		page = "node_testrun.html"
 		machines, err := s.st.Machines(ws.ID)
@@ -708,6 +712,8 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			err = g.CheckNodeTemplates(kind, n.ID, a.Request)
 		}
 		settings = a
+	case workflow.Junction:
+		settings = workflow.JunctionSettings{}
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)

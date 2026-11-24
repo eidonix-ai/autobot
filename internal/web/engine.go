@@ -327,6 +327,31 @@ func (s *Server) drive(rs *runState) {
 	for _, l := range rs.g.Links {
 		incoming[l.To] = append(incoming[l.To], l)
 	}
+	// firedFrom are the sources of a step: the finished steps whose links into it fired. A Node
+	// (Junction) only connects, so the step after it has the steps that fired into the Node as its
+	// sources, as if their links went to it directly; a step reached twice counts once.
+	var firedFrom func(id string) []source
+	firedFrom = func(id string) []source {
+		var out []source
+		add := func(s source) {
+			if !slices.ContainsFunc(out, func(o source) bool { return o.node.ID == s.node.ID }) {
+				out = append(out, s)
+			}
+		}
+		for _, l := range incoming[id] {
+			src := steps[l.From]
+			switch {
+			case src.Status != "done" || src.Port != l.Out:
+			case nodes[l.From].Type == workflow.Junction:
+				for _, s := range firedFrom(l.From) {
+					add(s)
+				}
+			default:
+				add(source{nodes[l.From], src})
+			}
+		}
+		return out
+	}
 	type finished struct {
 		id string
 		o  stepOutcome
@@ -380,10 +405,7 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
-				var sources []source // copied here: the steps change while this one runs
-				for _, l := range fired {
-					sources = append(sources, source{nodes[l.From], steps[l.From]})
-				}
+				sources := firedFrom(n.ID) // copied here: the steps change while this one runs
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
 				// they came down its own branch or another, and the run goes on adding to the map.
 				tags := maps.Clone(rs.tags)
@@ -411,6 +433,7 @@ func (s *Server) drive(rs *runState) {
 		save(st)
 		if st.Status == "done" {
 			s.keepTag(rs, nodes[f.id], st.Output, f.o.tags)
+			s.writeResult(rs, nodes[f.id], f.o)
 		}
 	}
 	status := "done"
@@ -508,6 +531,53 @@ func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map
 	}
 }
 
+// writeResult adds a finished Agent's or Decision's result to the case file, as a finalized entry under
+// the step's name, unless its "Write to the case file" box is off. A run adds an entry every time: the
+// case file is a record, nothing is replaced. A dry run writes nothing, and neither does a step that
+// took no part (an agent with no conversation to continue). An Agent's entry is a heading with the
+// step's name, its summary (its report when it has none), and links to the full report and the notes as
+// published pages; a Decision's is one line: the choice, how sure the model was, and what the choice means.
+func (s *Server) writeResult(rs *runState, n workflow.Node, o stepOutcome) {
+	if rs.run.DryRun {
+		return
+	}
+	kind, name := rs.run.Kind, workflow.DisplayName(n)
+	var text string
+	switch n.Type {
+	case workflow.Agent:
+		a, err := workflow.AgentSettingsOf(n, kind)
+		tag := rs.g.OutputNames(kind)[n.ID]
+		if err != nil || !a.WritesToCase() || o.agentRun == 0 || tag == "" {
+			return
+		}
+		summary := strings.TrimSpace(o.tags[".summary"])
+		if summary == "" {
+			summary = strings.TrimSpace(o.tags[".report"])
+		}
+		links := "[[" + tag + ".report|Full report]]"
+		if o.tags[".scratchpad"] != "" {
+			links += " · [[" + tag + ".scratchpad|Notes]]"
+		}
+		values := maps.Clone(rs.tags)
+		s.fillLinks(rs.ws, rs.it.number, []string{links}, values, s.runPublisher(rs))
+		text = "## " + name + "\n\n" + summary + "\n\n" + workflow.Render(links, values)
+	case workflow.Decision:
+		d, err := workflow.DecisionSettingsOf(n, kind)
+		if err != nil || !d.WritesToCase() || o.port == "" {
+			return
+		}
+		text = name + ": " + o.port + " (" + o.tags[".confidence"] + ")"
+		if reason := o.tags[".reason"]; reason != "" {
+			text += ": " + reason
+		}
+	default:
+		return
+	}
+	if err := s.writeEntry(rs, n, text, true); err != nil {
+		log.Printf("workflow run %d: writing %s to the case file: %v", rs.run.ID, name, err)
+	}
+}
+
 func (s *Server) caseForRun(rs *runState) (*store.Case, error) {
 	et, err := time.LoadLocation("America/New_York")
 	if err != nil {
@@ -532,6 +602,9 @@ type stepOutcome struct {
 // runStep runs one step with the tags kept so far (those of the case and of the steps of this run
 // that have finished) and the output of the steps linked into it.
 func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
+	if n.Type == workflow.Junction { // a Node does no work: its output is what came into it
+		return stepOutcome{port: "out", output: s.inputValues(rs, sources)["input"]}
+	}
 	values := map[string]string{}
 	for k, v := range tags {
 		values[k] = v

@@ -81,9 +81,9 @@ Importance is how soon a reader should see it: high for what a reader could not 
 var issueRecord = strings.NewReplacer("this change", "this issue", "(undeclared changes, reversed or overlapping work, claims without evidence",
 	"(reversed or overlapping work, fixes that already exist, claims without evidence").Replace(gatherRecord)
 
-// SeedPresets are the built-in presets, put in the database once, with these keys. Their texts
+// SeedPresets are the built-in presets (the code review ones from review_presets.go last), put in the database once, with these keys. Their texts
 // include their heads (the link, title, description and, for Gather Information, the packet).
-var SeedPresets = []Persona{
+var SeedPresets = append([]Persona{
 	{Key: "gather_information", Name: "Gather Information", Description: "Gathers everything relevant to a pull request or issue, linked and cross-referenced, with no judgement.",
 		Instruction: gatherPRHead + `You are preparing the case file for this pull request: everything relevant to it, gathered, linked and cross-referenced, for the people and agents who will decide about it later. Do not judge whether it is good or should be merged. Find out, and connect.
 
@@ -124,7 +124,7 @@ Read the code as much as you need to understand what the issue concerns, but thi
 		Summary:      gatherPRSummary,
 		IssueSummary: gatherIssueSummary,
 		Closing:      ClosingReport},
-	{Key: "code_quality", Name: "Code Quality", Description: "Reviews a change for correctness first, then for clarity and maintainability.",
+	{Key: "code_quality", Name: "Code Review - Quality", Description: "Reviews a change for correctness first, then for clarity and maintainability.",
 		Instruction: prHead + `Review the change for correctness first, then for clarity and maintainability.
 Read each changed function in its surrounding code, not only the diff, and follow its callers when the change alters behaviour.
 Look for bugs: wrong conditions, unhandled errors and edge cases, races, leaks, broken invariants, and missing or weakened tests.
@@ -145,7 +145,7 @@ Give a clear verdict, worth merging, worth it with changes, or not worth it, wit
 		IssueInstruction: issueHead + `Judge whether what this issue asks for is worth doing for this project, against the charter's vision, goals, non-goals and roadmap.
 Weigh who benefits against the cost in complexity, maintenance and risk, and give a clear verdict with your reasons.`,
 		Issue: "The report gives a clear verdict on whether the issue is worth doing, with reasons tied to the charter."},
-	{Key: "security", Name: "Security Reviewer", Description: "Looks for ways a change could be abused or could leak.",
+	{Key: "security", Name: "Code Review - Security", Description: "Looks for ways a change could be abused or could leak.",
 		Instruction: prHead + `Look for ways this change could be abused or could leak.
 Trace untrusted input to where it is used: injection, path traversal, unsafe deserialization, server-side request forgery,
 gaps in authentication and authorization, secrets in code or logs, unsafe defaults, and risky new dependencies.
@@ -154,7 +154,7 @@ For each finding give its impact and likelihood, how it could be exploited, and 
 		IssueInstruction: issueHead + `Look at this issue for its security side: whether it reveals or could lead to a vulnerability, how it could be exploited, and how severe it is.
 Do not report theoretical issues as real ones.`,
 		Issue: "The report says whether the issue has a real security side, with impact, likelihood and how it could be exploited, or that it has none."},
-	{Key: "test_engineer", Name: "Test Engineer", Description: "Makes sure a change works and keeps working: builds it, runs the tests, proposes missing ones.",
+	{Key: "test_engineer", Name: "Code Review - Testing", Description: "Makes sure a change works and keeps working: builds it, runs the tests, proposes missing ones.",
 		Instruction: prHead + `Make sure this change works and keeps working.
 Work out how the project is built and tested, what the existing tests cover and what they miss,
 and which edge cases and failure paths need tests. When you have a machine, build the change and run the tests,
@@ -164,4 +164,4 @@ Propose the missing tests concretely.`,
 		IssueInstruction: issueHead + `Work out how to reproduce this issue. When you have a machine, build the project and try, and report exactly what you ran and what happened.
 Propose a test that would catch it.`,
 		Issue: "The report says whether the issue reproduces, with exactly what was run and what happened, and proposes a test that would catch it."},
-}
+}, ReviewPresets...)

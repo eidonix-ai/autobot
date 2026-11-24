@@ -248,6 +248,49 @@ func (s *Store) SeedPresets(seeds []Preset) error {
 	return tx.Commit()
 }
 
+// presetsV2 is the setting that says the second seed step ran.
+const presetsV2 = "presets_v2"
+
+// PresetRename is a seeded preset's old name and the one it is given.
+type PresetRename struct{ Key, From, To string }
+
+// SeedPresetsV2 is the second one-time seed step, for databases that were seeded before the code review
+// presets: each rename is made only where the preset still has its old name (an admin's own rename is
+// never overwritten), and each new preset is inserted, as a shared one, only where its key is not taken.
+// On a new database the first seed has put all of it in already, and this changes nothing. It runs once:
+// a preset an admin removed afterwards stays removed.
+func (s *Store) SeedPresetsV2(renames []PresetRename, adds []Preset) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var done string
+	err = tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, presetsV2).Scan(&done)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	for _, r := range renames {
+		if _, err := tx.Exec(`UPDATE presets SET name = ?, updated_at = ? WHERE key = ? AND name = ?`, r.To, now(), r.Key, r.From); err != nil {
+			return err
+		}
+	}
+	for _, p := range adds {
+		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+			p.IssueSummary, p.Closing, now(), now()); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')`, presetsV2); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // StoredGraph is a workflow of a workspace, or a run's snapshot of one, with the kind it is of.
 type StoredGraph struct {
 	Workspace int64

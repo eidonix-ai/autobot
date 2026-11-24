@@ -56,6 +56,7 @@ var Types = []NodeType{
 	{Type: Condition, Label: "Condition"},
 	{Type: TestRun, Label: "Test Run"},
 	{Type: Approval, Label: "Human Approval"},
+	{Type: Junction, Label: "Node"},
 	// The two blocks Post replaced: graphs saved with them load as Post nodes, but a run from before
 	// that kept one in its snapshot still names it, and the palette does not offer them.
 	{Type: githubComment, Label: "GitHub Comment", Hidden: true},

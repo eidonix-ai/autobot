@@ -272,3 +272,14 @@ func (s ApprovalSettings) Check() error {
 	}
 	return nil
 }
+
+// Junction is the block called Node on the canvas: a wire connector. Any number of links may come
+// into its one input and leave its one output; it does no work, has no settings but its name and
+// keeps no output tag. A block after it sees what it would see with the links joined directly: the
+// steps that fired into the Node are the sources of the steps after it (the engine looks through it),
+// and the tags of everything upstream of the Node are upstream of them too.
+const Junction = "junction"
+
+// JunctionSettings are a Node's settings: none, but the type is kept so that its form is a settings
+// form like any other block's.
+type JunctionSettings struct{}

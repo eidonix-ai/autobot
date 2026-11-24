@@ -65,6 +65,8 @@ func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, e
 			err = s.Check()
 		}
 		return s, []string{s.Request}, err
+	case workflow.Junction:
+		return nil, nil, errors.New("a Node only connects links: there is nothing to test")
 	case workflow.Condition, workflow.TestRun:
 		return nil, nil, errors.New("this block needs a real pull request or issue: shift-click the event block to run the workflow, perhaps as a dry run")
 	}

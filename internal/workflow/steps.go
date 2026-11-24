@@ -98,6 +98,9 @@ type AgentSettings struct {
 	Rerun           string   `json:"rerun"`                  // run again on the same item: "resume" its conversation, or start "fresh"
 	FollowUp        string   `json:"follow_up"`              // resume: a template sent as the next message; "" sends the instruction again
 	OutputTo        string   `json:"output_to,omitempty"`    // the block's tag as saved; the tag is the name in snake case (OutputNames)
+	// NoCaseEntry turns off "Write to the case file", which is on for a block that does not say (every
+	// block saved before it existed): see WritesToCase.
+	NoCaseEntry bool `json:"no_case_entry,omitempty"`
 
 	// ContinueOf, when set, is the id of another Agent block of the same canvas whose conversation on
 	// the item this block continues: it sends its own Instruction and Done when as the next message of
@@ -145,7 +148,16 @@ type DecisionSettings struct {
 	Choices  []Choice `json:"choices"`
 	Output   string   `json:"output"` // "decision": only the choice; "probabilities": each choice's probability too
 	OutputTo string   `json:"output_to,omitempty"`
+	// NoCaseEntry turns off "Write to the case file" (see WritesToCase).
+	NoCaseEntry bool `json:"no_case_entry,omitempty"`
 }
+
+// WritesToCase reports whether the step adds its result to the case file when it finishes: the
+// "Write to the case file" box, on unless the block says otherwise.
+func (s AgentSettings) WritesToCase() bool { return !s.NoCaseEntry }
+
+// WritesToCase reports whether the step adds its result to the case file when it finishes.
+func (s DecisionSettings) WritesToCase() bool { return !s.NoCaseEntry }
 
 // DefaultAgent is a new agent node's settings, for a workflow of kind.
 func DefaultAgent(kind string) AgentSettings {
@@ -371,6 +383,7 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 		Rerun:         get("rerun"),
 		Closing:       get("closing"),
 		FollowUp:      strings.TrimSpace(get("follow_up")),
+		NoCaseEntry:   get("case_entry") != "on",
 		Machines:      []int64{},
 	}
 	if s.ContinueOf = get("continue_of"); s.ContinueOf != "" {
@@ -409,6 +422,8 @@ func DecisionFromForm(get func(string) string) DecisionSettings {
 		Context:  strings.TrimSpace(get("context")),
 		Question: strings.TrimSpace(get("question")),
 		Output:   get("output"),
+
+		NoCaseEntry: get("case_entry") != "on",
 	}
 	for _, line := range strings.Split(get("choices"), "\n") {
 		if line = strings.TrimSpace(line); line == "" {
@@ -975,6 +990,8 @@ func stepWhat(n Node, kind string, models func(ModelRef) string) string {
 			first = string([]rune(first)[:49]) + "…"
 		}
 		return first
+	case Junction:
+		return "connects links"
 	case CaseEntry:
 		s, err := CaseEntrySettingsOf(n)
 		if err != nil {

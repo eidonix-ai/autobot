@@ -22,6 +22,8 @@ type Persona struct {
 	NoCitationMarks bool
 	// Additional is what a block's Additional instructions box starts with when it chooses the preset.
 	Additional string
+	// RunDefaults are the run settings a block starts with when it chooses the preset.
+	RunDefaults RunDefaults
 }
 
 // SummaryFor is the preset's summary format for a workflow of kind.
@@ -138,7 +140,8 @@ When the change is sound, say so plainly.`,
 		Goal: "Every change in the pull request has been read in context, and the report lists each problem found with its file, line and a suggested fix, or says plainly that there are none.",
 		IssueInstruction: issueHead + `Look into this issue as a careful engineer: find the code involved, judge whether the report describes a real defect, and where.
 Report what is wrong, with files and lines, why, and how it could be fixed; or say plainly that the code is behaving as intended.`,
-		Issue: "The report says whether the issue is a real defect, with the files and lines involved and how it could be fixed, or that the code behaves as intended."},
+		Issue:       "The report says whether the issue is a real defect, with the files and lines involved and how it could be fixed, or that the code behaves as intended.",
+		RunDefaults: ReviewRunDefaults()},
 	{Key: "value_analyst", Name: "Value Analyst", Description: "Judges whether a change is worth making for the project, against its charter.",
 		Instruction: prHead + `Judge whether this change is worth making for this project.
 Compare it with the project charter: its vision, goals, non-goals and roadmap.
@@ -157,7 +160,8 @@ For each finding give its impact and likelihood, how it could be exploited, and 
 		Goal: "Every change has been traced for untrusted input, and the report lists each real finding with impact, likelihood, how to exploit it and the fix, or says there are none.",
 		IssueInstruction: issueHead + `Look at this issue for its security side: whether it reveals or could lead to a vulnerability, how it could be exploited, and how severe it is.
 Do not report theoretical issues as real ones.`,
-		Issue: "The report says whether the issue has a real security side, with impact, likelihood and how it could be exploited, or that it has none."},
+		Issue:       "The report says whether the issue has a real security side, with impact, likelihood and how it could be exploited, or that it has none.",
+		RunDefaults: ReviewRunDefaults()},
 	{Key: "test_engineer", Name: "Code Review - Testing", Description: "Makes sure a change works and keeps working: builds it, runs the tests, proposes missing ones.",
 		Instruction: prHead + `Make sure this change works and keeps working.
 Work out how the project is built and tested, what the existing tests cover and what they miss,
@@ -167,5 +171,6 @@ Propose the missing tests concretely.`,
 		Goal: "The report says exactly what was built and run and what passed or failed, and proposes the missing tests concretely.",
 		IssueInstruction: issueHead + `Work out how to reproduce this issue. When you have a machine, build the project and try, and report exactly what you ran and what happened.
 Propose a test that would catch it.`,
-		Issue: "The report says whether the issue reproduces, with exactly what was run and what happened, and proposes a test that would catch it."},
-}, append(ReviewPresets, PreTestPreset, ConsequencesPreset, EditorPreset, SubtractionPreset)...)
+		Issue:       "The report says whether the issue reproduces, with exactly what was run and what happened, and proposes a test that would catch it.",
+		RunDefaults: ReviewRunDefaults()},
+}, append(ReviewPresets, PreTestPreset, ConsequencesPreset, EditorPreset, SubtractionPreset, LensTeamPreset)...)

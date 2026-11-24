@@ -14,7 +14,7 @@
       </select></label>
     <label>Preset
       <select name="persona" data-preset>
-        {{range .PresetGroups}}<optgroup label="{{.Label}}">{{range .Options}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}" data-summary="{{.Summary}}" data-closing="{{.Closing}}" data-additional="{{.Additional}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</optgroup>{{end}}
+        {{range .PresetGroups}}<optgroup label="{{.Label}}">{{range .Options}}<option value="{{.Key}}" data-instruction="{{.Instruction}}" data-goal="{{.Goal}}" data-summary="{{.Summary}}" data-closing="{{.Closing}}" data-additional="{{.Additional}}" data-run-defaults="{{.RunDefaults}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}</optgroup>{{end}}
         <option value="custom"{{if eq .S.Persona "custom"}} selected{{end}}>Custom</option>
       </select></label>
   </div>

@@ -29,6 +29,14 @@
     </select></label>
   <label><span class="lbl">Additional instructions to start with <span class="info" tabindex="0" data-tip="Filled into a block's Additional instructions when the block chooses this preset and that box is empty.">ⓘ</span></span>
     <textarea name="additional" rows="3" class="code" spellcheck="false"{{if not .CanChange}} readonly{{end}}>{{.F.Additional}}</textarea></label>
+  <h2>Starting settings for blocks <span class="info" tabindex="0" data-tip="Filled into a block's settings when the block chooses this preset. The block can change them afterwards; blocks already on the preset are not changed.">ⓘ</span></h2>
+  <div class="row">
+    <label>Turn limit <input type="number" name="rd_max_turns" min="1" max="500" value="{{with .RD.MaxTurns}}{{.}}{{end}}"{{if not .CanChange}} readonly{{end}}></label>
+    <label>Time limit (minutes) <input type="number" name="rd_max_minutes" min="1" max="240" value="{{with .RD.MaxMinutes}}{{.}}{{end}}"{{if not .CanChange}} readonly{{end}}></label>
+    <label>Warn before the time limit (%) <input type="number" name="rd_time_warn_percent" min="0" max="50" value="{{if .RD.TimeWarnPercent}}{{.RD.TimeWarnPercent}}{{end}}"{{if not .CanChange}} readonly{{end}}></label>
+    <label>Max sub-agents at a time <input type="number" name="rd_sub_agents" min="0" max="16" value="{{if .RD.SubAgents}}{{.RD.SubAgents}}{{end}}"{{if not .CanChange}} readonly{{end}}></label>
+    <label>Sub-agents per run (0: no limit) <input type="number" name="rd_sub_agents_per_run" min="0" max="500" value="{{if .RD.SubAgentsPerRun}}{{.RD.SubAgentsPerRun}}{{end}}"{{if not .CanChange}} readonly{{end}}></label>
+  </div>
   <label class="check"><input type="checkbox" name="citation_marks" value="1"{{if not .F.NoCitationMarks}} checked{{end}}{{if not .CanChange}} disabled{{end}}> Mark files cited but not opened <span class="info" tabindex="0" data-tip="Adds “(not opened)” after a file the agent cites but never read. Untick for presets that rewrite text rather than research code.">ⓘ</span></label>
   {{if .CanChange}}<div class="row"><button>Save</button>{{if .P}}<a class="button secondary" href="/presets/{{.P.ID}}/remove">Remove</a>{{end}}</div>{{end}}
 </form>

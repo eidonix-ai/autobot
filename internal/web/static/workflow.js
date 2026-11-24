@@ -470,6 +470,18 @@
     var now = custom ? '' : opt.dataset.additional || '';
     if (!custom && (extra.value.trim() === '' || extra.value === was)) { extra.value = now; }
     sel.dataset.prevAdditional = now;
+    // Its starting run settings fill the inputs it has a value for, only when the person chooses it.
+    var rd = {};
+    try { rd = custom || !opt.dataset.runDefaults ? {} : JSON.parse(opt.dataset.runDefaults); } catch (err) { rd = {}; }
+    ['max_turns', 'max_minutes', 'time_warn_percent', 'sub_agents'].forEach(function (name) {
+      if (typeof rd[name] === 'number') { form.elements[name].value = rd[name]; }
+    });
+    if (typeof rd.sub_agents_per_run === 'number') {
+      var lim = form.elements['limit_sub_agents'];
+      lim.checked = rd.sub_agents_per_run > 0;
+      if (lim.checked) { form.elements['sub_agents_per_run'].value = rd.sub_agents_per_run; }
+      form.querySelectorAll('[data-when-limit]').forEach(function (el) { el.hidden = !lim.checked; });
+    }
     form.querySelectorAll('[data-when-report]').forEach(function (el) { el.hidden = step.value !== 'report'; });
   });
   modal.addEventListener('submit', function (e) {

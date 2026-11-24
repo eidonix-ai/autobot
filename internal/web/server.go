@@ -28,6 +28,7 @@ import (
 	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/repo"
 	"github.com/eidonix-ai/autobot/internal/store"
+	"github.com/eidonix-ai/autobot/internal/workflow"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
@@ -157,6 +158,12 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		return nil, err
 	}
 	if err := st.SeedPresetsV2(presetRenames(), reviewRows()); err != nil { // the code review presets, once, for a database seeded before them
+		return nil, err
+	}
+	if err := st.SeedPresetsV8(lensTeamRows()); err != nil { // the Code Review - Lens Team preset, once
+		return nil, err
+	}
+	if err := st.SetRunDefaultsOnce("presets_v8_run_defaults", reviewRunDefaultKeys, workflow.ReviewRunDefaults().JSON()); err != nil { // starting run settings of the review presets, once
 		return nil, err
 	}
 	s.routes()

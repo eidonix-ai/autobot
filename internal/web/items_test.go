@@ -80,8 +80,8 @@ func TestItemsPageRows(t *testing.T) {
 	if !strings.Contains(body, ` ET">1 hour ago`) {
 		t.Errorf("the activity time is not shown in Eastern time on hover:\n%s", body)
 	}
-	if !(pos(body, "#1<") > 0 && pos(body, "#1<") < pos(body, "#3<") && pos(body, "#3<") < pos(body, "#2<")) {
-		t.Errorf("open items are not by recent activity: %d %d %d", pos(body, "#1<"), pos(body, "#3<"), pos(body, "#2<"))
+	if !(pos(body, "#3<") > 0 && pos(body, "#3<") < pos(body, "#2<") && pos(body, "#2<") < pos(body, "#1<")) {
+		t.Errorf("open items are not by number, newest first: %d %d %d", pos(body, "#3<"), pos(body, "#2<"), pos(body, "#1<"))
 	}
 	for _, not := range []string{"#4<", "#5<", "#10<", "Uploads hang"} {
 		if strings.Contains(body, not) {
@@ -243,7 +243,7 @@ func TestItemsRunForm(t *testing.T) {
 	b := e.signIn("derek")
 	_, body := b.get("/w/o/r/items/pr")
 	for _, want := range []string{`action="/w/o/r/items/pr/run"`, `<option value="ev">PR First Ready</option>`, `<option value="ev2">Draft check</option>`,
-		`name="dry_run" checked`, `name="item" value="1"`} {
+		`name="dry_run">`, `name="item" value="1"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page lacks %q:\n%s", want, body)
 		}

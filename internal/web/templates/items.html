@@ -25,7 +25,7 @@
   <td class="nowrap"><a href="{{.URL}}">#{{.Number}}</a></td>
   <td class="title">{{.Title}}</td>
   <td>{{.Author}}</td>
-  <td class="muted">{{.LabelText}}</td>
+  <td class="muted labels" title="{{.LabelText}}">{{.LabelText}}</td>
   <td class="nowrap">{{.Status}}</td>
   <td class="muted nowrap"><span title="{{ts .Updated}}">{{.Ago}}</span></td>
   <td class="nowrap">{{if .CaseURL}}<a href="{{.CaseURL}}">Case</a>{{end}}</td>
@@ -35,7 +35,7 @@
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <input type="hidden" name="item" value="{{.Number}}">
       <select name="block" aria-label="Event block">{{range $.Blocks}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
-      <label class="check"><input type="checkbox" name="dry_run" checked> Dry run</label>
+      <label class="check"><input type="checkbox" name="dry_run"> Dry run</label>
       <button>Run</button>
     </form></details>{{else}}<span class="muted">No workflow</span>{{end}}</td>
 </tr>{{else}}<tr><td colspan="9" class="muted">{{if .Copying}}Nothing copied yet.{{else}}Nothing matches.{{end}}</td></tr>{{end}}

@@ -72,7 +72,7 @@ func (x *ItemIndex) Page(q ItemPage) (rows []ItemRow, more bool, err error) {
 	}
 	res, err := x.s.db.Query(`SELECT i.number, i.kind, i.title, i.state, i.merged, i.draft, i.author, i.updated_at, i.slim, `+hasCase+`
 		FROM items i WHERE i.workspace_id = ? AND i.kind = ?`+w.String()+
-		` ORDER BY (i.state = 'open') DESC, i.updated_at DESC, i.number DESC LIMIT ?`, append(args, q.Limit+1)...)
+		` ORDER BY (i.state = 'open') DESC, i.number DESC LIMIT ?`, append(args, q.Limit+1)...)
 	if err != nil {
 		return nil, false, err
 	}

@@ -46,6 +46,11 @@ func consequencesRows() []store.Preset {
 	return presetRows([]workflow.Persona{workflow.ConsequencesPreset})
 }
 
+// subtractionRows is the Code Review - Subtraction preset, as rows.
+func subtractionRows() []store.Preset {
+	return presetRows([]workflow.Persona{workflow.SubtractionPreset})
+}
+
 // editorRows is the Editor - Prose Cleanup preset, as rows.
 func editorRows() []store.Preset { return presetRows([]workflow.Persona{workflow.EditorPreset}) }
 

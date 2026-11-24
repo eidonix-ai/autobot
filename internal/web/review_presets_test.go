@@ -203,7 +203,7 @@ func TestReviewSeedOnAFreshDatabase(t *testing.T) {
 		"code_quality": "Code Review - Quality", "security": "Code Review - Security", "test_engineer": "Code Review - Testing",
 		"review_all": "Code Review - All Lenses", "review_correctness": "Code Review - Correctness", "review_architecture": "Code Review - Architecture",
 		"review_conventions": "Code Review - Conventions", "review_simplicity": "Code Review - Simplicity", "review_prose": "Code Review - Prose",
-		"review_pretest": "Code Review - Pre-Test Report", "review_consequences": "Code Review - Unintended Consequences", "editor_prose": "Editor - Prose Cleanup"}
+		"review_pretest": "Code Review - Pre-Test Report", "review_consequences": "Code Review - Unintended Consequences", "editor_prose": "Editor - Prose Cleanup", "review_subtraction": "Code Review - Subtraction"}
 	if len(got) != len(want) {
 		t.Errorf("presets: %v", got)
 	}

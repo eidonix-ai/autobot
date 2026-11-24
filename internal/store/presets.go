@@ -313,6 +313,11 @@ func (s *Store) SeedPresetsV6(adds []Preset) error {
 	return s.seedPresetsOnce("presets_v6_editor", nil, adds)
 }
 
+// SeedPresetsV7 adds the Code Review - Subtraction preset, once, on a database seeded before it.
+func (s *Store) SeedPresetsV7(adds []Preset) error {
+	return s.seedPresetsOnce("presets_v7_subtraction", nil, adds)
+}
+
 // seedPresetsOnce renames untouched seeded presets and adds missing ones, once per marker.
 func (s *Store) seedPresetsOnce(marker string, renames []PresetRename, adds []Preset) error {
 	tx, err := s.db.Begin()

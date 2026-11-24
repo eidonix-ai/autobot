@@ -394,6 +394,10 @@ git only through its environment, never a command line or the mirror's config.
    one bare, several under their names), the steps linked in (through Node blocks too) that did not, each as
    "## Name (failed: the start of its error)", "(skipped)" or "(took its “x” output)"; the Tags list shows
    `{input}` again.
+   Code Review - Subtraction (Derek, 2026-11-24, key `review_subtraction`, internal/workflow/subtraction_preset.go, seeded once by
+   `SeedPresetsV7`): a pre-merge reviewer of subtraction only (whether the change is needed, what already exists, what nothing
+   needs, what it leaves dead elsewhere, what can be said in fewer lines), each finding with what goes, its smaller replacement
+   and the lines saved, never proposing an addition; its summary counts the change's lines and what could go.
    Code review presets (Derek, 2026-11-23): six shared presets, Code Review - All Lenses (the first
    reviewer, five lenses, findings grouped by lens) and one per lens (Correctness, Architecture,
    Conventions, Simplicity, Prose), in internal/workflow/review_presets.go. Each has the packet in its pull

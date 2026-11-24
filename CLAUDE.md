@@ -111,7 +111,28 @@ git only through its environment, never a command line or the mirror's config.
    chain with it (the case's value from that step's latest run on the item, empty if it never ran; the
    Tags list shows them apart); a step of a chain it is in that is not upstream is refused, naming the
    step; the layout saves anyway when links change, and marks a block whose references are no longer
-   allowed. A step's tags are available to every step after it in the same run, across merges and down
+   allowed. A reference block (an Agent block that continues another: "New reference") is the same agent
+   continuing the same thread, so it has no name or tag of its own (Derek, 2026-11-23): it shows as
+   "<source name> (continued)" (on its card and, read-only, in its dialog, which says "continues
+   <source>"; renaming the source renames it), is left out of name uniqueness and takes no default "Agent
+   N", and when it runs it writes its source's tag and parts (`{explore}`, `{explore.summary}`…),
+   replacing the earlier ones, so `{explore}` is always that agent's latest report on the item. Blocks
+   after the reference read this run's value; the source's chain is as before; the Tags list never shows
+   the tag twice (an upstream tag is not repeated under other events, nor a block's own) nor the
+   reference apart. A reference saved before, with a name of its own ("Discovery 2"), is migrated once at
+   start and on load as a new version: its name and saved tag are cleared, every `{discovery_2…}`,
+   `[[discovery_2…]]` and Condition tag in the workflow is rewritten to the source's, and the values kept
+   under the old tag move to the source's, where a value the source's tag already has stays. Setting a
+   block to continue another does the same; setting a reference to continue nothing gives it a name
+   again. Every block's templates are checked when its dialog is saved (refused) and, flagged and never
+   refused, when the canvas loads and on every save of the layout (so text saved before a rule is
+   caught): the card gets a red border and "⚠" with the reason, and the bar names the block, the tag and
+   the reason, as "GitHub Comment: [[value.report]]: no block is called Value" (no block of that name; "no
+   such tag" for a built-in looking name), "{decision} comes from Decision, which does not run before this
+   block", or "{decision.output}: a Decision's parts are confidence and reason". A Markdown link wrapped
+   around a `[[ ]]` (`[Label]([[x]])`) is refused, and flagged: "[[x]] already makes a link: write
+   [[x|Label]] instead". `{pr:link}` and `{issue:link}` are the item's URL, the same as `{pr}` and
+   `{issue}` (built in, Auto, listed under them). A step's tags are available to every step after it in the same run, across merges and down
    a Decision's branch (each step's finished tags are copied into the steps it starts). The tag's parts: `{gather}` is the whole (an Agent's "## Summary", "## Report"
    and, when it has notes, "## Notes"), `{gather.summary}`, `{gather.report}` and `{gather.scratchpad}`
    (the thread's notes in full, high importance first, then medium, then low, each "#N [importance] Title"

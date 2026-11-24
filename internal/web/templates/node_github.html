@@ -8,7 +8,6 @@
   <label>Comment <textarea name="message" rows="6" class="code" spellcheck="false" required>{{.S.Message}}</textarea></label>
   {{template "tags" .}}
   <label class="check"><input type="checkbox" name="trial"{{if .S.Trial}} checked{{end}}> Trial run <span class="info" tabindex="0" data-tip="Writes the comment it would post into the case file, and posts nothing on GitHub.">ⓘ</span></label>
-  <label class="check"><input type="checkbox" name="keep_one"{{if .S.KeepOne}} checked{{end}}> Keep one comment <span class="info" tabindex="0" data-tip="A later run on the same pull request or issue edits this block's earlier comment instead of adding another.">ⓘ</span></label>
   <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
 </form>
 {{end}}

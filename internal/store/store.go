@@ -419,8 +419,8 @@ CREATE TABLE settings (
 );
 `
 
-// The comment a GitHub Comment node posted on a case's item, so a later run edits it instead of
-// adding another; and the forum post of a case on Discord, with its first message (the summary).
+// The comment a GitHub Comment node posted on a case's item (the table is no longer used: a block
+// always adds a comment); and the forum post of a case on Discord, with its first message (the summary).
 const schemaV17 = `
 CREATE TABLE github_comments (
 	case_uuid  TEXT    NOT NULL REFERENCES cases(uuid) ON DELETE CASCADE,

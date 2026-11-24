@@ -713,8 +713,6 @@ func stepSummary(n Node, kind string, models func(ModelRef) string) string {
 			return ""
 		case s.Trial:
 			return "Trial: writes what it would post"
-		case s.KeepOne:
-			return "Posts, keeping one comment"
 		}
 		return "Posts a comment"
 	case DiscordPost:

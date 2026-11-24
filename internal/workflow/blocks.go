@@ -21,12 +21,11 @@ const (
 type GitHubCommentSettings struct {
 	Message string `json:"message"`  // a template
 	Trial   bool   `json:"trial"`    // write what would be posted to the case file; post nothing
-	KeepOne bool   `json:"keep_one"` // a later run edits this node's earlier comment instead of adding another
 }
 
 // DefaultGitHubComment is a new GitHub Comment node's settings: a trial, until someone decides.
 func DefaultGitHubComment() GitHubCommentSettings {
-	return GitHubCommentSettings{Message: "{input.report}", Trial: true, KeepOne: true}
+	return GitHubCommentSettings{Message: "{input.report}", Trial: true}
 }
 
 // Check confirms a GitHub Comment node's settings are complete.
@@ -42,7 +41,7 @@ func (s GitHubCommentSettings) Check() error {
 
 // GitHubCommentFromForm reads a GitHub Comment node's settings from its form.
 func GitHubCommentFromForm(get func(string) string) GitHubCommentSettings {
-	return GitHubCommentSettings{Message: strings.TrimSpace(get("message")), Trial: get("trial") == "on", KeepOne: get("keep_one") == "on"}
+	return GitHubCommentSettings{Message: strings.TrimSpace(get("message")), Trial: get("trial") == "on"}
 }
 
 // ConditionSettings are a Condition node's settings: rules about the item, each on or off, and

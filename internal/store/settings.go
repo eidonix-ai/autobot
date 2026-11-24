@@ -61,21 +61,6 @@ func (s *Store) TrustedHosts() ([]string, error) {
 	return out, nil
 }
 
-// GitHubComment returns the comment a node posted on a case's item, or 0.
-func (s *Store) GitHubComment(caseUUID, node string) (int64, string) {
-	var id int64
-	var url string
-	s.db.QueryRow(`SELECT comment_id, url FROM github_comments WHERE case_uuid = ? AND node_id = ?`, caseUUID, node).Scan(&id, &url)
-	return id, url
-}
-
-// SetGitHubComment records the comment a node posted on a case's item.
-func (s *Store) SetGitHubComment(caseUUID, node string, id int64, url string) error {
-	_, err := s.db.Exec(`INSERT INTO github_comments (case_uuid, node_id, comment_id, url) VALUES (?, ?, ?, ?)
-		ON CONFLICT (case_uuid, node_id) DO UPDATE SET comment_id = excluded.comment_id, url = excluded.url`, caseUUID, node, id, url)
-	return err
-}
-
 // DiscordPost returns a case's forum post and its summary message, or "" when it has none.
 func (s *Store) DiscordPost(caseUUID string) (thread, summary string) {
 	s.db.QueryRow(`SELECT thread_id, summary_id FROM discord_posts WHERE case_uuid = ?`, caseUUID).Scan(&thread, &summary)

@@ -638,11 +638,3 @@ func (c *Client) Comment(ctx context.Context, token, name string, number int, bo
 	return out.ID, out.HTMLURL, err
 }
 
-// EditComment replaces one of the identity's comments; ErrNoRepo when it is gone.
-func (c *Client) EditComment(ctx context.Context, token, name string, id int64, body string) (string, error) {
-	var out struct {
-		HTMLURL string `json:"html_url"`
-	}
-	err := c.send(ctx, http.MethodPatch, token, fmt.Sprintf("/repos/%s/issues/comments/%d", name, id), map[string]string{"body": body}, &out)
-	return out.HTMLURL, err
-}

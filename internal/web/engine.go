@@ -656,7 +656,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source) stepOu
 }
 
 // commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
-// file. Keeping one comment, a later run edits the node's earlier comment.
+// file. Every run adds a comment; none is ever edited.
 func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, c workflow.GitHubCommentSettings, text string) stepOutcome {
 	if text == "" {
 		return stepOutcome{err: errors.New("the comment came out empty")}
@@ -677,31 +677,9 @@ func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node,
 	if token == "" {
 		return stepOutcome{err: errors.New("posting needs the workspace's GitHub identity: set it in the workspace's Settings")}
 	}
-	cs, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number)
-	if errors.Is(err, store.ErrNotFound) {
-		cs, err = s.caseForRun(rs)
-	}
+	_, url, err := s.gh.Comment(ctx, token, rs.ws.Name, rs.it.number, text)
 	if err != nil {
 		return stepOutcome{err: err}
-	}
-	if c.KeepOne {
-		if id, _ := s.st.GitHubComment(cs.UUID, n.ID); id != 0 {
-			url, err := s.gh.EditComment(ctx, token, rs.ws.Name, id, text)
-			if err == nil {
-				s.st.SetGitHubComment(cs.UUID, n.ID, id, url)
-				return stepOutcome{port: "out", output: text, note: "edited " + url}
-			}
-			if !errors.Is(err, github.ErrNoRepo) { // deleted on GitHub: post a new one
-				return stepOutcome{err: fmt.Errorf("editing the earlier comment: %v", err)}
-			}
-		}
-	}
-	id, url, err := s.gh.Comment(ctx, token, rs.ws.Name, rs.it.number, text)
-	if err != nil {
-		return stepOutcome{err: err}
-	}
-	if err := s.st.SetGitHubComment(cs.UUID, n.ID, id, url); err != nil {
-		log.Printf("workflow run %d: %v", rs.run.ID, err)
 	}
 	return stepOutcome{port: "out", output: text, note: "posted " + url}
 }

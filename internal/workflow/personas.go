@@ -1,5 +1,7 @@
 package workflow
 
+import "strings"
+
 // Persona is a preset for an agent: its Instruction and its Done when, one version for pull
 // requests and one for issues. Nothing of it is hidden: the agent block shows the preset's text,
 // read-only, and the person adds their own Additional instructions (Derek, 2026-11-23). An agent
@@ -30,39 +32,57 @@ func (p Persona) GoalFor(kind string) string {
 const prHead = "Pull request: {pr}\nTitle: {pr:title}\n\n{pr:body}\n\n"
 const issueHead = "Issue: {issue}\nTitle: {issue:title}\n\n{issue:body}\n\n"
 
+// Gather Information's heads carry the orientation packet (see internal/web/packet.go); no other preset does.
+const gatherPRHead = "Pull request: {pr}\nTitle: {pr:title}\n\n{pr:body}\n\n{pr:packet}\n\n"
+const gatherIssueHead = "Issue: {issue}\nTitle: {issue:title}\n\n{issue:body}\n\n{issue:packet}\n\n"
+
+// gatherRecord is the paragraphs on recording to the scratchpad; an issue's says "issue" where a pull request's says "change".
+const gatherRecord = `Record as you go. Every detail that could matter to someone deciding about this change goes into your scratchpad as its own entry, the moment you find it, with its link or citation. Start each title with its angle ("Related work: #477 overlaps the same files", "People: author's earlier compression series"). Lean towards recording: a detail you leave out cannot reach the report. When a fact connects to another (a commit to a pull request, an issue to a person, a claim to its evidence), say so in the entry, and record the connection itself as an entry when it matters.
+
+Importance is how soon a reader should see it: high for what a reader could not learn from the description (undeclared changes, reversed or overlapping work, claims without evidence, tensions with the charter); medium for relevant context; low for small details that are still relevant.`
+
+var issueRecord = strings.NewReplacer("this change", "this issue", "(undeclared changes, reversed or overlapping work, claims without evidence",
+	"(reversed or overlapping work, fixes that already exist, claims without evidence").Replace(gatherRecord)
+
 // Personas are the built-in presets, in the order the settings list them.
 var Personas = []Persona{
 	{Key: "gather_information", Label: "Gather Information",
-		Instruction: prHead + `You are reading this pull request for the first time, to gather the facts that will start its case file.
-Do not judge whether it is good, correct or worth merging: that comes later, from others. Find out, in
-detail:
-- What it changes and what it says it does, file by file, in plain terms.
-- The problem it addresses: linked issues and reports, and the evidence it presents (logs, benchmarks,
-  test results), with what that evidence shows and what it does not.
-- Other pull requests and issues, open or closed, that address the same thing, and how they relate.
-- Whether the codebase already handles this, fully or in part, and where.
-- The code the change touches, what it depends on, and what calls it.
-- Relevant discussion on the pull request, and the author's related earlier work.
-Keep what you verified apart from what is claimed.
+		Instruction: gatherPRHead + `You are preparing the case file for this pull request: everything relevant to it, gathered, linked and cross-referenced, for the people and agents who will decide about it later. Do not judge whether it is good or should be merged. Find out, and connect.
 
-End with a report that summarizes all relevant findings, each with its citations: file names and
-lines, pull request and issue numbers, links. Close it with the open questions and what you could not
-find.`,
-		Goal: "Every point above has been looked into, and the report summarizes all relevant findings with their citations, then the open questions and what could not be found.",
-		IssueInstruction: issueHead + `You are reading this issue for the first time, to gather the facts that will start its case file.
-Do not judge it or propose a fix: that comes later, from others. Find out, in detail:
-- What is reported or asked for, in plain terms, and how to reproduce it if it says.
-- The evidence it presents (logs, versions, steps, measurements), with what that shows and what it does not.
-- Other issues and pull requests, open or closed, about the same thing, and how they relate.
-- Whether the codebase already handles this, fully or in part, and where.
-- The code involved, what it depends on, and what calls it.
-- Relevant discussion on the issue.
-Keep what you verified apart from what is claimed.
+Start from the orientation packet above: it is a map of where to look, not the answer. Cover each of these angles, as wide as it needs to be:
+- The change: what it does, in plain terms, and how big it is; anything it does that its description does not say, and anything the description says that the change does not do.
+- The why: the problem it addresses, linked issues and reports, and how long and how widely it has been wanted.
+- Related work: other pull requests and issues, open or closed, on the same topic or the same code: competing, overlapping, stacked, superseded, or undone by this one.
+- Recent activity: what has changed lately in the areas it touches, by whom and why, and whether this change builds on that work, conflicts with it or reverses it.
+- People: the author's history and standing in the project and what they have been working on; who usually works in these areas; who has engaged so far.
+- Community: comments, reviews and reactions, and how much interest the change has drawn.
+- Project fit: what the project charter, roadmap and documentation say about this area, as facts, both where it lines up and where it does not.
+- Claims and evidence: what it claims (performance, fixes, test results) and what backs each claim, and what does not.
+- Reach: who and what it affects: users, operators, configuration and defaults, compatibility, dependencies, deployment, documentation.
+- Process: draft or ready, CI results, review state, age.
 
-End with a report that summarizes all relevant findings, each with its citations: file names and
-lines, issue and pull request numbers, links. Close it with the open questions and what you could not
-find.`,
-		Issue:   "Every point above has been looked into, and the report summarizes all relevant findings with their citations, then the open questions and what could not be found.",
+` + gatherRecord + `
+
+Read the code as much as you need to understand what it does and what it touches, but this is not a code review: keep implementation detail to what explains the change. Keep what you verified apart from what is claimed, and give every fact its link or citation.`,
+		Goal: "Every angle has been looked into and has entries in the scratchpad, and every lead in the orientation packet has been followed or noted as not relevant.",
+		IssueInstruction: gatherIssueHead + `You are preparing the case file for this issue: everything relevant to it, gathered, linked and cross-referenced, for the people and agents who will decide about it later. Do not judge it or propose a fix. Find out, and connect.
+
+Start from the orientation packet above: it is a map of where to look, not the answer. Cover each of these angles, as wide as it needs to be:
+- The report: what is reported or asked for, plainly, and how to reproduce it if it says.
+- The why and impact: who is affected and how.
+- Related work: issues and pull requests on the same thing, including fixes in progress or done.
+- Recent activity: what has changed lately in the code it concerns, by whom and why.
+- People: the reporter, and who works in the area.
+- Community: comments, reactions, duplicates and how much interest the issue has drawn.
+- Project fit: what the project charter, roadmap and documentation say about this area, as facts, both where it lines up and where it does not.
+- Claims and evidence: logs, versions, measurements, and what they show and what they do not.
+- Reach: who and what it affects: users, operators, configuration and defaults, compatibility, dependencies, deployment, documentation.
+- Process: labels, age, assignment.
+
+` + issueRecord + `
+
+Read the code as much as you need to understand what the issue concerns, but this is not a code review: keep implementation detail to what explains the issue. Keep what you verified apart from what is claimed, and give every fact its link or citation.`,
+		Issue:   "Every angle has been looked into and has entries in the scratchpad, and every lead in the orientation packet has been followed or noted as not relevant.",
 		Closing: ClosingReport},
 	{Key: "code_quality", Label: "Code Quality",
 		Instruction: prHead + `Review the change for correctness first, then for clarity and maintainability.

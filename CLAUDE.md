@@ -155,6 +155,35 @@ git only through its environment, never a command line or the mirror's config.
    thread. What the thread has seen of the item (head and time) moves only when a run came to a report.
    A thread or conversation with a run in progress is never dropped by retention, and nothing is written
    to a deleted thread.
+   Gather Information (Derek, 2026-11-23) builds a broad case file: everything relevant to the pull request
+   or issue, gathered, linked and cross-referenced, with no judgement. Its instruction is organized by
+   angles (change, why, related work, recent activity, people, community, project fit, claims and evidence,
+   reach, process; an issue's: the report, why and impact, and the same others), and tells the agent to record
+   every detail to the scratchpad as its own entry the moment it finds it, the title starting with its angle
+   ("Related work: #477 overlaps the same files"), with importance as how soon a reader should see it. Its Done
+   when asks for entries under every angle and every packet lead followed. The closing step then groups the
+   notes by angle prefix into one report section per angle (the writing prompt applies this only when the
+   instruction names angles; an angle with no notes says "Nothing found"), and the summary gives each angle a
+   line or two within about 300 words. The orientation packet (`{pr:packet}`, `{issue:packet}`: built-in, Auto,
+   computed by Autobot with no model in internal/web/packet*.go when a block's text uses the tag, so only
+   Gather Information's heads carry it) opens the first message after the head, under "## Orientation
+   packet (computed by Autobot: a map of where to look, not conclusions)", about 3,000 tokens, never over
+   12,000 characters (a section over 3,000 is cut with "…more"). Every line is a pointer. For a pull request:
+   its facts (state, draft, age, base, head, size, labels, reviews from the index, CI of the head from GitHub
+   with a 5 second limit); the changed files grouped by area (the first two segments of the folder) with
+   whether the description names each area, its folders or its files, whole words in any case; the last 8
+   default-branch commits in each of up to 8 areas within 60 days and the commits that landed since the
+   merge-base on the changed files (git log by path on the mirror, no blobs); possibly related items from
+   the index, found by explicit links, names (changed files' base names and the functions, types, flags and
+   metric-like names on the diff's added and removed lines, 30 terms, longest first, any term that finds 20
+   or more items dropped), the title's words, the author's open items, shared labels and pull requests
+   touching the same files, ranked by how many directions found each then recency, top 15; the author's
+   standing and last 180 days (counts, 10 most recent, areas of merged pull requests); the top 3 committers
+   per area over 180 days; the charter's lines that name an area or a title word (15 at most, with line
+   numbers). An issue's packet is the same without areas, activity and people, unless its text names
+   paths that exist on the default branch. A source that is missing (no code copy or index yet, GitHub
+   down) says "(not available: why)" in its section and never fails the run. A "Community (Discord)" section
+   is left for when the Discord gateway reads exist.
    Sub-agents: with "Max sub-agents at a time" above 0 the main agent has `spawn_agent` (title, task),
    which waits for the sub-agent and returns its report, its outcome, an index (no bodies) of its notes
    and the run's totals ("Sub-agents so far: 3 started, 112 turns used."); a call made while that many are

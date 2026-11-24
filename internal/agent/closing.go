@@ -25,7 +25,12 @@ const (
 		"that matter most, one line each with its citation, then the most important open questions; no inventory of files. " +
 		"The findings that matter most are what a reader could not learn from the description: what the change does that it does not " +
 		"say, where the description and the code disagree, behaviour it changes or breaks, and claims with no evidence behind them. " +
-		"Put those first, in the summary and in Key findings, before anything that only describes the change. The report is the full report."
+		"Put those first, in the summary and in Key findings, before anything that only describes the change. " +
+		"The report is organized by the angles the instruction names, if it names them: after Key findings, one section per angle, in the " +
+		"instruction's order. Group your notes by the angle at the start of their titles, and write \"Nothing found\" under an angle that has " +
+		"no notes rather than leaving it out. The summary then gives each angle one or two lines, with links, where there is something to say, " +
+		"after the opening line and the findings that matter most, and still stays within about 300 words. " +
+		"The report is the full report."
 
 	saveTurnTime = 3 * time.Minute // the save turn's own time, whatever the research had left
 

@@ -116,7 +116,7 @@ func TestBlockTests(t *testing.T) {
 	if !strings.Contains(all, "Title: Retry uploads") { // filled from the link, as a workflow run would
 		t.Fatal("the title was not read from the pull request's link")
 	}
-	if !strings.Contains(all, `retry()`) || !strings.Contains(all, "Done when:") || !strings.Contains(all, "to gather the facts that will start its case file") {
+	if !strings.Contains(all, `retry()`) || !strings.Contains(all, "Done when:") || !strings.Contains(all, "You are preparing the case file for this pull request") {
 		t.Fatal("the model did not get the diff, the goal or the persona")
 	}
 	// A run belongs to its workspace.

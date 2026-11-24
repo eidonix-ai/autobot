@@ -469,7 +469,7 @@ var commonTags = []Tag{
 	{"repo:opt_out", "the opt-out tag: what the item's author or a maintainer writes to stop Autobot (a workspace setting)", true},
 	{"charter", "the project charter (kept in Autobot)", true},
 	{"case", "the item's case file so far", true},
-	{"case:link", "the link to the case file, which anyone with it can read", true},
+	{"case:link", "the link to the case file as a page (a private repository's needs its secret)", true},
 }
 
 // inputTags are {input} and its parts: what the step before produced. Every step's output is kept

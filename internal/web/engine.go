@@ -355,28 +355,32 @@ func (s *Server) drive(rs *runState) {
 	for _, l := range rs.g.Links {
 		incoming[l.To] = append(incoming[l.To], l)
 	}
-	// firedFrom are the sources of a step: the finished steps whose links into it fired. A Node
-	// (Junction) only connects, so the step after it has the steps that fired into the Node as its
-	// sources, as if their links went to it directly; a step reached twice counts once.
-	var firedFrom func(id string) []source
-	firedFrom = func(id string) []source {
+	// inputsFrom are the sources of a step: the steps linked into it, each with whether its link fired
+	// (it finished, on the output the link leaves from) or is missing (failed, skipped, or went another
+	// way). A Node (Junction) only connects, so the step after it has the Node's own sources as its
+	// own, as if their links went to it directly; a step reached twice counts once, and as fired if
+	// any of its links fired.
+	var inputsFrom func(id string) []source
+	inputsFrom = func(id string) []source {
 		var out []source
 		add := func(s source) {
-			if !slices.ContainsFunc(out, func(o source) bool { return o.node.ID == s.node.ID }) {
-				out = append(out, s)
+			for i, o := range out {
+				if o.node.ID == s.node.ID {
+					out[i].missing = o.missing && s.missing
+					return
+				}
 			}
+			out = append(out, s)
 		}
 		for _, l := range incoming[id] {
 			src := steps[l.From]
-			switch {
-			case src.Status != "done" || src.Port != l.Out:
-			case nodes[l.From].Type == workflow.Junction:
-				for _, s := range firedFrom(l.From) {
+			if nodes[l.From].Type == workflow.Junction {
+				for _, s := range inputsFrom(l.From) {
 					add(s)
 				}
-			default:
-				add(source{nodes[l.From], src})
+				continue
 			}
+			add(source{node: nodes[l.From], step: src, missing: src.Status != "done" || src.Port != l.Out})
 		}
 		return out
 	}
@@ -436,7 +440,7 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
-				sources := firedFrom(n.ID) // copied here: the steps change while this one runs
+				sources := inputsFrom(n.ID) // copied here: the steps change while this one runs
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
 				// they came down its own branch or another, and the run goes on adding to the map.
 				tags := maps.Clone(rs.tags)
@@ -495,10 +499,26 @@ func (s *Server) drive(rs *runState) {
 	}
 }
 
-// source is a finished step a link fired from, as the step after it sees it.
+// source is a finished step linked into another, as the step after it sees it: one whose link fired,
+// or a missing one (it failed, was skipped, or went another way).
 type source struct {
-	node workflow.Node
-	step store.WorkflowStep
+	node    workflow.Node
+	step    store.WorkflowStep
+	missing bool
+}
+
+// why says why a missing source gave nothing.
+func (src source) why() string {
+	switch src.step.Status {
+	case "failed":
+		if msg := oneLineOf(src.step.Error, 120); msg != "" {
+			return "failed: " + msg
+		}
+		return "failed"
+	case "done":
+		return "took its “" + src.step.Port + "” output"
+	}
+	return src.step.Status // skipped
 }
 
 // outputParts are the suffixes of the values a step hands on, as keepTag stores an output tag's:
@@ -506,26 +526,48 @@ type source struct {
 var outputParts = []string{"", ".summary", ".report", ".scratchpad"}
 
 // inputValues are the values of {input} and its parts for a step, from the links that fired into
-// it: one step's as they are, several each under the name of the node it came from. A step that is
-// not an agent hands on its output, as both its summary and its report, and has no notes.
+// it: one step's as they are, several each under the name of the node it came from. Then come the
+// steps linked in whose links did not fire, each under its name with why ("## Correctness (failed:
+// the model could not be reached)", "(skipped)"), so that a step that reads a join knows a source is
+// missing. A step that is not an agent hands on its output, as both its summary and its report, and
+// has no notes.
 func (s *Server) inputValues(rs *runState, sources []source) map[string]string {
-	all := make([]map[string]string, len(sources))
-	for i, src := range sources {
+	var fired, missing []source
+	for _, src := range sources {
+		if src.missing {
+			missing = append(missing, src)
+		} else {
+			fired = append(fired, src)
+		}
+	}
+	all := make([]map[string]string, len(fired))
+	for i, src := range fired {
 		all[i] = s.stepParts(rs, src)
 	}
 	out := map[string]string{}
 	for _, suffix := range outputParts {
-		if len(sources) == 1 {
-			out["input"+suffix] = all[0][suffix]
-			continue
-		}
 		var parts []string
-		for i, src := range sources {
-			parts = append(parts, "## "+workflow.DisplayName(src.node)+"\n\n"+all[i][suffix])
+		switch {
+		case len(fired) == 1:
+			if text := all[0][suffix]; text != "" || len(missing) == 0 {
+				parts = append(parts, text)
+			}
+		default:
+			for i, src := range fired {
+				parts = append(parts, "## "+workflow.DisplayName(src.node)+"\n\n"+all[i][suffix])
+			}
+		}
+		for _, src := range missing {
+			parts = append(parts, "## "+workflow.DisplayName(src.node)+" ("+src.why()+")")
 		}
 		out["input"+suffix] = strings.Join(parts, "\n\n")
 	}
 	return out
+}
+
+// firedOnly are the sources whose links fired.
+func firedOnly(sources []source) []source {
+	return slices.DeleteFunc(slices.Clone(sources), func(src source) bool { return src.missing })
 }
 
 // stepParts are what a finished step hands on, by suffix. An agent's are rebuilt from its run, so
@@ -665,7 +707,7 @@ type stepOutcome struct {
 // that have finished) and the output of the steps linked into it.
 func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
 	if n.Type == workflow.Junction { // a Node does no work: its output is what came into it
-		return stepOutcome{port: "out", output: s.inputValues(rs, sources)["input"]}
+		return stepOutcome{port: "out", output: s.inputValues(rs, firedOnly(sources))["input"]}
 	}
 	values := map[string]string{}
 	for k, v := range tags {

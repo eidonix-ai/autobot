@@ -17,6 +17,18 @@
 {{end}}
 </section>
 
+{{if .Runs}}<section class="panel">
+<h2>Workflow runs</h2>
+<div class="scroll"><table class="list dense runs">
+<tbody>{{range .Runs}}<tr>
+  <td class="muted nowrap">{{ts .Started}}</td>
+  <td>{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
+  <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
+  <td><a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></td>
+</tr>{{end}}</tbody>
+</table></div>
+</section>{{end}}
+
 <section class="panel">
 <h2>For contributors' agents</h2>
 <p>This case file, as Markdown: <code>{{.API}}</code></p>

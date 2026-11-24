@@ -146,11 +146,16 @@ func (s *Store) WorkflowOfAgentRun(agentRun int64) (int64, bool) {
 
 // WorkflowRun returns one run, or ErrNotFound.
 func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
+	return scanWorkflowRun(s.db.QueryRow(workflowRunSelect+` WHERE w.id = ?`, id))
+}
+
+const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, ` + authorName + `,
+	w.started_at, w.finished_at, w.stopped_by, w.stopped_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by`
+
+func scanWorkflowRun(row scanner) (*WorkflowRun, error) {
 	var r WorkflowRun
 	var started, finished, stopped int64
-	err := s.db.QueryRow(`SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.dry_run, w.graph, w.status, w.note, `+authorName+`,
-		w.started_at, w.finished_at, w.stopped_by, w.stopped_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by WHERE w.id = ?`, id).
-		Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &started, &finished, &r.StoppedBy, &stopped)
+	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &started, &finished, &r.StoppedBy, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -165,6 +170,39 @@ func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
 		r.StoppedAt = time.Unix(stopped, 0)
 	}
 	return &r, nil
+}
+
+func (s *Store) queryWorkflowRuns(where string, args ...any) ([]WorkflowRun, error) {
+	rows, err := s.db.Query(workflowRunSelect+` WHERE `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkflowRun
+	for rows.Next() {
+		r, err := scanWorkflowRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
+// WorkflowRuns lists a workspace's workflow runs for the Runs page: every run still going, newest
+// first, then the most recent recent runs that have ended.
+func (s *Store) WorkflowRuns(workspaceID int64, recent int) ([]WorkflowRun, error) {
+	going, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status = 'running' ORDER BY w.id DESC`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	ended, err := s.queryWorkflowRuns(`w.workspace_id = ? AND w.status != 'running' ORDER BY w.id DESC LIMIT ?`, workspaceID, recent)
+	return append(going, ended...), err
+}
+
+// WorkflowRunsOfItem lists the runs of a workspace on one pull request or issue, newest first.
+func (s *Store) WorkflowRunsOfItem(workspaceID int64, item, limit int) ([]WorkflowRun, error) {
+	return s.queryWorkflowRuns(`w.workspace_id = ? AND w.item = ? ORDER BY w.id DESC LIMIT ?`, workspaceID, item, limit)
 }
 
 // WorkflowSteps returns a run's steps by node id.

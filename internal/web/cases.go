@@ -272,7 +272,16 @@ func (s *Server) showCase(w http.ResponseWriter, r *http.Request, ws *store.Work
 	for i, x := range contributions {
 		newest[len(contributions)-1-i] = x
 	}
-	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Newest": newest,
+	var runs []runRow
+	if c.DryRunOf == 0 { // the runs on the item; a dry run's case belongs to one run
+		list, err := s.st.WorkflowRunsOfItem(ws.ID, c.Number, 20)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		runs = s.runRows(ws, list)
+	}
+	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Newest": newest, "Runs": runs,
 		"HTML": template.HTML(html.String()), "API": publicURL(r) + "/api/v1/cases/" + c.UUID, "Private": s.facts(r.Context(), ws).private}
 	if r.URL.Query().Has("saved") {
 		data["Notice"] = "Saved."

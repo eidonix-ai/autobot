@@ -189,6 +189,31 @@ func (s *Store) AgentRun(id int64) (*AgentRun, error) {
 	return &r, nil
 }
 
+// CanvasTests lists a workspace's most recent agent runs started from the canvas (a shift-click on an
+// Agent block), not as a step of a workflow run, newest first, without their reports.
+func (s *Store) CanvasTests(workspaceID int64, limit int) ([]AgentRun, error) {
+	rows, err := s.db.Query(`SELECT a.id, a.workspace_id, a.kind, a.node_id, a.node_name, a.item, a.model, a.status, `+authorName+`, a.started_at, a.finished_at
+		FROM agent_runs a LEFT JOIN users u ON u.id = a.started_by WHERE a.workspace_id = ? AND a.test = 1 ORDER BY a.id DESC LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AgentRun
+	for rows.Next() {
+		r := AgentRun{Test: true}
+		var started, finished int64
+		if err := rows.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.NodeID, &r.NodeName, &r.Item, &r.Model, &r.Status, &r.StartedBy, &started, &finished); err != nil {
+			return nil, err
+		}
+		r.StartedAt = time.Unix(started, 0)
+		if finished != 0 {
+			r.FinishedAt = time.Unix(finished, 0)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // StopOrphanRuns marks runs left running by an earlier Autobot process as failed: whatever ran
 // them is gone. A run that took notes in its thread since it started, and has no report of its own
 // kept there, gets the notes as its report (the high and medium ones in order), which is also kept in

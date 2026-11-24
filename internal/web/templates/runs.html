@@ -1,0 +1,36 @@
+{{define "head"}}{{if .Running}}<script src="/static/live.js"></script>{{end}}{{end}}
+{{define "content"}}
+<p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
+<h1>Runs</h1>
+<div class="scroll"><table class="list dense runs">
+<thead><tr><th>Item</th><th>Block</th><th>Status</th><th>Started</th><th>By</th><th>Took</th><th></th></tr></thead>
+<tbody id="runs-list" data-live data-live-list>
+{{range .Rows}}<tr>
+  <td><a href="{{.ItemURL}}">#{{.Item}}</a> <span class="muted">{{.Title}}</span></td>
+  <td>{{.Block}}{{if .Dry}} <span class="muted">dry run</span>{{end}}</td>
+  <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
+  <td class="muted nowrap">{{ts .Started}}</td>
+  <td>{{.By}}</td>
+  <td class="nowrap">{{.Took}}</td>
+  <td><a href="{{$.WS.Path}}/workflow-runs/{{.ID}}">Run</a></td>
+</tr>{{else}}<tr><td colspan="7" class="muted">No runs yet.</td></tr>{{end}}
+</tbody>
+</table></div>
+<p class="muted">Those in progress first, then the {{.Recent}} most recent.</p>
+
+<h2>Canvas tests</h2>
+<div class="scroll"><table class="list dense runs">
+<thead><tr><th>Block</th><th>Item</th><th>Model</th><th>Status</th><th>Started</th><th>By</th><th>Took</th></tr></thead>
+<tbody id="runs-tests" data-live data-live-list>
+{{range .Tests}}<tr>
+  <td><a href="{{$.WS.Path}}/agent-runs/{{.ID}}">{{.Block}}</a></td>
+  <td>{{if .Item}}#{{.Item}}{{else}}<span class="muted">none</span>{{end}}</td>
+  <td class="muted">{{.Model}}</td>
+  <td class="nowrap"><span class="dot {{.Dot}}"></span> {{.Status}}</td>
+  <td class="muted nowrap">{{ts .Started}}</td>
+  <td>{{.By}}</td>
+  <td class="nowrap">{{.Took}}</td>
+</tr>{{else}}<tr><td colspan="7" class="muted">No tests yet.</td></tr>{{end}}
+</tbody>
+</table></div>
+{{end}}

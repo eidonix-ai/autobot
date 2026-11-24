@@ -206,6 +206,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/cases/{number}", s.auth(s.caseSave))
 	// Read by contributors' agents: public repositories' cases by uuid; private ones with the secret.
 	s.mux.HandleFunc("GET /api/v1/cases/{uuid}", s.apiCase)
+	s.mux.HandleFunc("GET /p/{name}", s.publishedPage)
 
 	s.mux.Handle("GET /admin/users", s.admin(s.users))
 	s.mux.Handle("POST /discord/interactions/{owner}/{repo}", http.HandlerFunc(s.interaction))

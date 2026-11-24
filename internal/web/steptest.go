@@ -166,6 +166,8 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, values, data)
 		return
 	}
+	// A test publishes nothing: a [[tag]] shows its link's label and says so.
+	s.fillLinks(ws, itemNumber(values), s.nodeTemplates(n, kind), values, nil)
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize

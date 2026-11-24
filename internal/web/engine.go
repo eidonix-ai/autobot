@@ -538,6 +538,9 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	if c, err := s.st.CaseByNumber(rs.ws.ID, rs.it.number); err == nil {
 		maps.Copy(values, s.caseTags(kind, c)) // {case}, {case:link}, {pr:case_file}
 	}
+	// A [[tag]] in a template becomes a link to a page that keeps the tag's value as it is now; a dry
+	// run publishes nothing.
+	s.fillLinks(rs.ws, rs.it.number, s.nodeTemplates(n, kind), values, s.runPublisher(rs))
 	limit := 4 * time.Hour
 	if n.Type == workflow.Approval {
 		limit = 15 * 24 * time.Hour // a person may take up to two weeks

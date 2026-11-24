@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+
+	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
 func TestBrowserPresetsCreateCopyEditRemove(t *testing.T) {
@@ -58,8 +60,8 @@ func TestBrowserPresetsCreateCopyEditRemove(t *testing.T) {
 	}
 	var sharedRows int
 	chromedp.Run(ctx, chromedp.Evaluate(`document.querySelectorAll('section.panel')[0].querySelectorAll('tbody tr').length`, &sharedRows))
-	if sharedRows != 5 {
-		t.Fatalf("%d shared presets listed, want the 5 built-in ones", sharedRows)
+	if sharedRows != len(workflow.SeedPresets) {
+		t.Fatalf("%d shared presets listed, want the %d built-in ones", sharedRows, len(workflow.SeedPresets))
 	}
 
 	// Make one.

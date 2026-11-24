@@ -21,8 +21,11 @@ const (
 		"organized and detailed, the high-importance findings first, every claim with its citation (file and lines, pull request " +
 		"or issue numbers, links), then the open questions and what could not be found. Open the report with a short \"Key findings\" section. " +
 		"Read the index, then the entries you need; check a citation in the code when you are unsure. " +
-		"Call finish with two parts. The summary is at most about 300 words: the 5 to 8 findings that matter most, one line each with its " +
-		"citation, then the most important open questions; no inventory of files. The report is the full report."
+		"Call finish with two parts. The summary is at most about 300 words: one line on what the change is, then the 5 to 8 findings " +
+		"that matter most, one line each with its citation, then the most important open questions; no inventory of files. " +
+		"The findings that matter most are what a reader could not learn from the description: what the change does that it does not " +
+		"say, where the description and the code disagree, behaviour it changes or breaks, and claims with no evidence behind them. " +
+		"Put those first, in the summary and in Key findings, before anything that only describes the change. The report is the full report."
 
 	saveTurnTime = 3 * time.Minute // the save turn's own time, whatever the research had left
 

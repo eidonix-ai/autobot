@@ -8,7 +8,7 @@ import (
 
 func seeds() []Preset {
 	return []Preset{
-		{Key: "gather_information", Name: "Gather Information", Description: "Everything relevant", PRInstruction: "pr text", PRGoal: "pr goal",
+		{Key: "gather_information", Name: "Gather Information", Description: "Everything relevant", PRInstruction: "pr text", PRGoal: "pr goal", PRSummary: "pr summary format", IssueSummary: "issue summary format",
 			IssueInstruction: "issue text", IssueGoal: "issue goal", Closing: "report"},
 		{Key: "code_quality", Name: "Code Quality", PRInstruction: "q", PRGoal: "g", IssueInstruction: "qi", IssueGoal: "gi"},
 	}
@@ -26,7 +26,7 @@ func TestSeedPresetsOnce(t *testing.T) {
 		t.Fatalf("seeded: %+v", all)
 	}
 	g, err := st.PresetByKey("gather_information")
-	if err != nil || g.Name != "Gather Information" || g.Closing != "report" || g.PRInstruction != "pr text" || g.IssueGoal != "issue goal" || !g.Shared() || g.Owner != "" {
+	if err != nil || g.Name != "Gather Information" || g.Closing != "report" || g.PRInstruction != "pr text" || g.IssueGoal != "issue goal" || g.PRSummary != "pr summary format" || g.IssueSummary != "issue summary format" || !g.Shared() || g.Owner != "" {
 		t.Fatalf("by key: %+v %v", g, err)
 	}
 	if err := st.SeedPresets(seeds()); err != nil {
@@ -45,7 +45,8 @@ func TestSeedPresetsOnce(t *testing.T) {
 }
 
 func newPreset(name string, owner int64) Preset {
-	return Preset{Name: name, Description: "d", OwnerID: owner, PRInstruction: "pr {pr:title}", PRGoal: "pr done", IssueInstruction: "issue {issue:title}", IssueGoal: "issue done"}
+	return Preset{Name: name, Description: "d", OwnerID: owner, PRInstruction: "pr {pr:title}", PRGoal: "pr done", IssueInstruction: "issue {issue:title}", IssueGoal: "issue done",
+		PRSummary: "**V:** <pr>", IssueSummary: "**V:** <issue>"}
 }
 
 // A new preset gets a key from its name that nothing else has and that is never "custom"; the key,
@@ -70,12 +71,15 @@ func TestPresetCreateUpdateAndKeys(t *testing.T) {
 		t.Fatalf("a name with no letters: %q", k.Key)
 	}
 	edit := newPreset("Renamed", derek.ID) // trying to change the owner through an edit
-	edit.Closing = "report"
+	edit.Closing, edit.PRSummary, edit.IssueSummary = "report", "**New:** <pr>", ""
 	if err := st.UpdatePreset(a.ID, edit, erin); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := st.Preset(a.ID)
-	if got.Key != "my_review" || got.OwnerID != erin.ID || got.Name != "Renamed" || got.Closing != "report" {
+	if a.PRSummary != "**V:** <pr>" || a.IssueSummary != "**V:** <issue>" {
+		t.Fatalf("created without its summary formats: %+v", a)
+	}
+	if got.Key != "my_review" || got.OwnerID != erin.ID || got.Name != "Renamed" || got.Closing != "report" || got.PRSummary != "**New:** <pr>" || got.IssueSummary != "" {
 		t.Fatalf("updated: %+v", got)
 	}
 	if err := st.UpdatePreset(9999, edit, erin); !errors.Is(err, ErrNotFound) {

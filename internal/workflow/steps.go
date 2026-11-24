@@ -437,6 +437,7 @@ var prTags = []Tag{
 	{"pr:author", "its author", true},
 	{"pr:diff", "its diff", true},
 	{"pr:files", "the files it changes", true},
+	{"pr:packet", "its orientation packet: a map of where to look, computed by Autobot from its own copies (for Agent blocks)", true},
 	{"pr:case_file", "its case file so far", true},
 	{"pr:new_commits", "in a continued conversation: the commits pushed since its last turn, with their diff", true},
 	{"pr:new_comments", "in a continued conversation: the comments and reviews posted since its last turn", true},
@@ -448,6 +449,7 @@ var issueTags = []Tag{
 	{"issue:title", "its title", true},
 	{"issue:body", "its description", true},
 	{"issue:author", "its author", true},
+	{"issue:packet", "its orientation packet: a map of where to look, computed by Autobot from its own copies (for Agent blocks)", true},
 	{"issue:case_file", "its case file so far", true},
 }
 

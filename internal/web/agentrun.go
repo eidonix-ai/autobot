@@ -122,13 +122,13 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}
 	prTools := false
 	var pull *agent.PR
+	var info *github.PullRequest
+	var files []github.ChangedFile
 	var fresh string   // what is new since the thread's last run, for its opening message
 	seen := time.Now() // what the run reads of the item, it reads from here on
 	if m := prLinkRE.FindStringSubmatch(values["pr"]); m != nil && strings.EqualFold(m[1], ws.Name) {
 		num, _ := strconv.Atoi(m[2])
 		// Autobot's own copy first; GitHub only when it does not have the pull request.
-		var info *github.PullRequest
-		var files []github.ChangedFile
 		if it := s.localItem(ctx, ws, workflow.PR, num); it != nil {
 			info, files = it.pr, it.files
 		} else {
@@ -154,6 +154,11 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	instruction := a.EffectiveInstruction(kind)
 	if th != nil && !a.Continues() && strings.TrimSpace(a.FollowUp) != "" {
 		instruction = a.FollowUp
+	}
+	// The orientation packet is computed only for a block whose text asks for it.
+	if tag := workflow.ItemTag(kind) + ":packet"; slices.Contains(workflow.TemplateTags(instruction+"\n"+a.SystemPrompt+"\n"+a.EffectiveGoal(kind)), tag) {
+		values = maps.Clone(values)
+		values[tag] = s.orientation(ctx, ws, token, kind, item, values, info, files)
 	}
 	task := strings.TrimSpace(workflow.Render(instruction, values))
 	if extra := strings.TrimSpace(workflow.Render(a.SystemPrompt, values)); extra != "" {

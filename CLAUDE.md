@@ -78,7 +78,8 @@ git only through its environment, never a command line or the mirror's config.
    The same address ending in `.html` is the case file as a page to read (header: "Raw Markdown for
    agents: …"), with the same rule; `{case:link}` is that `.html` address, built from the site's public
    address (below), and `{case}` is the case file's text. Published pages (below) are served by the same
-   rule at `/p/<uuid>.html` and `.md`.
+   rule at `/p/<uuid>.html` and `.md`. The case file builds up by itself as workflows run: a finished
+   Agent or Decision step appends its result to it (piece 5).
 5. Workflows (in progress): a canvas per kind (pull requests, issues), polling only, no webhooks.
    Event blocks (PR First Ready, PR Draft, PR Activity, Issue Opened) with a summon phrase (per block;
    case-insensitive, ? and * wildcards) and the workspace's one opt-out tag (below); step blocks Agent
@@ -230,7 +231,7 @@ git only through its environment, never a command line or the mirror's config.
    instruction names angles; an angle with no notes says "Nothing found"), and the summary gives each angle a
    line or two within about 300 words. The orientation packet (`{pr:packet}`, `{issue:packet}`: built-in, Auto,
    computed by Autobot with no model in internal/web/packet*.go when a block's text uses the tag, so only
-   Gather Information's heads carry it) opens the first message after the head, under "## Orientation
+   Gather Information's and the code review presets' pull request heads carry it) opens the first message after the head, under "## Orientation
    packet (computed by Autobot: a map of where to look, not conclusions)", about 3,000 tokens, never over
    12,000 characters (a section over 3,000 is cut with "…more"). Every line is a pointer. For a pull request:
    its facts (state, draft, age, base, head, size, labels, reviews from the index, CI of the head from GitHub
@@ -314,6 +315,32 @@ git only through its environment, never a command line or the mirror's config.
    reached over its plain HTTP API (no gateway yet). In the block dialogs an (i) note opens inside the
    dialog, and a refused save names the block on the canvas bar until the dialog is closed.
    Right-clicking a link on the canvas offers Delete link.
+   Node (Derek, 2026-11-23; type `junction` in the code, since `Node` is the Go type of every block) is a
+   wire connector: one input and one output port, any number of links into and out of it, no settings but
+   its name, no tag, no work. It runs when every incoming link's step has finished and at least one fired
+   (else it is skipped), then finishes at once, so the blocks after it start together and in parallel. The
+   engine looks through it: the steps that fired into a Node are the sources of the steps after it, so
+   `{input}` and its parts there are exactly what they would be with the links joined directly, and the
+   tags of everything upstream of the Node are upstream of them too. Its card says "connects links".
+   Agent and Decision steps write their results into the case file by themselves (Derek, 2026-11-23): a box,
+   "Write to the case file", on by default (a block saved before it existed counts as on; the field stored
+   is the inverse, `no_case_entry`), in both dialogs. When such a step finishes in a real run (a dry run and
+   a canvas test write nothing; a failed or skipped step writes nothing) the engine appends a finalized
+   contribution under the step's shown name (a reference: "X (continued)"), through the same writeEntry as
+   Case Entry, so every run adds an entry and nothing is replaced. An Agent's is a heading, its summary (its
+   report when the summary is empty) and a line of links, `[[tag.report|Full report]]` and
+   `[[tag.scratchpad|Notes]]` (Notes only when it kept notes), published pages like any `[[ ]]`. A
+   Decision's is one line, "Name: choice (confidence): reason".
+   Code review presets (Derek, 2026-11-23): six shared presets, Code Review - All Lenses (the first
+   reviewer, five lenses, findings grouped by lens) and one per lens (Correctness, Architecture,
+   Conventions, Simplicity, Prose), in internal/workflow/review_presets.go. Each has the packet in its pull
+   request head, its lens text, a shared "How to review" paragraph, a Done when, the summary format (verdict,
+   blocking, should fix, nits, link) and the report as its closing step; their issue side only says they
+   are for pull requests. The three original presets that fit became Code Review - Quality, - Security and
+   - Testing (keys `code_quality`, `security`, `test_engineer` unchanged). A database seeded before them gets
+   the renames and the new presets once, from the second seed step (`presets_v2` in settings, store
+   `SeedPresetsV2`): a rename is made only where the preset still has its original name, a new preset only
+   where its key is free.
    The poller (internal/web/poller.go, internal/workflow/poll.go) starts runs for workflows
    switched Live on the canvas (off by default; switching on baselines what is already open).
    Next: questions in case posts (needs the gateway), sub-agents.

@@ -313,7 +313,7 @@ func (s *Server) drive(rs *runState) {
 	nodes := map[string]workflow.Node{}
 	incoming := map[string][]workflow.Link{}
 	for _, n := range rs.g.Nodes {
-		nodes[n.ID] = n
+		nodes[n.ID] = rs.g.Named(n)
 		if t, _ := workflow.TypeOf(n.Type); t.Event && steps[n.ID].Status == "pending" {
 			st := steps[n.ID]
 			st.Status, st.StartedAt, st.FinishedAt = "skipped", now, now
@@ -392,7 +392,7 @@ func (s *Server) drive(rs *runState) {
 					defer func() { results <- finished{n.ID, o} }()
 					defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
 					o = s.runStep(rs, n, sources, tags)
-				}(n, sources)
+				}(nodes[n.ID], sources) // the block as the canvas names it
 			}
 		}
 		if running == 0 {
@@ -910,7 +910,7 @@ func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	n := g.Nodes[i]
+	n := g.Named(g.Nodes[i])
 	num, _ := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(r.PostForm.Get("item")), "#"))
 	fail := func(msg string) {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, nil, map[string]any{"Error": msg, "Form": r.PostForm})
@@ -984,7 +984,7 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 	for _, n := range order {
 		st := steps[n.ID]
 		t, _ := workflow.TypeOf(n.Type)
-		v := stepView{Name: workflow.DisplayName(n), Label: t.Label, Status: st.Status, Port: st.Port, Output: st.Output, Error: st.Error, AgentRun: st.AgentRun}
+		v := stepView{Name: g.NameOf(n), Label: t.Label, Status: st.Status, Port: st.Port, Output: st.Output, Error: st.Error, AgentRun: st.AgentRun}
 		if !st.FinishedAt.IsZero() && !st.StartedAt.IsZero() && st.Status != "skipped" {
 			v.Took = st.FinishedAt.Sub(st.StartedAt).Round(time.Second).String()
 		}

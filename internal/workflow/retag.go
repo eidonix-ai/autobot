@@ -9,8 +9,12 @@ import (
 // A block's tag is its name in snake case, so renaming a block changes it. The references to the old
 // tag in the workflow's other blocks are rewritten to the new one in the same save.
 
-// TagRename says that what was kept under the tag Old is now kept under New.
-type TagRename struct{ Old, New string }
+// TagRename says that what was kept under the tag Old is now kept under New. With Keep, a value already
+// kept under New stays: the older one does not replace it (the migration of reference blocks).
+type TagRename struct {
+	Old, New string
+	Keep     bool
+}
 
 // RetagText rewrites the references to the tag old in a template to the tag new: {old}, {old.part},
 // [[old]], [[old.part]], [[old|Label]] and [[old.part|Label]]. {{old}} and [[[[ are text, not references.
@@ -133,7 +137,7 @@ func (g Graph) Rename(kind, except, old, new string) (Graph, []string) {
 		}
 		if r, ok := Retag(n, kind, old, new); ok {
 			out.Nodes[i] = r
-			changed = append(changed, DisplayName(n))
+			changed = append(changed, g.NameOf(n))
 		}
 	}
 	return out, changed
@@ -159,7 +163,7 @@ func (g Graph) MigrateNames(kind string) (Graph, []TagRename, bool) {
 	changed := false
 	taken := func(except, slug string) bool {
 		for _, o := range out.Nodes {
-			if o.ID != except && Slug(DisplayName(o)) == slug {
+			if o.ID != except && !IsReference(o) && Slug(DisplayName(o)) == slug {
 				return true
 			}
 		}
@@ -167,7 +171,7 @@ func (g Graph) MigrateNames(kind string) (Graph, []TagRename, bool) {
 	}
 	for i, n := range out.Nodes {
 		stored := StoredOutputTo(n)
-		if stored == "" || stored == Slug(DisplayName(n)) {
+		if IsReference(n) || stored == "" || stored == Slug(DisplayName(n)) {
 			continue
 		}
 		changed = true
@@ -176,7 +180,7 @@ func (g Graph) MigrateNames(kind string) (Graph, []TagRename, bool) {
 		} else {
 			// Another block has that name: this one keeps its own, and its references move to its tag.
 			tag := freeTag(kind, Slug(DisplayName(n)), map[string]bool{})
-			renames = append(renames, TagRename{stored, tag})
+			renames = append(renames, TagRename{Old: stored, New: tag})
 			out, _ = out.Rename(kind, n.ID, stored, tag)
 		}
 		out.Nodes[i], _ = WithOutputTo(out.Nodes[i], kind, Slug(DisplayName(out.Nodes[i])))
@@ -184,6 +188,9 @@ func (g Graph) MigrateNames(kind string) (Graph, []TagRename, bool) {
 	// Two blocks with one name (an older canvas allowed it): the later ones are numbered.
 	seen := map[string]bool{}
 	for i, n := range out.Nodes {
+		if IsReference(n) {
+			continue
+		}
 		slug := Slug(DisplayName(n))
 		for k := 2; seen[slug]; k++ {
 			changed = true
@@ -191,6 +198,54 @@ func (g Graph) MigrateNames(kind string) (Graph, []TagRename, bool) {
 			slug = Slug(out.Nodes[i].Name)
 		}
 		seen[slug] = true
+	}
+	return out, renames, changed
+}
+
+// withoutOutputTo is the node with no output tag stored in its settings.
+func withoutOutputTo(n Node) (Node, error) {
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(n.Settings, &fields); err != nil {
+		return n, err
+	}
+	delete(fields, "output_to")
+	b, err := json.Marshal(fields)
+	n.Settings = b
+	return n, err
+}
+
+// MigrateReferences brings the reference blocks of a graph saved before they shared their source's tag
+// up to date (run it after MigrateNames, so the sources' tags are settled). A reference that has a name
+// of its own (Discovery 2) or a saved tag has them cleared, every reference to its old tag in the
+// workflow's templates ({discovery_2.report}, [[discovery_2]], a Condition's tag) is rewritten to the
+// source's, and the values kept under the old tag move to the source's, where a value the source's tag
+// already has stays. It returns the graph, the tags whose values move, and whether anything changed. A
+// reference whose source is gone is left as it is.
+func (g Graph) MigrateReferences(kind string) (Graph, []TagRename, bool) {
+	out := Graph{Nodes: append([]Node{}, g.Nodes...), Links: g.Links}
+	var renames []TagRename
+	changed := false
+	for i, n := range g.Nodes {
+		src, ok := g.Source(n)
+		stored := StoredOutputTo(n)
+		if !ok || (n.Name == "" && stored == "") {
+			continue
+		}
+		changed = true
+		// The tag it had: the one saved on it, else its name's.
+		old := stored
+		if old == "" {
+			old = Slug(DisplayName(n))
+		}
+		out.Nodes[i].Name = ""
+		if cleared, err := withoutOutputTo(out.Nodes[i]); err == nil {
+			out.Nodes[i] = cleared
+		}
+		tag := g.OutputNames(kind)[src.ID]
+		if old != "" && old != tag {
+			out, _ = out.Rename(kind, "", old, tag)
+			renames = append(renames, TagRename{Old: old, New: tag, Keep: true})
+		}
 	}
 	return out, renames, changed
 }

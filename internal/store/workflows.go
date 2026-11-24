@@ -44,7 +44,10 @@ func (s *Store) SaveWorkflow(workspaceID int64, kind string, base int, graph str
 
 // KeyRename says that the output kept under the name Old (and its parts, Old.report and so on) is
 // kept under New from now on.
-type KeyRename struct{ Old, New string }
+type KeyRename struct {
+	Old, New string
+	Keep     bool // a value already kept under New stays, and the one under Old is dropped
+}
 
 // SaveWorkflowRenaming is SaveWorkflow, and in the same transaction the values kept for the cases of
 // this kind of item (pull requests, or issues) under the old names of renamed tags move to the new
@@ -74,7 +77,7 @@ func (s *Store) SaveWorkflowRenaming(workspaceID int64, kind string, base int, g
 		return 0, err
 	}
 	for _, r := range renames {
-		if err := renameCaseKeys(tx, workspaceID, kind, r.Old, r.New); err != nil {
+		if err := renameCaseKeys(tx, workspaceID, kind, r.Old, r.New, r.Keep); err != nil {
 			return 0, err
 		}
 	}

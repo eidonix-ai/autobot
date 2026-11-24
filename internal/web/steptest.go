@@ -76,7 +76,7 @@ func (s *Server) testForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.renderTest(w, r, http.StatusOK, ws, kind, g.Nodes[i], nil, map[string]any{})
+	s.renderTest(w, r, http.StatusOK, ws, kind, g.Named(g.Nodes[i]), nil, map[string]any{})
 }
 
 // renderTest shows the test form, filled with values (nil: the workspace's own where it has them).
@@ -142,7 +142,7 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	n := g.Nodes[i]
+	n := g.Named(g.Nodes[i])
 	settings, _, err := s.stepTemplates(n, kind)
 	if err != nil {
 		s.renderTest(w, r, http.StatusBadRequest, ws, kind, n, nil, map[string]any{})

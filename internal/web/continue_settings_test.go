@@ -69,7 +69,7 @@ func TestReferenceBlocks(t *testing.T) {
 	c := newContEnv(t, nil)
 	model := workflow.ModelRef{Provider: c.prov.ID, Model: "m"}
 	a := c.agentNode("aa", "Reviewer", nil)
-	other := c.agentNode("oo", "Other", func(s *workflow.AgentSettings) { s.ContinueOf = "aa" })
+	other := c.agentNode("oo", "", func(s *workflow.AgentSettings) { s.ContinueOf = "aa" })
 	b := c.agentNode("bb", "Rechecker", nil)
 	c.saveGraph(append(append([]workflow.Node{}, events...), a, other, b, workflow.Node{ID: "ee", Type: workflow.CaseEntry}))
 
@@ -111,7 +111,7 @@ func TestReferenceBlocks(t *testing.T) {
 		{"id": "rr", "type": "agent", "x": 3, "y": 3, "continue_of": "aa"}, {"id": "evone", "type": "pr_ready"}}
 	code, answer := c.layout(nodes, []workflow.Link{})
 	if code != 200 || answer["continues"].(map[string]any)["rr"] != "continues Reviewer" || answer["continues"].(map[string]any)["bb"] != "continues Reviewer" ||
-		answer["summaries"].(map[string]any)["rr"] != "→ {agent}" {
+		answer["summaries"].(map[string]any)["rr"] != "→ {reviewer}" {
 		t.Fatalf("layout %d: %v", code, answer)
 	}
 	if r := c.storedNode("rr"); r.ContinueOf != "aa" || r.Model != model || r.Persona == "" {

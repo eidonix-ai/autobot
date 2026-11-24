@@ -79,16 +79,74 @@ func StoredOutputTo(n Node) string {
 	return s.OutputTo
 }
 
+// ReferenceOf is the id of the block a reference block continues, "" for any other block. A reference
+// is an Agent block with continue_of set (the canvas's "New reference"): the same agent continuing the
+// same thread, so it has no name or tag of its own.
+func ReferenceOf(n Node) string {
+	if n.Type != Agent || len(n.Settings) == 0 {
+		return ""
+	}
+	var s struct {
+		ContinueOf string `json:"continue_of"`
+	}
+	json.Unmarshal(n.Settings, &s)
+	return s.ContinueOf
+}
+
+// IsReference reports whether the block is a reference to another.
+func IsReference(n Node) bool { return ReferenceOf(n) != "" }
+
+// Source is the block a reference continues: an Agent block of the graph that is not a reference
+// itself. The reference of a block that is gone, or of another reference, has none.
+func (g Graph) Source(n Node) (Node, bool) {
+	id := ReferenceOf(n)
+	if id == "" || id == n.ID {
+		return Node{}, false
+	}
+	for _, o := range g.Nodes {
+		if o.ID == id && o.Type == Agent && !IsReference(o) {
+			return o, true
+		}
+	}
+	return Node{}, false
+}
+
+// NameOf is what the canvas shows above a block. A reference has no name of its own: it shows its
+// source's, with " (continued)", and follows it when it is renamed.
+func (g Graph) NameOf(n Node) string {
+	if !IsReference(n) {
+		return DisplayName(n)
+	}
+	if src, ok := g.Source(n); ok {
+		return DisplayName(src) + " (continued)"
+	}
+	return label(n) + " (continued)"
+}
+
+// Named is the block with the name the canvas shows (NameOf) in its Name, for code that reads a block's
+// name with DisplayName and has no graph to ask: a run's steps, an agent run's title.
+func (g Graph) Named(n Node) Node {
+	if IsReference(n) {
+		n.Name = g.NameOf(n)
+	}
+	return n
+}
+
 // OutputNames is the output tag of each node that has one, by node id: its name's slug. Names are
 // kept unique, but a graph from before may have two alike (or a name that is a built-in tag), and then
-// the later gets _2, _3 … so that no two blocks share a tag.
+// the later gets _2, _3 … so that no two blocks share a tag. A reference has its source's tag.
 func (g Graph) OutputNames(kind string) map[string]string {
 	names := map[string]string{}
 	used := map[string]bool{}
 	for _, n := range g.Nodes {
-		if HasOutput(n.Type) {
+		if HasOutput(n.Type) && !IsReference(n) {
 			tag := freeTag(kind, Slug(DisplayName(n)), used)
 			names[n.ID], used[tag] = tag, true
+		}
+	}
+	for _, n := range g.Nodes {
+		if src, ok := g.Source(n); ok {
+			names[n.ID] = names[src.ID]
 		}
 	}
 	return names
@@ -100,7 +158,7 @@ func (g Graph) DefaultName(typ, except string) string {
 	t, _ := TypeOf(typ)
 	taken := map[string]bool{}
 	for _, n := range g.Nodes {
-		if n.ID != except {
+		if n.ID != except && !IsReference(n) {
 			taken[Slug(DisplayName(n))] = true
 		}
 	}
@@ -112,14 +170,18 @@ func (g Graph) DefaultName(typ, except string) string {
 }
 
 // CheckName confirms name may be the name of node n: it has a letter or digit, its tag (the name in
-// snake case) is no other block's, and, for a block that has a tag, no built-in tag's.
+// snake case) is no other block's, and, for a block that has a tag, no built-in tag's. A reference has no
+// name of its own: nothing is checked.
 func (g Graph) CheckName(kind string, n Node, name string) error {
+	if IsReference(n) {
+		return nil
+	}
 	tag := Slug(name)
 	if tag == "" {
 		return errors.New("the name needs a letter or a digit: its tag is the name in lower case with underscores")
 	}
 	for _, o := range g.Nodes {
-		if o.ID != n.ID && Slug(DisplayName(o)) == tag {
+		if o.ID != n.ID && !IsReference(o) && Slug(DisplayName(o)) == tag {
 			return fmt.Errorf("another block is already named %s: names are unique in a workflow, since each gives its output the tag {%s}", DisplayName(o), tag)
 		}
 	}
@@ -200,7 +262,7 @@ func (g Graph) CheckOutputRef(kind, id, tag string) error {
 	if from, ok := g.elsewhere(kind, id)[tag]; ok {
 		return fmt.Errorf("{%s} comes from %s, which does not run before this block", tag, from)
 	}
-	return fmt.Errorf("{%s} is no step's output tag in this workflow", tag)
+	return g.scopeOf(kind, id).unknown(tag, "{"+tag+"}")
 }
 
 // chains says, for each block, which event blocks reach it by links (an event block is in its own

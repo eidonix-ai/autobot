@@ -58,7 +58,7 @@ func TestBrowserReferenceBlock(t *testing.T) {
 		})
 	}
 	var menu []string
-	var dashed, line string
+	var dashed, line, shownName string
 	err := chromedp.Run(ctx,
 		chromedp.EmulateViewport(1400, 900),
 		chromedp.Navigate(c.srv.URL+"/login?next="+url.QueryEscape("/w/o/r/workflows/pr")),
@@ -77,12 +77,16 @@ func TestBrowserReferenceBlock(t *testing.T) {
 		waitSaved,
 		chromedp.Evaluate(`document.getElementById('node-2').classList.contains('wf-reference') ? getComputedStyle(document.getElementById('node-2')).borderStyle : 'not marked'`, &dashed),
 		chromedp.Text(`#node-2 .wf-ref`, &line, chromedp.ByQuery),
+		chromedp.Text(`#node-2 .wf-name`, &shownName, chromedp.ByQuery),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(menu, ",") != "Delete,New reference" {
 		t.Fatalf("the block's menu: %v", menu)
+	}
+	if shownName != "Reviewer (continued)" {
+		t.Fatalf("the new block is called %q", shownName)
 	}
 	if dashed != "dashed" || line != "continues Reviewer" {
 		t.Fatalf("the new block: border %q, line %q", dashed, line)
@@ -103,10 +107,11 @@ func TestBrowserReferenceBlock(t *testing.T) {
 		chromedp.Reload(), chromedp.WaitVisible(`#node-2`),
 		chromedp.Evaluate(`getComputedStyle(document.getElementById('node-2')).borderStyle`, &again),
 		chromedp.Text(`#node-2 .wf-ref`, &line, chromedp.ByQuery),
+		chromedp.Text(`#node-2 .wf-name`, &shownName, chromedp.ByQuery),
 		chromedp.Evaluate(`getComputedStyle(document.getElementById('node-1')).borderStyle`, &plain),
 		chromedp.Evaluate(`getComputedStyle(document.querySelector('#node-1 .wf-ref')).display`, &plainLine),
 	)
-	if err != nil || again != "dashed" || line != "continues Reviewer" || plain == "dashed" || plainLine != "none" {
+	if err != nil || shownName != "Reviewer (continued)" || again != "dashed" || line != "continues Reviewer" || plain == "dashed" || plainLine != "none" {
 		t.Fatalf("after reload: %q %q; plain block %q %q: %v", again, line, plain, plainLine, err)
 	}
 

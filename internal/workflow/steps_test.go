@@ -42,7 +42,7 @@ func TestParentAndFieldTags(t *testing.T) {
 	if got != "L T T C C C F {pr:title}" {
 		t.Fatalf("render %q", got)
 	}
-	if err := CheckTemplates(PR, nil, "{pr:titel}"); err == nil || !strings.Contains(err.Error(), "fields of {pr}") {
+	if err := CheckTemplates(PR, nil, "{pr:titel}"); err == nil || !strings.Contains(err.Error(), "{pr:titel}: no such tag") {
 		t.Fatalf("an unknown field: %v", err)
 	}
 	if err := CheckTemplates(Issue, nil, "{issue} {issue:body} {issue_title} {case_file}"); err != nil {

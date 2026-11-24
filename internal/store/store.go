@@ -62,8 +62,17 @@ func (s *Store) Close() error { return s.db.Close() }
 // architecture, driver, what it pairs with), for the {machines} summary.
 const schemaMachineNotes = `ALTER TABLE machines ADD COLUMN notes TEXT NOT NULL DEFAULT '';`
 
+// schemaStopped: who stopped a workflow run or an agent run, and when. A stopped run has the status
+// "stopped" (as do its steps and its approvals that were still open).
+const schemaStopped = `
+ALTER TABLE workflow_runs ADD COLUMN stopped_by TEXT    NOT NULL DEFAULT '';
+ALTER TABLE workflow_runs ADD COLUMN stopped_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_runs    ADD COLUMN stopped_by TEXT    NOT NULL DEFAULT '';
+ALTER TABLE agent_runs    ADD COLUMN stopped_at INTEGER NOT NULL DEFAULT 0;
+`
+
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped}
 
 const schemaV1 = `
 CREATE TABLE users (

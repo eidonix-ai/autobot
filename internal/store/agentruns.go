@@ -47,6 +47,8 @@ type AgentRun struct {
 	MsgsFrom           int       // the first message it added to its conversation (0 but for old runs)
 	MsgsTo             int       // one past the last
 	TurnsFrom          int       // the conversation's turns before it
+	StoppedBy          string    // the name of the person who stopped it
+	StoppedAt          time.Time // zero unless stopped by a person
 }
 
 // StartAgentRun records a run as running and returns its id, its new conversation's and its
@@ -130,26 +132,47 @@ func (s *Store) StartWriterSession(run int64) (int64, error) {
 }
 
 // SaveAgentRun stores a run's summary and how far its messages reach (msgsTo), and, when status is
-// not "running", ends the run with it.
+// not "running", ends the run with it. A run that has ended is not made running again by a save
+// that was in flight.
 func (s *Store) SaveAgentRun(id int64, status, summary string, msgsTo int) error {
 	finished := int64(0)
 	if status != "running" {
 		finished = now()
 	}
-	_, err := s.db.Exec(`UPDATE agent_runs SET status = ?, summary = ?, finished_at = ?, msgs_to = MAX(msgs_to, ?) WHERE id = ?`,
-		status, summary, finished, msgsTo, id)
+	_, err := s.db.Exec(`UPDATE agent_runs SET status = ?, summary = ?, finished_at = ?, msgs_to = MAX(msgs_to, ?) WHERE id = ? AND (status = 'running' OR ? != 'running')`,
+		status, summary, finished, msgsTo, id, status)
 	return err
+}
+
+// StopAgentRun records that a person stopped an agent run: a run still running ends as stopped, and
+// a run that already ended as stopped (its own goroutine got there first) learns who. It reports
+// whether this call recorded the stop.
+func (s *Store) StopAgentRun(id int64, by string) (bool, error) {
+	t := now()
+	if _, err := s.db.Exec(`UPDATE sub_agents SET status = 'stopped', finished_at = ? WHERE run_id = ? AND status = 'running'
+		AND EXISTS (SELECT 1 FROM agent_runs WHERE id = ? AND status IN ('running', 'stopped'))`, t, id, id); err != nil {
+		return false, err
+	}
+	res, err := s.db.Exec(`UPDATE agent_runs SET status = 'stopped', stopped_by = ?, stopped_at = ?, finished_at = CASE WHEN finished_at = 0 THEN ? ELSE finished_at END
+		WHERE id = ? AND status IN ('running', 'stopped') AND stopped_at = 0`, by, t, t, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // AgentRun returns one run, or ErrNotFound.
 func (s *Store) AgentRun(id int64) (*AgentRun, error) {
 	var r AgentRun
-	var started, finished int64
+	var started, finished, stopped int64
 	err := s.db.QueryRow(`SELECT a.id, a.workspace_id, a.kind, a.node_id, a.node_name, a.item, a.test, a.model, a.status, a.summary,
-		`+authorName+`, a.started_at, a.finished_at, a.conversation, a.writer_conversation, a.thread, a.msgs_from, a.msgs_to, a.turns_from
+		`+authorName+`, a.started_at, a.finished_at, a.conversation, a.writer_conversation, a.thread, a.msgs_from, a.msgs_to, a.turns_from,
+		a.stopped_by, a.stopped_at
 		FROM agent_runs a LEFT JOIN users u ON u.id = a.started_by WHERE a.id = ?`, id).
 		Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.NodeID, &r.NodeName, &r.Item, &r.Test, &r.Model, &r.Status, &r.Summary,
-			&r.StartedBy, &started, &finished, &r.Conversation, &r.WriterConversation, &r.Thread, &r.MsgsFrom, &r.MsgsTo, &r.TurnsFrom)
+			&r.StartedBy, &started, &finished, &r.Conversation, &r.WriterConversation, &r.Thread, &r.MsgsFrom, &r.MsgsTo, &r.TurnsFrom,
+			&r.StoppedBy, &stopped)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -159,6 +182,9 @@ func (s *Store) AgentRun(id int64) (*AgentRun, error) {
 	r.StartedAt = time.Unix(started, 0)
 	if finished != 0 {
 		r.FinishedAt = time.Unix(finished, 0)
+	}
+	if stopped != 0 {
+		r.StoppedAt = time.Unix(stopped, 0)
 	}
 	return &r, nil
 }

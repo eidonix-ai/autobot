@@ -12,7 +12,7 @@ type Approval struct {
 	RunID     int64
 	NodeID    string
 	Request   string
-	Status    string // pending, approved, denied or timed_out
+	Status    string // pending, approved, denied, timed_out or stopped (its run was stopped)
 	Channel   string // where it was posted on Discord, if it was
 	Message   string
 	DecidedBy string
@@ -34,12 +34,17 @@ func (s *Store) OpenApproval(run int64, node, request string, expires time.Time)
 const approvalSelect = `SELECT id, run_id, node_id, request, status, channel, message, decided_by, decided_on, decided_at, expires_at FROM approvals`
 
 func (s *Store) scanApproval(row *sql.Row) (*Approval, error) {
-	var a Approval
-	var decided, expires int64
-	err := row.Scan(&a.ID, &a.RunID, &a.NodeID, &a.Request, &a.Status, &a.Channel, &a.Message, &a.DecidedBy, &a.DecidedOn, &decided, &expires)
+	a, err := scanApprovalRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+	return a, err
+}
+
+func scanApprovalRow(row interface{ Scan(...any) error }) (*Approval, error) {
+	var a Approval
+	var decided, expires int64
+	err := row.Scan(&a.ID, &a.RunID, &a.NodeID, &a.Request, &a.Status, &a.Channel, &a.Message, &a.DecidedBy, &a.DecidedOn, &decided, &expires)
 	if err != nil {
 		return nil, err
 	}

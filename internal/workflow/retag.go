@@ -94,7 +94,7 @@ func Retag(n Node, kind, old, new string) (Node, bool) {
 		if err != nil {
 			return n, false
 		}
-		fix(&s.Request)
+		fix(&s.Question, &s.Request)
 		settings = s
 	case TestRun:
 		s, err := SettingsOf(n, DefaultTestRun())

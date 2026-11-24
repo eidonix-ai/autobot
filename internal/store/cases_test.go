@@ -117,7 +117,7 @@ func TestDecide(t *testing.T) {
 	admin := mustUser(t, st, "admin", true)
 	ws, _ := st.CreateWorkspace("o/r", admin, "", "")
 	run, _ := st.StartWorkflowRun(WorkflowRun{WorkspaceID: ws.ID, Kind: "pr", EventNode: "ev", Item: 7, Graph: "{}"}, []string{"ev", "ap", "late"}, admin)
-	a, _ := st.OpenApproval(run, "ap", "Run it?", time.Now().Add(time.Hour))
+	a, _ := st.OpenApproval(run, "ap", "", "Run it?", time.Now().Add(time.Hour))
 	if ok, _ := st.Decide(a.ID, "timed_out", "", ""); ok {
 		t.Fatal("timed out before its time")
 	}
@@ -130,7 +130,7 @@ func TestDecide(t *testing.T) {
 	if got, _ := st.Approval(a.ID); got.Status != "approved" || got.DecidedBy != "alice" {
 		t.Fatalf("%+v", got)
 	}
-	late, _ := st.OpenApproval(run, "late", "Run it?", time.Now().Add(-time.Second))
+	late, _ := st.OpenApproval(run, "late", "", "Run it?", time.Now().Add(-time.Second))
 	if ok, _ := st.Decide(late.ID, "approved", "alice", "Discord"); ok {
 		t.Fatal("an answer after the time limit was taken")
 	}

@@ -244,10 +244,12 @@ func SettingsOf[T any](n Node, def T) (T, error) {
 // People.
 const Approval = "approval"
 
-// ApprovalSettings are a Human Approval node's settings: what is asked, and how long to wait.
+// ApprovalSettings are a Human Approval node's settings: the question asked above the buttons, the
+// details shown above it, and how long to wait.
 type ApprovalSettings struct {
-	Request string `json:"request"` // a template
-	Hours   int    `json:"hours"`
+	Question string `json:"question,omitempty"` // a template; a block saved before it existed has none
+	Request  string `json:"request"`            // a template: the optional details, shown above the question
+	Hours    int    `json:"hours"`
 	// OutputTo keeps the answer (who gave it, and when) as a tag.
 	OutputTo string `json:"output_to,omitempty"`
 }
@@ -255,22 +257,33 @@ type ApprovalSettings struct {
 // DefaultApproval is a new Human Approval node's settings, for a workflow of kind.
 func DefaultApproval(kind string) ApprovalSettings {
 	if kind == Issue {
-		return ApprovalSettings{Request: "Go on with {issue}?", Hours: 24}
+		return ApprovalSettings{Question: "Go on with {issue}?", Hours: 24}
 	}
-	return ApprovalSettings{Request: "Run {pr} on the hardware?", Hours: 24}
+	return ApprovalSettings{Question: "Run {pr} on the hardware?", Hours: 24}
 }
 
 // Check confirms a Human Approval node's settings are complete.
 func (s ApprovalSettings) Check() error {
 	switch {
-	case strings.TrimSpace(s.Request) == "":
-		return errors.New("write what is asked")
+	case strings.TrimSpace(s.Question) == "":
+		return errors.New("write the question asked above the buttons")
+	case len(s.Question) > 1000:
+		return errors.New("the question is limited to 1,000 characters")
 	case len(s.Request) > 4000:
-		return errors.New("the request is limited to 4,000 characters")
+		return errors.New("the details are limited to 4,000 characters")
 	case s.Hours < 1 || s.Hours > 336:
 		return errors.New("the time limit is 1 to 336 hours (two weeks)")
 	}
 	return nil
+}
+
+// CheckRun is Check for a step about to run: a block saved before the question existed (details
+// only) still runs, asking as it always did.
+func (s ApprovalSettings) CheckRun() error {
+	if s.Question == "" && strings.TrimSpace(s.Request) != "" {
+		s.Question = "-"
+	}
+	return s.Check()
 }
 
 // Junction is the block called Node on the canvas: a wire connector. Any number of links may come

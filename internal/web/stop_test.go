@@ -508,7 +508,7 @@ func TestStopRunNotInMemory(t *testing.T) {
 	id, _ := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: 7, Graph: w.Graph}, []string{"ev", "ap", "ya", "no"}, derek)
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ev", Status: "done", Port: "out"})
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: "waiting", StartedAt: time.Now()})
-	ap, _ := e.st.OpenApproval(id, "ap", "Run it?", time.Now().Add(time.Hour))
+	ap, _ := e.st.OpenApproval(id, "ap", "", "Run it?", time.Now().Add(time.Hour))
 	ar, _, _, _ := e.st.StartAgentRun(store.AgentRun{WorkspaceID: ws.ID, Kind: workflow.PR, NodeID: "x", NodeName: "x", Item: 7, Test: true, Model: "m"}, derek)
 
 	b := e.signIn("derek")

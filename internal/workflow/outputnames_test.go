@@ -155,7 +155,7 @@ func TestRetagEveryBlock(t *testing.T) {
 		Decision:  {d, func(n Node) string { s, _ := DecisionSettingsOf(n, PR); return s.Context + s.Question }},
 		CaseEntry: {CaseEntrySettings{Entry: "E {old} [[old]]"}, func(n Node) string { s, _ := CaseEntrySettingsOf(n); return s.Entry }},
 		Post:      {PostSettings{Message: "P {old.report}", GitHub: true}, func(n Node) string { s, _ := SettingsOf(n, DefaultPost()); return s.Message }},
-		Approval:  {ApprovalSettings{Request: "A {old}", Hours: 1}, func(n Node) string { s, _ := SettingsOf(n, DefaultApproval(PR)); return s.Request }},
+		Approval:  {ApprovalSettings{Question: "A {old}", Hours: 1}, func(n Node) string { s, _ := SettingsOf(n, DefaultApproval(PR)); return s.Question }},
 		TestRun:   {TestRunSettings{Script: "make {old}", Machine: 1, Minutes: 1}, func(n Node) string { s, _ := SettingsOf(n, DefaultTestRun()); return s.Script }},
 		Condition: {ConditionSettings{Match: "all", Tag: "old", TagHas: "old"}, func(n Node) string { s, _ := SettingsOf(n, DefaultCondition()); return s.Tag + "/" + s.TagHas }},
 	} {

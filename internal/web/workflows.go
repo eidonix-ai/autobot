@@ -149,7 +149,7 @@ func (s *Server) nodeTemplates(n workflow.Node, kind string) []string {
 		}
 	case workflow.Approval:
 		if a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind)); err == nil {
-			return []string{a.Request}
+			return []string{a.Question, a.Request}
 		}
 	case workflow.TestRun:
 		if t, err := workflow.SettingsOf(n, workflow.DefaultTestRun()); err == nil {
@@ -706,10 +706,10 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		settings = t
 	case workflow.Approval:
-		a := workflow.ApprovalSettings{Request: strings.TrimSpace(f.Get("request")), OutputTo: f.Get("output_to")}
+		a := workflow.ApprovalSettings{Question: strings.TrimSpace(f.Get("question")), Request: strings.TrimSpace(f.Get("request")), OutputTo: f.Get("output_to")}
 		a.Hours, _ = strconv.Atoi(f.Get("hours"))
 		if err = a.Check(); err == nil {
-			err = g.CheckNodeTemplates(kind, n.ID, a.Request)
+			err = g.CheckNodeTemplates(kind, n.ID, a.Question, a.Request)
 		}
 		settings = a
 	case workflow.Junction:

@@ -86,11 +86,11 @@ func (s *Server) discordStep(ctx context.Context, rs *runState, summary bool, te
 
 // approvalStep asks for a person's answer: on Discord when it may, and always on the run's page,
 // then waits for it.
-func (s *Server) approvalStep(ctx context.Context, rs *runState, n workflow.Node, a workflow.ApprovalSettings, request string) stepOutcome {
+func (s *Server) approvalStep(ctx context.Context, rs *runState, n workflow.Node, a workflow.ApprovalSettings, request, question string) stepOutcome {
 	if rs.stopped() {
 		return stepOutcome{err: rs.errStopped()}
 	}
-	ap, err := s.st.OpenApproval(rs.run.ID, n.ID, request, time.Now().Add(time.Duration(a.Hours)*time.Hour))
+	ap, err := s.st.OpenApproval(rs.run.ID, n.ID, request, question, time.Now().Add(time.Duration(a.Hours)*time.Hour))
 	if err != nil {
 		return stepOutcome{err: err}
 	}
@@ -123,7 +123,11 @@ func approvalMessage(n workflow.Node, ap *store.Approval) discord.Message {
 	case "pending":
 		buttons = []discord.Button{{ID: fmt.Sprintf("ap:%d:approved", ap.ID), Label: "Approve", Style: 3},
 			{ID: fmt.Sprintf("ap:%d:denied", ap.ID), Label: "Deny", Style: 4}}
-		return discord.Message{Text: head + "\n\n" + ap.Request + "\n\n_Answer by " + ap.ExpiresAt.In(eastern).Format("Jan 2, 3:04 PM") + " ET._", Buttons: buttons}
+		by := "_Answer by " + ap.ExpiresAt.In(eastern).Format("Jan 2, 3:04 PM") + " ET._"
+		if ap.Question == "" { // asked before the question existed
+			by = "\n" + by
+		}
+		return discord.Message{Text: head + approvalBody(ap) + "\n" + by, Buttons: buttons}
 	case "timed_out":
 		head = "**No answer in time** · " + workflow.DisplayName(n)
 	case "stopped":
@@ -132,7 +136,20 @@ func approvalMessage(n workflow.Node, ap *store.Approval) discord.Message {
 		head = fmt.Sprintf("**%s** by %s on %s · %s", map[string]string{"approved": "Approved", "denied": "Denied"}[ap.Status],
 			ap.DecidedBy, ap.DecidedOn, ap.DecidedAt.In(eastern).Format("Jan 2, 3:04 PM")+" ET")
 	}
-	return discord.Message{Text: head + "\n\n" + ap.Request}
+	return discord.Message{Text: head + approvalBody(ap)}
+}
+
+// approvalBody is what a card says below its head: the details, then the question in bold. A request
+// made before the question existed shows its details only.
+func approvalBody(ap *store.Approval) string {
+	if ap.Question == "" {
+		return "\n\n" + ap.Request
+	}
+	body := ""
+	if ap.Request != "" {
+		body = "\n\n" + ap.Request
+	}
+	return body + "\n\n**" + ap.Question + "**"
 }
 
 var eastern = func() *time.Location {
@@ -164,7 +181,15 @@ func (s *Server) awaitApproval(ctx context.Context, rs *runState, n workflow.Nod
 			if ap.DecidedBy != "" {
 				out = fmt.Sprintf("%s by %s on %s, %s ET", what, ap.DecidedBy, ap.DecidedOn, ap.DecidedAt.In(eastern).Format("Jan 2, 2006 3:04 PM"))
 			}
-			if err := s.writeEntry(rs, n, "**"+workflow.DisplayName(n)+":** "+out+".\n\n> "+strings.ReplaceAll(ap.Request, "\n", "\n> "), true); err != nil {
+			entry := "**" + workflow.DisplayName(n) + ":** "
+			if ap.Question != "" {
+				entry += ap.Question + " → "
+			}
+			entry += out + "."
+			if ap.Request != "" {
+				entry += "\n\n> " + strings.ReplaceAll(ap.Request, "\n", "\n> ")
+			}
+			if err := s.writeEntry(rs, n, entry, true); err != nil {
 				log.Printf("workflow run %d: %v", rs.run.ID, err)
 			}
 			if ap.Message != "" && ap.DecidedOn != "Discord" { // a click on Discord updates its own message

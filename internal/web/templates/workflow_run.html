@@ -20,7 +20,8 @@
     <strong>{{.Name}}</strong> <span class="muted">{{.Label}} · {{.Status}}{{with .Port}} → {{.}}{{end}}{{with .Took}} · {{.}}{{end}}</span>
     {{if .AgentRun}}<a href="{{$.WS.Path}}/agent-runs/{{.AgentRun}}">transcript</a>{{end}}</div>
   {{with .Error}}<p class="{{if eq $.Run.Status "failed"}}error{{else}}muted{{end}}">{{.}}</p>{{end}}
-  {{with .Approval}}<blockquote class="request">{{.Request}}</blockquote>
+  {{with .Approval}}{{if .Request}}<blockquote class="request">{{.Request}}</blockquote>{{end}}
+  {{with .Question}}<p class="question"><strong>{{.}}</strong></p>{{end}}
   {{if eq .Status "pending"}}<form method="post" action="{{$.WS.Path}}/workflow-runs/{{$.Run.ID}}/approvals/{{.ID}}" class="row">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button name="answer" value="approved">Approve</button><button name="answer" value="denied" class="danger">Deny</button>

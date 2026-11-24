@@ -328,7 +328,10 @@ git only through its environment, never a command line or the mirror's config.
    failing does not stop the other, and fails the step, which reports both. Condition (rules on files,
    size, author's standing, labels, text, tags; no model), Test Run (a script on a machine; passed or
    failed) and Human Approval
-   (Discord buttons and the run page; first answer wins; waits survive restarts). Discord is
+   (Discord buttons and the run page; first answer wins; waits survive restarts). An approval asks a
+   Question (required, a template, shown in bold directly above the Approve and Deny buttons, on the run
+   page, and in the case entry as "Question → Approved by …"); its Details (the old Request, optional) come
+   above it; a block saved before the question existed has none and shows as it always did. Discord is
    reached over its plain HTTP API (no gateway yet). In the block dialogs an (i) note opens inside the
    dialog, and a refused save names the block on the canvas bar until the dialog is closed.
    Right-clicking a link on the canvas offers Delete link.

@@ -6,12 +6,18 @@ import (
 	"time"
 )
 
+// A Human Approval's question, asked above the buttons; empty for a request made before it existed.
+const schemaApprovalQuestion = `
+ALTER TABLE approvals ADD COLUMN question TEXT NOT NULL DEFAULT '';
+`
+
 // Approval is a Human Approval step's request.
 type Approval struct {
 	ID        int64
 	RunID     int64
 	NodeID    string
-	Request   string
+	Request   string // the details, shown above the question
+	Question  string // asked above the buttons; empty for a request made before it existed
 	Status    string // pending, approved, denied, timed_out or stopped (its run was stopped)
 	Channel   string // where it was posted on Discord, if it was
 	Message   string
@@ -21,17 +27,17 @@ type Approval struct {
 	ExpiresAt time.Time
 }
 
-// OpenApproval records a step's request, or returns the one it already has (a resumed run).
-func (s *Store) OpenApproval(run int64, node, request string, expires time.Time) (*Approval, error) {
-	_, err := s.db.Exec(`INSERT INTO approvals (run_id, node_id, request, expires_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT (run_id, node_id) DO NOTHING`, run, node, request, expires.Unix())
+// OpenApproval records a step's details and question, or returns the one it already has (a resumed run).
+func (s *Store) OpenApproval(run int64, node, request, question string, expires time.Time) (*Approval, error) {
+	_, err := s.db.Exec(`INSERT INTO approvals (run_id, node_id, request, question, expires_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (run_id, node_id) DO NOTHING`, run, node, request, question, expires.Unix())
 	if err != nil {
 		return nil, err
 	}
 	return s.scanApproval(s.db.QueryRow(approvalSelect+` WHERE run_id = ? AND node_id = ?`, run, node))
 }
 
-const approvalSelect = `SELECT id, run_id, node_id, request, status, channel, message, decided_by, decided_on, decided_at, expires_at FROM approvals`
+const approvalSelect = `SELECT id, run_id, node_id, request, question, status, channel, message, decided_by, decided_on, decided_at, expires_at FROM approvals`
 
 func (s *Store) scanApproval(row *sql.Row) (*Approval, error) {
 	a, err := scanApprovalRow(row)
@@ -44,7 +50,7 @@ func (s *Store) scanApproval(row *sql.Row) (*Approval, error) {
 func scanApprovalRow(row interface{ Scan(...any) error }) (*Approval, error) {
 	var a Approval
 	var decided, expires int64
-	err := row.Scan(&a.ID, &a.RunID, &a.NodeID, &a.Request, &a.Status, &a.Channel, &a.Message, &a.DecidedBy, &a.DecidedOn, &decided, &expires)
+	err := row.Scan(&a.ID, &a.RunID, &a.NodeID, &a.Request, &a.Question, &a.Status, &a.Channel, &a.Message, &a.DecidedBy, &a.DecidedOn, &decided, &expires)
 	if err != nil {
 		return nil, err
 	}

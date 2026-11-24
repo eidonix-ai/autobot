@@ -21,7 +21,7 @@ func approvalWorkflow(t *testing.T, e *env, ws *store.Workspace, by *store.User)
 	entry := func(text string) json.RawMessage { return raw(workflow.CaseEntrySettings{Entry: text, Finalize: true}) }
 	g := workflow.Graph{Nodes: []workflow.Node{
 		{ID: "ev", Type: "pr_ready"},
-		{ID: "ap", Type: workflow.Approval, Name: "Hardware", Settings: raw(workflow.ApprovalSettings{Request: "Run {pr_title} on cn7?", Hours: 1})},
+		{ID: "ap", Type: workflow.Approval, Name: "Hardware", Settings: raw(workflow.ApprovalSettings{Request: "Details of {pr_title}.", Question: "Run {pr_title} on cn7?", Hours: 1})},
 		{ID: "ya", Type: workflow.CaseEntry, Settings: entry("Running it.")},
 		{ID: "no", Type: workflow.CaseEntry, Settings: entry("Not running it. Charter: {charter}")},
 	}, Links: []workflow.Link{{From: "ev", Out: "out", To: "ap", In: "in"}, {From: "ap", Out: "approved", To: "ya", In: "in"}, {From: "ap", Out: "denied", To: "no", In: "in"}}}
@@ -114,7 +114,7 @@ func TestApprovalOnPageAndResume(t *testing.T) {
 	id, _ := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: 7, Graph: w.Graph}, []string{"ev", "ap", "ya", "no"}, derek)
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ev", Status: "done", Port: "out", Output: "PR First Ready #7"})
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: "waiting", StartedAt: time.Now()})
-	ap, _ := e.st.OpenApproval(id, "ap", "Run Retry uploads on cn7?", time.Now().Add(time.Hour))
+	ap, _ := e.st.OpenApproval(id, "ap", "Details.", "Run Retry uploads on cn7?", time.Now().Add(time.Hour))
 	e.st.StopOrphanWorkflows(workflow.Restartable)
 	if _, err := e.st.SaveCharter(ws.ID, 1, "THE CHARTER", derek); err != nil {
 		t.Fatal(err)

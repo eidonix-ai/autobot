@@ -528,10 +528,22 @@ func runTool(ctx context.Context, t Tool, args string) (out string) {
 	return res
 }
 
+// retryWaits are the pauses between attempts at a model request that failed in a way that may pass:
+// about three minutes in all, enough to ride out a provider dropping connections for a while (seen on
+// DeepSeek with five agents at once) without hiding a real outage for long.
+var retryWaits = []time.Duration{2 * time.Second, 6 * time.Second, 18 * time.Second, 54 * time.Second, 60 * time.Second, 60 * time.Second}
+
 // complete asks the model, trying again on a failure that may pass.
 func complete(ctx context.Context, m Model, msgs []Message, tools []ToolSpec) (Message, Usage, error) {
 	var err error
-	for try, wait := 0, 2*time.Second; try < 4; try, wait = try+1, wait*3 {
+	for try := 0; try <= len(retryWaits); try++ {
+		if try > 0 {
+			select {
+			case <-ctx.Done():
+				return Message{}, Usage{}, ctx.Err()
+			case <-time.After(retryWaits[try-1]):
+			}
+		}
 		var reply Message
 		var use Usage
 		if reply, use, err = m.Complete(ctx, msgs, tools); err == nil {
@@ -539,11 +551,6 @@ func complete(ctx context.Context, m Model, msgs []Message, tools []ToolSpec) (M
 		}
 		if ctx.Err() != nil || !transient(err) {
 			return Message{}, Usage{}, err
-		}
-		select {
-		case <-ctx.Done():
-			return Message{}, Usage{}, ctx.Err()
-		case <-time.After(wait):
 		}
 	}
 	return Message{}, Usage{}, err

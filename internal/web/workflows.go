@@ -85,13 +85,9 @@ func (s *Server) nodeTemplates(n workflow.Node, kind string) []string {
 		if c, err := workflow.CaseEntrySettingsOf(n); err == nil {
 			return []string{c.Entry}
 		}
-	case workflow.GitHubComment:
-		if c, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment()); err == nil {
-			return []string{c.Message}
-		}
-	case workflow.DiscordPost:
-		if d, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost()); err == nil {
-			return []string{d.Message}
+	case workflow.Post:
+		if p, err := workflow.SettingsOf(n, workflow.DefaultPost()); err == nil {
+			return []string{p.Message}
 		}
 	case workflow.Approval:
 		if a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind)); err == nil {
@@ -431,14 +427,12 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		settings, err = workflow.DecisionSettingsOf(n, kind)
 	case workflow.CaseEntry:
 		settings, err = workflow.CaseEntrySettingsOf(n)
-	case workflow.GitHubComment:
-		settings, err = workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+	case workflow.Post:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultPost())
 	case workflow.Condition:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultCondition())
 	case workflow.TestRun:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultTestRun())
-	case workflow.DiscordPost:
-		settings, err = workflow.SettingsOf(n, workflow.DefaultDiscordPost())
 	case workflow.Approval:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 	default:
@@ -504,12 +498,10 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page, model = "node_decision.html", st.Model
 	case workflow.CaseEntrySettings:
 		page = "node_case.html"
-	case workflow.GitHubCommentSettings:
-		page = "node_github.html"
+	case workflow.PostSettings:
+		page = "node_post.html"
 	case workflow.ConditionSettings:
 		page = "node_condition.html"
-	case workflow.DiscordPostSettings:
-		page = "node_discordpost.html"
 	case workflow.ApprovalSettings:
 		page = "node_approval.html"
 	case workflow.TestRunSettings:
@@ -619,12 +611,12 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			err = g.CheckNodeTemplates(kind, n.ID, c.Entry)
 		}
 		settings = c
-	case workflow.GitHubComment:
-		c := workflow.GitHubCommentFromForm(f.Get)
-		if err = c.Check(); err == nil {
-			err = g.CheckNodeTemplates(kind, n.ID, c.Message)
+	case workflow.Post:
+		p := workflow.PostFromForm(f.Get)
+		if err = p.Check(); err == nil {
+			err = g.CheckNodeTemplates(kind, n.ID, p.Message)
 		}
-		settings = c
+		settings = p
 	case workflow.Condition:
 		c := workflow.ConditionFromForm(f.Get)
 		err = c.Check(kind)
@@ -640,12 +632,6 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		settings = t
-	case workflow.DiscordPost:
-		d := workflow.DiscordPostSettings{Message: strings.TrimSpace(f.Get("message")), Summary: f.Get("summary") == "on"}
-		if err = d.Check(); err == nil {
-			err = g.CheckNodeTemplates(kind, n.ID, d.Message)
-		}
-		settings = d
 	case workflow.Approval:
 		a := workflow.ApprovalSettings{Request: strings.TrimSpace(f.Get("request")), OutputTo: f.Get("output_to")}
 		a.Hours, _ = strconv.Atoi(f.Get("hours"))

@@ -35,14 +35,14 @@ func TestCommentAndCondition(t *testing.T) {
 	derek := e.user("derek", true)
 	ws, _ := e.st.CreateWorkspace("o/r", derek, "flare-autobot", "tok-good")
 	raw := func(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
-	comment := workflow.DefaultGitHubComment()
+	comment := workflow.DefaultPost()
 	comment.Message = "Reviewed {pr_title}."
 	save := func(trial bool) {
 		comment.Trial = trial
 		g := workflow.Graph{Nodes: []workflow.Node{
 			{ID: "ev", Type: "pr_ready"},
 			{ID: "go", Type: workflow.Condition, Settings: raw(workflow.ConditionSettings{Match: "all", Files: "*.go"})},
-			{ID: "cm", Type: workflow.GitHubComment, Name: "Review comment", Settings: raw(comment)},
+			{ID: "cm", Type: workflow.Post, Name: "Review comment", Settings: raw(comment)},
 			{ID: "nc", Type: workflow.CaseEntry, Settings: raw(workflow.CaseEntrySettings{Entry: "Not Go.", Finalize: true})},
 		}, Links: []workflow.Link{{From: "ev", Out: "out", To: "go", In: "in"}, {From: "go", Out: "yes", To: "cm", In: "in"}, {From: "go", Out: "no", To: "nc", In: "in"}}}
 		w, _ := e.st.Workflow(ws.ID, workflow.PR)
@@ -143,29 +143,5 @@ func TestPresetsAreReferences(t *testing.T) {
 	a = save("custom", "My own instruction for {pr_link}.")
 	if a.EffectiveInstruction(workflow.PR) != "My own instruction for {pr_link}." || a.EffectiveGoal(workflow.PR) != "my goal" {
 		t.Fatalf("custom block: %+v", a)
-	}
-}
-
-// A GitHub Comment block has no "Keep one comment": its form lacks it, and a block saved with the old
-// setting still loads, posting a new comment on every run.
-func TestCommentHasNoKeepOne(t *testing.T) {
-	e := newEnv(t)
-	derek := e.user("derek", true)
-	ws, _ := e.st.CreateWorkspace("o/r", derek, "flare-autobot", "tok-good")
-	old := json.RawMessage(`{"message":"Hello {pr:title}","trial":false,"keep_one":true}`)
-	g := workflow.Graph{Nodes: []workflow.Node{{ID: "ev", Type: "pr_ready"}, {ID: "cm", Type: workflow.GitHubComment, Settings: old}},
-		Links: []workflow.Link{{From: "ev", Out: "out", To: "cm", In: "in"}}}
-	b, _ := json.Marshal(g)
-	if _, err := e.st.SaveWorkflow(ws.ID, workflow.PR, 0, string(b), derek); err != nil {
-		t.Fatal(err)
-	}
-	if code, body := e.signIn("derek").get("/w/o/r/workflows/pr/nodes/cm"); code != 200 || strings.Contains(strings.ToLower(body), "keep one") || strings.Contains(body, "keep_one") {
-		t.Fatalf("the form: %d\n%s", code, body)
-	}
-	fakeComments = nil
-	runOnce(t, e, ws, derek, false)
-	runOnce(t, e, ws, derek, false)
-	if len(fakeComments) != 2 || strings.HasPrefix(fakeComments[0], "edit") || strings.HasPrefix(fakeComments[1], "edit") {
-		t.Fatalf("posted %q", fakeComments)
 	}
 }

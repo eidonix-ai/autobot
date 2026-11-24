@@ -39,6 +39,7 @@ type NodeType struct {
 	Kind    string   `json:"kind"` // the workflow it belongs to; "" for steps, which go in any
 	Label   string   `json:"label"`
 	Event   bool     `json:"event"`   // starts a chain: no input
+	Hidden  bool     `json:"-"`       // no longer offered when placing a block
 	Outputs []string `json:"outputs"` // a new node's outputs, filled by TypesFor
 }
 
@@ -51,18 +52,21 @@ var Types = []NodeType{
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
 	{Type: CaseEntry, Label: "Case Entry"},
-	{Type: GitHubComment, Label: "GitHub Comment"},
+	{Type: Post, Label: "Post"},
 	{Type: Condition, Label: "Condition"},
 	{Type: TestRun, Label: "Test Run"},
-	{Type: DiscordPost, Label: "Post to Discord"},
 	{Type: Approval, Label: "Human Approval"},
+	// The two blocks Post replaced: graphs saved with them load as Post nodes, but a run from before
+	// that kept one in its snapshot still names it, and the palette does not offer them.
+	{Type: githubComment, Label: "GitHub Comment", Hidden: true},
+	{Type: discordPost, Label: "Post to Discord", Hidden: true},
 }
 
 // TypesFor lists the node types a kind's canvas offers.
 func TypesFor(kind string) []NodeType {
 	var out []NodeType
 	for _, t := range Types {
-		if t.Kind == kind || t.Kind == "" {
+		if (t.Kind == kind || t.Kind == "") && !t.Hidden {
 			t.Outputs = Outputs(Node{Type: t.Type})
 			out = append(out, t)
 		}
@@ -84,6 +88,18 @@ func TypeOf(typ string) (NodeType, bool) {
 type Graph struct {
 	Nodes []Node `json:"nodes"`
 	Links []Link `json:"links"`
+}
+
+// UnmarshalJSON reads a graph, turning nodes of the two posting blocks Post replaced into Post nodes.
+func (g *Graph) UnmarshalJSON(b []byte) error {
+	type plain Graph // without this method
+	if err := json.Unmarshal(b, (*plain)(g)); err != nil {
+		return err
+	}
+	for i, n := range g.Nodes {
+		g.Nodes[i] = upgrade(n)
+	}
+	return nil
 }
 
 // Node is one node on the canvas.
@@ -203,14 +219,12 @@ func (g Graph) Check(kind string) error {
 			_, err = DecisionSettingsOf(n, kind)
 		case CaseEntry:
 			_, err = CaseEntrySettingsOf(n)
-		case GitHubComment:
-			_, err = SettingsOf(n, DefaultGitHubComment())
+		case Post:
+			_, err = SettingsOf(n, DefaultPost())
 		case Condition:
 			_, err = SettingsOf(n, DefaultCondition())
 		case TestRun:
 			_, err = SettingsOf(n, DefaultTestRun())
-		case DiscordPost:
-			_, err = SettingsOf(n, DefaultDiscordPost())
 		case Approval:
 			_, err = SettingsOf(n, DefaultApproval(kind))
 		}

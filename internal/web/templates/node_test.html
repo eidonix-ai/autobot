@@ -9,7 +9,6 @@
 <table class="list dense"><tbody>{{range .Choices}}<tr><td>{{.Name}}</td><td class="num">{{printf "%.1f" (pct .P)}} %</td></tr>{{end}}</tbody></table></div>
 {{end}}
 {{with .Preview}}<p class="muted">{{$.Where}} (a test sends nothing):</p><pre class="entry">{{.}}</pre>{{end}}
-{{with .Comment}}<p class="muted">Would post on GitHub (a test posts nothing):</p><pre class="entry">{{.}}</pre>{{end}}
 {{if .Entry}}<p class="muted">{{if .Finalize}}Would be appended to the case file, finalized:{{else}}Would be kept in the case file as a draft:{{end}}</p>
 <pre class="entry">{{.Entry}}</pre>{{end}}
 <form method="post" action="{{.Action}}" class="stack wide step-form test-form"{{if and .Agent (not .Standalone)}} target="_blank" data-native{{end}}>

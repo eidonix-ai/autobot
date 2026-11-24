@@ -810,20 +810,12 @@ func stepWhat(n Node, kind string, models func(ModelRef) string) string {
 			q = string([]rune(q)[:59]) + "…"
 		}
 		return q
-	case GitHubComment:
-		s, err := SettingsOf(n, DefaultGitHubComment())
-		switch {
-		case err != nil:
+	case Post:
+		s, err := SettingsOf(n, DefaultPost())
+		if err != nil {
 			return ""
-		case s.Trial:
-			return "Trial: writes what it would post"
 		}
-		return "Posts a comment"
-	case DiscordPost:
-		if s, err := SettingsOf(n, DefaultDiscordPost()); err == nil && s.Summary {
-			return "Sets the case's summary"
-		}
-		return "Posts in the case's thread"
+		return s.Where()
 	case Approval:
 		s, err := SettingsOf(n, DefaultApproval(kind))
 		if err != nil {

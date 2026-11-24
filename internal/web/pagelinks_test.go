@@ -19,13 +19,13 @@ var pageLinkRE = regexp.MustCompile(`\[([^\]]*)\]\(https://autobot\.example\.com
 func TestLinksPublishPagesAndReuseThem(t *testing.T) {
 	c := newContEnv(t, nil)
 	c.st.SetSetting(publicAddressKey, "https://autobot.example.com")
-	cm := workflow.DefaultGitHubComment()
+	cm := workflow.DefaultPost()
 	cm.Message = "Comment: [[first|The first one]]"
 	build := func(first string) {
 		c.saveGraph(append(append([]workflow.Node{}, events...),
 			caseEntryNode("a", "First", first),
 			caseEntryNode("b", "Linker", "A=[[first]] B=[[first|The first]] C=[[case]] D=[[[[first]]"),
-			node("cm", workflow.GitHubComment, "Comment", cm)),
+			node("cm", workflow.Post, "Comment", cm)),
 			[2]string{"ev1", "a"}, [2]string{"a", "b"}, [2]string{"b", "cm"})
 	}
 	build("The v1 text, with <b>markup</b>.")

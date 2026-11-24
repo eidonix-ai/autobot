@@ -592,15 +592,15 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 			return stepOutcome{err: err}
 		}
 		return s.agentStep(ctx, rs, n, a, values)
-	case workflow.GitHubComment:
-		c, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment())
+	case workflow.Post:
+		p, err := workflow.SettingsOf(n, workflow.DefaultPost())
 		if err == nil {
-			err = c.Check()
+			err = p.Check()
 		}
 		if err != nil {
 			return stepOutcome{err: err}
 		}
-		return s.commentStep(ctx, rs, n, c, strings.TrimSpace(workflow.Render(c.Message, values)))
+		return s.postStep(ctx, rs, n, p, strings.TrimSpace(workflow.Render(p.Message, values)))
 	case workflow.Condition:
 		c, err := workflow.SettingsOf(n, workflow.DefaultCondition())
 		if err == nil {
@@ -628,15 +628,6 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 			return stepOutcome{err: err}
 		}
 		return s.testStep(ctx, rs, t, workflow.Render(t.Script, values))
-	case workflow.DiscordPost:
-		d, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost())
-		if err == nil {
-			err = d.Check()
-		}
-		if err != nil {
-			return stepOutcome{err: err}
-		}
-		return s.discordStep(ctx, rs, d, strings.TrimSpace(workflow.Render(d.Message, values)))
 	case workflow.Approval:
 		a, err := workflow.SettingsOf(n, workflow.DefaultApproval(kind))
 		if err == nil {
@@ -650,16 +641,46 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	return stepOutcome{err: fmt.Errorf("a %s block cannot run yet", n.Type)}
 }
 
-// commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
-// file. Every run adds a comment; none is ever edited.
-func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, c workflow.GitHubCommentSettings, text string) stepOutcome {
+// postStep says the text in each destination the block has ticked, GitHub then Discord: the one text,
+// rendered once, so a [[link]] in it is the same in both. A destination that cannot be reached for a
+// reason that is not a failure (a private repository stays out of Discord) is skipped and noted; one
+// that fails does not stop the other from being tried, and fails the step, which reports both.
+func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p workflow.PostSettings, text string) stepOutcome {
 	if text == "" {
-		return stepOutcome{err: errors.New("the comment came out empty")}
+		return stepOutcome{err: errors.New("the message came out empty")}
 	}
 	if rs.run.DryRun {
 		return stepOutcome{port: "out", output: text, note: "dry run: not posted"}
 	}
-	if c.Trial {
+	var reports []string
+	failed := false
+	report := func(where string, o stepOutcome) {
+		switch {
+		case errors.Is(o.err, errPrivateRepo):
+			reports = append(reports, where+": skipped, "+o.err.Error())
+		case o.err != nil:
+			failed = true
+			reports = append(reports, where+": "+o.err.Error())
+		default:
+			reports = append(reports, where+": "+o.note)
+		}
+	}
+	if p.GitHub {
+		report("GitHub", s.commentStep(ctx, rs, n, p.Trial, text))
+	}
+	if p.Discord {
+		report("Discord", s.discordStep(ctx, rs, p.Summary, text))
+	}
+	if failed {
+		return stepOutcome{err: errors.New(strings.Join(reports, "; "))}
+	}
+	return stepOutcome{port: "out", output: text, note: strings.Join(reports, "; ")}
+}
+
+// commentStep posts a comment on the item, or, in a trial, writes what it would post into the case
+// file. Every run adds a comment; none is ever edited.
+func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node, trial bool, text string) stepOutcome {
+	if trial {
 		if err := s.writeEntry(rs, n, "**Would post on GitHub:**\n\n"+text, true); err != nil {
 			return stepOutcome{err: err}
 		}

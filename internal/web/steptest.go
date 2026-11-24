@@ -53,14 +53,8 @@ func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, e
 			err = s.Check()
 		}
 		return s, []string{s.Entry}, err
-	case workflow.GitHubComment:
-		s, err := workflow.SettingsOf(n, workflow.DefaultGitHubComment())
-		if err == nil {
-			err = s.Check()
-		}
-		return s, []string{s.Message}, err
-	case workflow.DiscordPost:
-		s, err := workflow.SettingsOf(n, workflow.DefaultDiscordPost())
+	case workflow.Post:
+		s, err := workflow.SettingsOf(n, workflow.DefaultPost())
 		if err == nil {
 			err = s.Check()
 		}
@@ -171,10 +165,8 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request) {
 	switch st := settings.(type) {
 	case workflow.CaseEntrySettings:
 		data["Entry"], data["Finalize"] = workflow.Render(st.Entry, values), st.Finalize
-	case workflow.GitHubCommentSettings:
-		data["Comment"] = workflow.Render(st.Message, values)
-	case workflow.DiscordPostSettings:
-		data["Preview"], data["Where"] = workflow.Render(st.Message, values), "Would post on Discord"
+	case workflow.PostSettings:
+		data["Preview"], data["Where"] = workflow.Render(st.Message, values), "Would post: "+st.Where()
 	case workflow.ApprovalSettings:
 		data["Preview"], data["Where"] = workflow.Render(st.Request, values), "Would ask"
 	case workflow.DecisionSettings:

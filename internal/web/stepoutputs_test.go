@@ -37,7 +37,7 @@ func TestEveryStepKeepsItsOutputUnderItsName(t *testing.T) {
 	})
 	d := workflow.DefaultDecision(workflow.PR)
 	d.Model = workflow.ModelRef{Provider: dp.ID, Model: "d"}
-	comment := workflow.DefaultGitHubComment()
+	comment := workflow.DefaultPost()
 	comment.Message = "Comment on {discovery.summary}"
 	nodes := append(append([]workflow.Node{}, events...), a,
 		node("route", workflow.Decision, "Route", d),
@@ -50,7 +50,7 @@ func TestEveryStepKeepsItsOutputUnderItsName(t *testing.T) {
 		node("no", workflow.CaseEntry, "No branch", workflow.CaseEntrySettings{Entry: "NO", Finalize: true}),
 		// A merge of two branches reads the tags of both, which neither is the step before.
 		node("join", workflow.CaseEntry, "Joined", workflow.CaseEntrySettings{Entry: "JOIN {discovery.report} | {mid_note} | {yes_branch}", Finalize: true}),
-		node("cm", workflow.GitHubComment, "Review comment", comment))
+		node("cm", workflow.Post, "Review comment", comment))
 	g := workflow.Graph{Nodes: nodes, Links: []workflow.Link{
 		{From: "ev1", Out: "out", To: "A", In: "in"},
 		{From: "A", Out: "out", To: "cond", In: "in"},
@@ -339,52 +339,47 @@ func TestBlocksSeeOnlyTheTagsOfTheStepsBeforeThem(t *testing.T) {
 	}
 }
 
-// The blocks that post, GitHub Comment and Post to Discord, are endpoints: no tag, no field, nothing
-// on the card or in the Tags list, nothing kept in the case.
-func TestPostingBlocksHaveNoOutputTag(t *testing.T) {
+// The block that posts is an endpoint: no tag, no field, nothing on the card or in the Tags list, nothing
+// kept in the case.
+func TestPostingBlockHasNoOutputTag(t *testing.T) {
 	c := newContEnv(t, nil)
-	cm := workflow.DefaultGitHubComment()
-	cm.Message = "Hello {pr:title}"
-	dp := workflow.DefaultDiscordPost()
-	dp.Message = "Hi {pr:title}"
-	c.saveGraph(append(append([]workflow.Node{}, events...), node("cm", workflow.GitHubComment, "Review comment", cm), node("dp", workflow.DiscordPost, "Our post", dp),
-		caseEntryNode("ce", "Later", "x")), [2]string{"ev1", "cm"}, [2]string{"cm", "dp"}, [2]string{"dp", "ce"})
+	post := workflow.DefaultPost()
+	post.Message = "Hello {pr:title}"
+	c.saveGraph(append(append([]workflow.Node{}, events...), node("cm", workflow.Post, "Review comment", post), caseEntryNode("ce", "Later", "x")),
+		[2]string{"ev1", "cm"}, [2]string{"cm", "ce"})
 	g := c.storedGraph()
 	if len(g.OutputNames(workflow.PR)) != 1 || g.OutputNames(workflow.PR)["ce"] != "later" {
 		t.Errorf("output names: %v", g.OutputNames(workflow.PR))
 	}
-	for _, id := range []string{"cm", "dp"} {
-		code, body := c.b.get("/w/o/r/workflows/pr/nodes/" + id)
-		if code != 200 || strings.Contains(body, `name="output_to"`) || strings.Contains(body, "Output to") {
-			t.Errorf("the form of %s has an Output to:\n%s", id, body)
-		}
+	code, body := c.b.get("/w/o/r/workflows/pr/nodes/cm")
+	if code != 200 || strings.Contains(body, `name="output_to"`) || strings.Contains(body, "Output to") {
+		t.Errorf("the form of the Post has an Output to:\n%s", body)
 	}
-	_, body := c.b.get("/w/o/r/workflows/pr/nodes/ce")
-	if strings.Contains(body, "<code>{review_comment}</code>") || strings.Contains(body, "<code>{our_post}</code>") {
+	_, body = c.b.get("/w/o/r/workflows/pr/nodes/ce")
+	if strings.Contains(body, "<code>{review_comment}</code>") || strings.Contains(body, "<code>{post}</code>") {
 		t.Errorf("the Tags list offers a posting block's output:\n%s", body)
 	}
-	for id, n := range c.ui.summaries(c.ws, g, workflow.PR) {
-		if (id == "cm" || id == "dp") && strings.Contains(n, "→") {
-			t.Errorf("the card of %s says %q", id, n)
-		}
+	if card := c.ui.summaries(c.ws, g, workflow.PR)["cm"]; card != "GitHub (trial)" {
+		t.Errorf("the card says %q", card)
 	}
-	// Saving one stores no tag.
+	// Saving it stores no tag, though one is sent.
 	w, _ := c.st.Workflow(c.ws.ID, workflow.PR)
-	if code, _, body := c.b.post("/w/o/r/workflows/pr/nodes/cm", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(w.Version))}, "name": {"Review comment"}, "message": {"Hi"}, "trial": {"on"}, "output_to": {"sneaky"}}); code != 200 {
+	if code, _, body := c.b.post("/w/o/r/workflows/pr/nodes/cm", url.Values{"csrf": {c.csrf}, "version": {itoa(int64(w.Version))}, "name": {"Review comment"}, "message": {"Hi"},
+		"github": {"on"}, "trial": {"on"}, "output_to": {"sneaky"}}); code != 200 {
 		t.Fatalf("%d %s", code, body)
 	}
 	for _, n := range c.storedGraph().Nodes {
 		if n.ID == "cm" && strings.Contains(string(n.Settings), "output_to") {
-			t.Errorf("a tag was stored on the comment block: %s", n.Settings)
+			t.Errorf("a tag was stored on the Post: %s", n.Settings)
 		}
 	}
 	steps := c.run("ev1")
-	if steps["cm"].Status != "done" {
-		t.Fatalf("%+v", steps["cm"])
+	if steps["cm"].Status != "done" || steps["ce"].Status != "done" {
+		t.Fatalf("%+v", steps)
 	}
-	// The trial wrote the case file; the block kept no tag, and the one after it did not run (no Discord here).
-	if v := c.caseValues(); len(v) != 0 {
-		t.Errorf("tags were kept: %v", v)
+	// The trial wrote the case file; the Post kept no tag, and the entry after it kept its own.
+	if v := c.caseValues(); len(v) != 1 || v["later"] != "x" {
+		t.Errorf("tags kept: %v", v)
 	}
 }
 

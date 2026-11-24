@@ -9,40 +9,11 @@ import (
 	"strings"
 )
 
-// More step blocks: a comment on GitHub, a route by simple facts, and a test on a machine.
+// More step blocks: a route by simple facts, and a test on a machine.
 const (
-	GitHubComment = "github_comment"
-	Condition     = "condition"
-	TestRun       = "test_run"
+	Condition = "condition"
+	TestRun   = "test_run"
 )
-
-// GitHubCommentSettings are a GitHub Comment node's settings. In a trial run nothing is posted:
-// the comment it would have posted goes into the case file instead, to be read first.
-type GitHubCommentSettings struct {
-	Message string `json:"message"` // a template
-	Trial   bool   `json:"trial"`   // write what would be posted to the case file; post nothing
-}
-
-// DefaultGitHubComment is a new GitHub Comment node's settings: a trial, until someone decides.
-func DefaultGitHubComment() GitHubCommentSettings {
-	return GitHubCommentSettings{Message: "{input.report}", Trial: true}
-}
-
-// Check confirms a GitHub Comment node's settings are complete.
-func (s GitHubCommentSettings) Check() error {
-	switch {
-	case strings.TrimSpace(s.Message) == "":
-		return errors.New("write the comment")
-	case len(s.Message) > maxTemplate:
-		return fmt.Errorf("the comment is limited to %d characters", maxTemplate)
-	}
-	return nil
-}
-
-// GitHubCommentFromForm reads a GitHub Comment node's settings from its form.
-func GitHubCommentFromForm(get func(string) string) GitHubCommentSettings {
-	return GitHubCommentSettings{Message: strings.TrimSpace(get("message")), Trial: get("trial") == "on"}
-}
 
 // ConditionSettings are a Condition node's settings: rules about the item, each on or off, and
 // whether all of the ones on must hold or any. It routes without a model.
@@ -270,34 +241,8 @@ func SettingsOf[T any](n Node, def T) (T, error) {
 	return s, nil
 }
 
-// Discord and people.
-const (
-	DiscordPost = "discord_post"
-	Approval    = "approval"
-)
-
-// DiscordPostSettings are a Post to Discord node's settings: a message in the case's forum post, or
-// the post's first message (its summary) replaced.
-type DiscordPostSettings struct {
-	Message string `json:"message"` // a template
-	Summary bool   `json:"summary"` // replace the post's first message instead of adding one
-}
-
-// DefaultDiscordPost is a new Post to Discord node's settings.
-func DefaultDiscordPost() DiscordPostSettings {
-	return DiscordPostSettings{Message: "{input.report}"}
-}
-
-// Check confirms a Post to Discord node's settings are complete.
-func (s DiscordPostSettings) Check() error {
-	switch {
-	case strings.TrimSpace(s.Message) == "":
-		return errors.New("write the message")
-	case len(s.Message) > maxTemplate:
-		return fmt.Errorf("the message is limited to %d characters", maxTemplate)
-	}
-	return nil
-}
+// People.
+const Approval = "approval"
 
 // ApprovalSettings are a Human Approval node's settings: what is asked, and how long to wait.
 type ApprovalSettings struct {

@@ -83,8 +83,8 @@ func TestEveryStepHasAnOutputTag(t *testing.T) {
 		}
 		g.Nodes = append(g.Nodes, Node{ID: typ, Type: typ})
 	}
-	// The blocks that post are endpoints: no tag.
-	for _, typ := range []string{GitHubComment, DiscordPost} {
+	// The block that posts is an endpoint: no tag.
+	for _, typ := range []string{Post} {
 		if HasOutput(typ) {
 			t.Errorf("%s has an output", typ)
 		}
@@ -92,7 +92,7 @@ func TestEveryStepHasAnOutputTag(t *testing.T) {
 	}
 	got := g.OutputNames(PR)
 	for typ, want := range map[string]string{Agent: "agent", Decision: "decision", CaseEntry: "case_entry",
-		Condition: "condition", TestRun: "test_run", Approval: "human_approval", GitHubComment: "", DiscordPost: ""} {
+		Condition: "condition", TestRun: "test_run", Approval: "human_approval", Post: ""} {
 		if got[typ] != want {
 			t.Errorf("%s: %q, want %q", typ, got[typ], want)
 		}
@@ -140,7 +140,7 @@ func TestSummaryShowsTheOutputTag(t *testing.T) {
 		{Node{Type: Approval}, "Waits up to 24 hours · → {gather}"},
 		{Node{Type: CaseEntry}, "Appends a finalized entry · → {gather}"},
 		{Node{Type: Condition}, "Turn on a rule · → {gather}"},
-		{Node{Type: GitHubComment}, "Trial: writes what it would post"}, // no tag, so no arrow
+		{Node{Type: Post}, "GitHub (trial)"}, // no tag, so no arrow
 	} {
 		tag := "gather"
 		if !HasOutput(c.n.Type) {

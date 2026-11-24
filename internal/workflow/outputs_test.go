@@ -83,10 +83,10 @@ func TestInputTag(t *testing.T) {
 	}
 }
 
-// The templates of a new GitHub Comment, Discord Post and Case Entry block use {input.report}.
+// The template of a new Case Entry block uses {input.report}; a new Post block has no text yet.
 func TestNewBlocksDefaultToTheReport(t *testing.T) {
-	if DefaultGitHubComment().Message != "{input.report}" || DefaultDiscordPost().Message != "{input.report}" || DefaultCaseEntry().Entry != "{input.report}" {
-		t.Fatalf("%q %q %q", DefaultGitHubComment().Message, DefaultDiscordPost().Message, DefaultCaseEntry().Entry)
+	if DefaultCaseEntry().Entry != "{input.report}" || DefaultPost().Message != "" {
+		t.Fatalf("%q %q", DefaultCaseEntry().Entry, DefaultPost().Message)
 	}
 	// A block saved with its own text keeps it.
 	n := Node{ID: "c", Type: CaseEntry, Settings: json.RawMessage(`{"entry":"old: {previous_output}","finalize":true}`)}

@@ -147,6 +147,9 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 	if err := st.SeedPresetsV3(preTestRows()); err != nil { // the Pre-Test Report preset, once
 		return nil, err
 	}
+	if err := st.SeedPresetsV6(editorRows()); err != nil { // the Editor - Prose Cleanup preset, once
+		return nil, err
+	}
 	if err := updatePreTest(st); err != nil { // the Pre-Test Report sees the machines
 		return nil, err
 	}

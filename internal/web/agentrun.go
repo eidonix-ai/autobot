@@ -129,7 +129,8 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 	// first message, where it can be read on the block: Instruction, Additional instructions, Done when.
 	closing := a.EffectiveClosing(kind) == workflow.ClosingReport
 	base := preambleText(ws.Name, false) // the writing session's: its report is the final one
-	cfg := agent.Config{Model: model, System: preambleText(ws.Name, closing), MaxTurns: a.MaxTurns, Window: s.st.ModelWindow(ref.Provider, ref.Model)}
+	cfg := agent.Config{Model: model, System: preambleText(ws.Name, closing), MaxTurns: a.MaxTurns, Window: s.st.ModelWindow(ref.Provider, ref.Model),
+		NoCitationMarks: !a.EffectiveCitationMarks()}
 
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
@@ -265,7 +266,7 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		wtools := slices.DeleteFunc(slices.Clone(cfg.Tools), func(t agent.Tool) bool { return !slices.Contains(readOnlyTools, t.Spec.Name) })
 		wconv = agent.NewWriterConversation(ref.Model, ref.Provider, base, wtools)
 		wmodel := &agent.OpenAI{Endpoint: p.Endpoint, Key: key, Model: ref.Model, Session: wconv.Session}
-		writer = agent.Writer{Config: agent.Config{Model: wmodel, System: base, Tools: wtools, MaxTurns: a.EffectiveReportTurns(), RunID: id, Window: cfg.Window},
+		writer = agent.Writer{Config: agent.Config{Model: wmodel, System: base, Tools: wtools, MaxTurns: a.EffectiveReportTurns(), RunID: id, Window: cfg.Window, NoCitationMarks: cfg.NoCitationMarks},
 			Conv: wconv, Intro: intro, SummaryFormat: strings.TrimSpace(workflow.Render(a.EffectiveSummaryFormat(kind), values)), Time: reportMinutes * time.Minute, WarnPercent: a.EffectiveTimeWarn()}
 	}
 	flush := func(row int64, c *agent.Conversation) {

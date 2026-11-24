@@ -128,6 +128,9 @@ type Config struct {
 	// WithSummary makes finish take a summary as well as the report: the session that writes the
 	// report from the scratchpad. A finish without one is not refused: see Transcript.finish.
 	WithSummary bool
+	// NoCitationMarks leaves the report and summary as written: no "(not opened)" after a cited file
+	// the tools never read (a preset that rewrites text rather than researches code).
+	NoCitationMarks bool
 }
 
 const (
@@ -508,12 +511,16 @@ func (tr *Transcript) finish(ctx context.Context, cfg Config, args string, rejec
 	if json.Unmarshal([]byte(args), &a) != nil || (a.Status != Met && a.Status != Blocked) || strings.TrimSpace(a.Report) == "" {
 		return "error: finish needs a status (met or blocked) and a report", false
 	}
-	a.Report = tr.annotate(a.Report)
+	mark := tr.annotate
+	if cfg.NoCitationMarks {
+		mark = func(s string) string { return s }
+	}
+	a.Report = mark(a.Report)
 	summary := a.Report
 	if cfg.WithSummary {
 		summary = store.FallbackSummary(a.Report)
 		if strings.TrimSpace(a.Summary) != "" {
-			summary = tr.annotate(strings.TrimSpace(a.Summary))
+			summary = mark(strings.TrimSpace(a.Summary))
 		}
 	}
 	if a.Status == Met {

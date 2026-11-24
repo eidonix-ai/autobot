@@ -73,6 +73,36 @@ func TestBrowserClosingStep(t *testing.T) {
 	if st := state(); st.Closing != "" || !st.Disabled || st.Turns {
 		t.Fatalf("Code Quality: %+v", st)
 	}
+	// A preset's starting Additional instructions fill an empty box, are replaced by the next preset's
+	// while untouched, and are kept once the person has written their own.
+	extra := func() string {
+		var v string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#wf-modal [name=system_prompt]').value`, &v)); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "editor_prose")); err != nil {
+		t.Fatal(err)
+	}
+	if got := extra(); got != "{input.summary}" {
+		t.Fatalf("the Editor's starting text: %q", got)
+	}
+	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "code_quality")); err != nil {
+		t.Fatal(err)
+	}
+	if got := extra(); got != "" {
+		t.Fatalf("an untouched starting text stayed after another preset: %q", got)
+	}
+	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal [name=system_prompt]`, "my own"), chromedp.SetValue(`#wf-modal select[data-preset]`, "editor_prose")); err != nil {
+		t.Fatal(err)
+	}
+	if got := extra(); got != "my own" {
+		t.Fatalf("the person's own text was replaced: %q", got)
+	}
+	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal [name=system_prompt]`, ""), chromedp.SetValue(`#wf-modal select[data-preset]`, "code_quality")); err != nil {
+		t.Fatal(err)
+	}
 	// Custom unlocks it; the report brings its turns.
 	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "custom")); err != nil {
 		t.Fatal(err)

@@ -18,6 +18,10 @@ type Persona struct {
 	// default (a short summary of about 300 words).
 	Summary, IssueSummary string
 	Closing               string // the closing step: ClosingReport writes the report from the scratchpad; "" none
+	// NoCitationMarks turns off the "(not opened)" mark after a file the agent cites but never read.
+	NoCitationMarks bool
+	// Additional is what a block's Additional instructions box starts with when it chooses the preset.
+	Additional string
 }
 
 // SummaryFor is the preset's summary format for a workflow of kind.
@@ -164,4 +168,4 @@ Propose the missing tests concretely.`,
 		IssueInstruction: issueHead + `Work out how to reproduce this issue. When you have a machine, build the project and try, and report exactly what you ran and what happened.
 Propose a test that would catch it.`,
 		Issue: "The report says whether the issue reproduces, with exactly what was run and what happened, and proposes a test that would catch it."},
-}, append(ReviewPresets, PreTestPreset, ConsequencesPreset)...)
+}, append(ReviewPresets, PreTestPreset, ConsequencesPreset, EditorPreset)...)

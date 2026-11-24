@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -25,7 +26,8 @@ func presetRows(list []workflow.Persona) []store.Preset {
 	var rows []store.Preset
 	for _, p := range list {
 		rows = append(rows, store.Preset{Key: p.Key, Name: p.Name, Description: p.Description, PRInstruction: p.Instruction, PRGoal: p.Goal, PRSummary: p.Summary,
-			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks, Additional: p.Additional})
+			IssueInstruction: p.IssueInstruction, IssueGoal: p.Issue, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks, Additional: p.Additional,
+			RunDefaults: p.RunDefaults.JSON()})
 	}
 	return rows
 }
@@ -51,6 +53,13 @@ func subtractionRows() []store.Preset {
 	return presetRows([]workflow.Persona{workflow.SubtractionPreset})
 }
 
+// lensTeamRows is the Code Review - Lens Team preset, as rows.
+func lensTeamRows() []store.Preset { return presetRows([]workflow.Persona{workflow.LensTeamPreset}) }
+
+// reviewRunDefaultKeys are the shared presets that got starting run settings after they were made.
+var reviewRunDefaultKeys = []string{"review_all", "review_correctness", "review_architecture", "review_conventions", "review_simplicity", "review_prose",
+	"review_consequences", "review_subtraction", "review_pretest", "code_quality", "security", "test_engineer"}
+
 // editorRows is the Editor - Prose Cleanup preset, as rows.
 func editorRows() []store.Preset { return presetRows([]workflow.Persona{workflow.EditorPreset}) }
 
@@ -66,7 +75,8 @@ func presetRenames() []store.PresetRename {
 // asPersona is a stored preset as a block uses it.
 func asPersona(p *store.Preset) *workflow.Persona {
 	return &workflow.Persona{Key: p.Key, Name: p.Name, Description: p.Description, Instruction: p.PRInstruction, Goal: p.PRGoal, Summary: p.PRSummary,
-		IssueInstruction: p.IssueInstruction, Issue: p.IssueGoal, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks, Additional: p.Additional}
+		IssueInstruction: p.IssueInstruction, Issue: p.IssueGoal, IssueSummary: p.IssueSummary, Closing: p.Closing, NoCitationMarks: p.NoCitationMarks, Additional: p.Additional,
+		RunDefaults: workflow.ParseRunDefaults(p.RunDefaults)}
 }
 
 // resolved gives a block's settings the preset their key names, as the database has it now. A key
@@ -178,6 +188,9 @@ func switchToCustom(sg store.StoredGraph, p *store.Preset) (string, bool, error)
 // checkPresetTexts refuses a preset whose texts use a tag a block could not fill: only the built-in
 // tags are known to a preset, as the pull request's or the issue's own.
 func checkPresetTexts(p *store.Preset) error {
+	if err := workflow.ParseRunDefaults(p.RunDefaults).Check(); err != nil {
+		return &store.InputError{Msg: "Starting settings: " + err.Error() + "."}
+	}
 	if err := workflow.CheckTemplates(workflow.PR, nil, p.PRInstruction, p.PRGoal, p.PRSummary, p.Additional); err != nil {
 		return &store.InputError{Msg: "For pull requests: " + err.Error() + "."}
 	}
@@ -258,7 +271,26 @@ func presetFromForm(r *http.Request) store.Preset {
 	f := r.PostForm
 	return store.Preset{Name: f.Get("name"), Description: f.Get("description"), PRInstruction: f.Get("pr_instruction"), PRGoal: f.Get("pr_goal"),
 		PRSummary: strings.TrimSpace(f.Get("pr_summary")), IssueInstruction: f.Get("issue_instruction"), IssueGoal: f.Get("issue_goal"),
-		IssueSummary: strings.TrimSpace(f.Get("issue_summary")), Closing: f.Get("closing"), NoCitationMarks: f.Get("citation_marks") == "", Additional: strings.TrimSpace(f.Get("additional"))}
+		IssueSummary: strings.TrimSpace(f.Get("issue_summary")), Closing: f.Get("closing"), NoCitationMarks: f.Get("citation_marks") == "", Additional: strings.TrimSpace(f.Get("additional")),
+		RunDefaults: runDefaultsFromForm(f).JSON()}
+}
+
+// runDefaultsFromForm reads the five starting settings; a blank is none, and a value that is not a
+// number is -1, which Check refuses.
+func runDefaultsFromForm(f url.Values) workflow.RunDefaults {
+	num := func(name string) *int {
+		v := strings.TrimSpace(f.Get(name))
+		if v == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			n = -1
+		}
+		return &n
+	}
+	return workflow.RunDefaults{MaxTurns: num("rd_max_turns"), MaxMinutes: num("rd_max_minutes"), TimeWarnPercent: num("rd_time_warn_percent"),
+		SubAgents: num("rd_sub_agents"), SubAgentsPerRun: num("rd_sub_agents_per_run")}
 }
 
 // presetForm renders the form: empty for a new preset, or filled with p's fields (the stored ones, or
@@ -284,7 +316,7 @@ func (s *Server) presetForm(w http.ResponseWriter, r *http.Request, status int, 
 	if f == nil {
 		f = &store.Preset{}
 	}
-	data["F"], data["Shared"] = f, shared
+	data["F"], data["Shared"], data["RD"] = f, shared, workflow.ParseRunDefaults(f.RunDefaults)
 	if r.URL.Query().Has("copied") {
 		data["Notice"] = "This is your copy."
 	}
@@ -436,8 +468,8 @@ func (u presetUse) String() string {
 
 // presetOption is one choice of a block's Preset dropdown, with what choosing it shows in the form.
 type presetOption struct {
-	Key, Name, Instruction, Goal, Summary, Closing, Additional string
-	Selected                                                   bool
+	Key, Name, Instruction, Goal, Summary, Closing, Additional, RunDefaults string
+	Selected                                                                bool
 }
 
 // presetGroup is a heading of the dropdown with its choices.
@@ -458,7 +490,7 @@ func (s *Server) presetChoices(u *store.User, kind string, current workflow.Agen
 	for _, p := range all {
 		pers := asPersona(p)
 		o := presetOption{Key: p.Key, Name: p.Name, Instruction: pers.InstructionFor(kind), Goal: pers.GoalFor(kind), Summary: pers.SummaryFor(kind),
-			Closing: p.Closing, Additional: p.Additional, Selected: current.Persona == p.Key}
+			Closing: p.Closing, Additional: p.Additional, RunDefaults: p.RunDefaults, Selected: current.Persona == p.Key}
 		switch {
 		case p.Shared():
 			shared.Options = append(shared.Options, o)

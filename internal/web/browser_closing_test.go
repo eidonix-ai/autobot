@@ -103,6 +103,30 @@ func TestBrowserClosingStep(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal [name=system_prompt]`, ""), chromedp.SetValue(`#wf-modal select[data-preset]`, "code_quality")); err != nil {
 		t.Fatal(err)
 	}
+	// A preset's starting run settings fill the inputs when it is chosen, 0 per run unticks the limit, and
+	// Custom changes nothing.
+	runs := func() string {
+		var v string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`['max_turns', 'max_minutes', 'time_warn_percent', 'sub_agents'].map(function (n) { return document.querySelector('#wf-modal [name=' + n + ']').value; }).join(',') + ',' + document.querySelector('#wf-modal [name=limit_sub_agents]').checked`, &v)); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if err := chromedp.Run(ctx, chromedp.Click(`#wf-modal input[data-limit-subs]`), chromedp.SetValue(`#wf-modal select[data-preset]`, "review_lens_team")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(); got != "60,60,20,6,false" {
+		t.Fatalf("the Lens Team's starting settings: %q", got)
+	}
+	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal input[name=max_minutes]`, "45"), chromedp.SetValue(`#wf-modal select[data-preset]`, "custom")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(); got != "60,45,20,6,false" {
+		t.Fatalf("Custom changed the settings: %q", got)
+	}
+	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "code_quality")); err != nil {
+		t.Fatal(err)
+	}
 	// Custom unlocks it; the report brings its turns.
 	if err := chromedp.Run(ctx, chromedp.SetValue(`#wf-modal select[data-preset]`, "custom")); err != nil {
 		t.Fatal(err)

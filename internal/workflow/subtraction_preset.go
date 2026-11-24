@@ -15,7 +15,7 @@ var SubtractionPreset = Persona{Key: "review_subtraction", Name: "Code Review - 
 - <file:line: what goes, what replaces it (or nothing): about N lines>   (up to 5; "None.")
 **Left behind:** <code, flags, docs or tests the change makes dead elsewhere, as file:line, or "None.">
 **Link:** {pr}`,
-	IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
+	IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport, RunDefaults: ReviewRunDefaults()}
 
 const subtractionLens = `Your lens is subtraction, and only subtraction. Models and people add by default: more code, options, fallbacks, checks, comments and tests. Your job is the opposite. Find everything this pull request, and the code it touches, could do without, and show the smaller version. A good finding makes the code shorter and loses nothing the project needs.
 

@@ -401,6 +401,18 @@ git only through its environment, never a command line or the mirror's config.
    `SeedPresetsV7`): a pre-merge reviewer of subtraction only (whether the change is needed, what already exists, what nothing
    needs, what it leaves dead elsewhere, what can be said in fewer lines), each finding with what goes, its smaller replacement
    and the lines saved, never proposing an addition; its summary counts the change's lines and what could go.
+   A preset also carries starting run settings (`run_defaults`, JSON of `workflow.RunDefaults`: Max turns, Max minutes, Warn
+   before the time limit, Max sub-agents at a time, Limit sub-agents per run, 0 for no limit; each optional, checked on save with
+   the block's own bounds, shown in the preset's form under "Starting settings for blocks"). When a block's dialog chooses the
+   preset (not when it opens), each value the preset has is filled into the matching input, ticking or unticking the per-run
+   limit; Custom and the values a preset lacks change nothing, and nothing about how a block's own settings are stored or
+   used changes (the option's `data-run-defaults`, in workflow.js). The shared code review presets start with 60 turns, 30
+   minutes and a 20% warning (given once, only where they had none, by the `presets_v8_run_defaults` step).
+   Code Review - Lens Team (Derek, 2026-11-24, key `review_lens_team`, internal/workflow/lensteam_preset.go, seeded once by
+   `SeedPresetsV8`): one agent that hands each lens (correctness, architecture, conventions, subtraction, prose, unintended
+   consequences: the single-lens presets' own text constants) to a `spawn_agent` sub-agent in one turn, checks every blocking
+   and should-fix finding in the code, drops what it cannot show, and writes the report from the scratchpad; it starts blocks
+   with 60 turns, 60 minutes, 20% warning and 6 sub-agents at a time, no per-run limit.
    Code review presets (Derek, 2026-11-23): six shared presets, Code Review - All Lenses (the first
    reviewer, five lenses, findings grouped by lens) and one per lens (Correctness, Architecture,
    Conventions, Simplicity, Prose), in internal/workflow/review_presets.go. Each has the packet in its pull

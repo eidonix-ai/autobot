@@ -18,6 +18,21 @@ var PresetRenames = []PresetRename{
 	{"test_engineer", "Test Engineer", "Code Review - Testing"},
 }
 
+// The lens texts, one constant each: the Lens Team preset hands every lens to a sub-agent word for word.
+const (
+	correctnessLens = `Your lens is A, correctness and consequences: does it work everywhere it reaches? Check every caller, and every configuration the project supports: each model, cache scheme, parallel layout, multi-host setup and hardware target its documentation names. Check resource lifetimes, inactive and edge-case paths, state and graph transitions, and whether existing data, artifacts and exported cores still load.`
+
+	architectureLens = `Your lens is B, architecture and scope: does this belong in the repository, and is the approach right? Judge it against the project's rejection criteria and design-review principles as its documents state them: for example keeping the core simple, keeping each layer in its role, no per-model special cases or flags, compatibility with what exists, and measured evidence for performance claims.`
+
+	conventionsLens = `Your lens is C, conventions and duplication: compare each new construct with its closest precedent in the repository and flag where it departs from the established way, citing the precedent. Flag any existing helper or mechanism it duplicates, citing it.`
+
+	simplicityLens = `Your lens is D, simplicity: what can be deleted? Look for unneeded code, options, fallbacks and parallel paths, tests that do not prove a behaviour, and bloated comments. For each, show the smaller version.`
+
+	proseLens = `Your lens is E, prose: check the pull request's description, its commit messages, and the docs and comments it changes against the repository's writing rules. Check that the description has the four parts: why, what changed, the claimed result, and the evidence.`
+
+	consequencesLens = `Your lens is unintended consequences: what does this change affect that it does not set out to? Look for behaviour that changes outside its stated purpose; changed defaults, configuration, file and wire formats, APIs and metrics that other code, tools, operators or users rely on; performance, memory and resource effects on paths it does not target; tests, checks and safeguards it removes or weakens; how it behaves when upgrading, downgrading or running next to older versions; security and privacy side effects; and how it interacts with recent changes and other open pull requests in the same code (the orientation packet lists them). For each, say who or what is affected and how.`
+)
+
 // reviewRules follows each lens's text.
 const reviewRules = `How to review:
 - Read the project's own rules first: its charter (read_charter), and the contributor, design-review and writing guidance in the repository (AGENTS.md, CONTRIBUTING, docs on design and review). Judge against those, and cite them.
@@ -42,11 +57,18 @@ const reviewSummary = `**Verdict:** <blocking issues / should-fix issues only / 
 const reviewIssueInstruction = "This preset reviews pull requests; use it on a pull-request workflow."
 const reviewIssueGoal = "Not applicable to issues."
 
+// ReviewRunDefaults are the starting run settings of the code review presets: 60 turns, 30 minutes, the
+// warning at 20 percent. A function, so no two presets share the pointers.
+func ReviewRunDefaults() RunDefaults {
+	turns, minutes, warn := 60, 30, 20
+	return RunDefaults{MaxTurns: &turns, MaxMinutes: &minutes, TimeWarnPercent: &warn}
+}
+
 // review is a code review preset for a lens text.
 func review(key, name, description, lens string) Persona {
 	return Persona{Key: key, Name: name, Description: description,
 		Instruction: gatherPRHead + lens + "\n\n" + reviewRules, Goal: reviewGoal, Summary: reviewSummary,
-		IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
+		IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport, RunDefaults: ReviewRunDefaults()}
 }
 
 // PreTestInstructionV1 is the Pre-Test Report's first text, kept to recognise an untouched stored copy.
@@ -83,25 +105,25 @@ var PreTestPreset = Persona{Key: "review_pretest", Name: "Code Review - Pre-Test
 **Test plan:**
 - <configuration or hardware target: the result that would show it works>   (up to 5)
 **Link:** {pr}`,
-	IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport}
+	IssueInstruction: reviewIssueInstruction, Issue: reviewIssueGoal, Closing: ClosingReport, RunDefaults: ReviewRunDefaults()}
 
 // ConsequencesPreset looks for what a change affects that it does not mean to (Derek, 2026-11-24).
 var ConsequencesPreset = review("review_consequences", "Code Review - Unintended Consequences",
 	"What the change affects that it does not mean to: behaviour, formats, defaults, performance, safeguards and other work.",
-	"Your lens is unintended consequences: what does this change affect that it does not set out to? Look for behaviour that changes outside its stated purpose; changed defaults, configuration, file and wire formats, APIs and metrics that other code, tools, operators or users rely on; performance, memory and resource effects on paths it does not target; tests, checks and safeguards it removes or weakens; how it behaves when upgrading, downgrading or running next to older versions; security and privacy side effects; and how it interacts with recent changes and other open pull requests in the same code (the orientation packet lists them). For each, say who or what is affected and how.")
+	consequencesLens)
 
 // ReviewPresets are the six new code review presets.
 var ReviewPresets = []Persona{
 	review("review_all", "Code Review - All Lenses", "The first reviewer: reads a pull request through all five lenses and groups the findings by lens.",
 		"You are the first reviewer of this pull request, covering all five review lenses: A. Correctness and consequences; B. Architecture and scope; C. Conventions and duplication; D. Simplicity; E. Prose. (Each lens is described in the project's other Code Review presets: correctness everywhere the change reaches; whether it belongs and the approach is right; consistency with precedent and no duplicated helpers; what can be deleted; and the quality of the description, commits, docs and comments.) Give the findings grouped by lens."),
 	review("review_correctness", "Code Review - Correctness", "Lens A: does the change work everywhere it reaches, in every supported configuration.",
-		"Your lens is A, correctness and consequences: does it work everywhere it reaches? Check every caller, and every configuration the project supports: each model, cache scheme, parallel layout, multi-host setup and hardware target its documentation names. Check resource lifetimes, inactive and edge-case paths, state and graph transitions, and whether existing data, artifacts and exported cores still load."),
+		correctnessLens),
 	review("review_architecture", "Code Review - Architecture", "Lens B: does the change belong in the repository, and is the approach right.",
-		"Your lens is B, architecture and scope: does this belong in the repository, and is the approach right? Judge it against the project's rejection criteria and design-review principles as its documents state them: for example keeping the core simple, keeping each layer in its role, no per-model special cases or flags, compatibility with what exists, and measured evidence for performance claims."),
+		architectureLens),
 	review("review_conventions", "Code Review - Conventions", "Lens C: consistency with the closest precedent, and no duplicated helpers.",
-		"Your lens is C, conventions and duplication: compare each new construct with its closest precedent in the repository and flag where it departs from the established way, citing the precedent. Flag any existing helper or mechanism it duplicates, citing it."),
+		conventionsLens),
 	review("review_simplicity", "Code Review - Simplicity", "Lens D: what can be deleted, with the smaller version shown.",
-		"Your lens is D, simplicity: what can be deleted? Look for unneeded code, options, fallbacks and parallel paths, tests that do not prove a behaviour, and bloated comments. For each, show the smaller version."),
+		simplicityLens),
 	review("review_prose", "Code Review - Prose", "Lens E: the pull request's description, commit messages, docs and comments against the project's writing rules.",
-		"Your lens is E, prose: check the pull request's description, its commit messages, and the docs and comments it changes against the repository's writing rules. Check that the description has the four parts: why, what changed, the claimed result, and the evidence."),
+		proseLens),
 }

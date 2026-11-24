@@ -43,6 +43,12 @@ ALTER TABLE presets ADD COLUMN no_citation_marks INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE presets ADD COLUMN additional TEXT NOT NULL DEFAULT '';
 `
 
+// schemaRunDefaults: the starting run settings a block takes when it chooses the preset, as JSON
+// (workflow.RunDefaults); empty for none.
+const schemaRunDefaults = `
+ALTER TABLE presets ADD COLUMN run_defaults TEXT NOT NULL DEFAULT '';
+`
+
 // Preset is a preset as stored.
 type Preset struct {
 	ID          int64
@@ -60,15 +66,18 @@ type Preset struct {
 	// Additional is what a block's Additional instructions box is filled with when the block chooses
 	// the preset and the box is empty; one text for pull requests and issues.
 	Additional string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// RunDefaults is workflow.RunDefaults as JSON: the run settings a block starts with when it chooses
+	// the preset; "" for none.
+	RunDefaults string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Shared reports whether the preset belongs to everyone.
 func (p Preset) Shared() bool { return p.OwnerID == 0 }
 
 const presetCols = `p.id, p.key, p.name, p.description, COALESCE(p.owner_id, 0), COALESCE(` + authorName + `, ''), p.pr_instruction, p.pr_goal, p.pr_summary,
-	p.issue_instruction, p.issue_goal, p.issue_summary, p.closing, p.no_citation_marks, p.additional, p.created_at, p.updated_at`
+	p.issue_instruction, p.issue_goal, p.issue_summary, p.closing, p.no_citation_marks, p.additional, p.run_defaults, p.created_at, p.updated_at`
 
 const presetFrom = ` FROM presets p LEFT JOIN users u ON u.id = p.owner_id`
 
@@ -76,7 +85,7 @@ func scanPreset(r interface{ Scan(...any) error }) (*Preset, error) {
 	var p Preset
 	var created, updated int64
 	err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Description, &p.OwnerID, &p.Owner, &p.PRInstruction, &p.PRGoal, &p.PRSummary, &p.IssueInstruction, &p.IssueGoal, &p.IssueSummary,
-		&p.Closing, &p.NoCitationMarks, &p.Additional, &created, &updated)
+		&p.Closing, &p.NoCitationMarks, &p.Additional, &p.RunDefaults, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -177,7 +186,7 @@ func CheckPreset(p *Preset) error {
 	case strings.TrimSpace(p.PRGoal) == "" || strings.TrimSpace(p.IssueGoal) == "":
 		return invalid("say when the work is done, for pull requests and for issues")
 	case len(p.PRInstruction) > MaxPresetText || len(p.PRGoal) > MaxPresetText || len(p.IssueInstruction) > MaxPresetText || len(p.IssueGoal) > MaxPresetText ||
-		len(p.PRSummary) > MaxPresetText || len(p.IssueSummary) > MaxPresetText || len(p.Additional) > MaxPresetText:
+		len(p.PRSummary) > MaxPresetText || len(p.IssueSummary) > MaxPresetText || len(p.Additional) > MaxPresetText || len(p.RunDefaults) > MaxPresetText:
 		return invalid("the texts are limited to %d characters each", MaxPresetText)
 	case p.Closing != "" && p.Closing != "report":
 		return invalid("choose a closing step")
@@ -199,9 +208,9 @@ func (s *Store) CreatePreset(p Preset, actor *User) (*Preset, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, additional, created_at, updated_at, updated_by)
-		VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, key, p.Name, p.Description, p.OwnerID, p.PRInstruction, p.PRGoal, p.PRSummary,
-		p.IssueInstruction, p.IssueGoal, p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, now(), now(), actor.ID)
+	res, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, additional, run_defaults, created_at, updated_at, updated_by)
+		VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, key, p.Name, p.Description, p.OwnerID, p.PRInstruction, p.PRGoal, p.PRSummary,
+		p.IssueInstruction, p.IssueGoal, p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, p.RunDefaults, now(), now(), actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,15 +221,15 @@ func (s *Store) CreatePreset(p Preset, actor *User) (*Preset, error) {
 	return s.Preset(id)
 }
 
-// UpdatePreset changes a preset's name, description, texts, closing step, citation marks and starting additional instructions. Its key, owner and
+// UpdatePreset changes a preset's name, description, texts, closing step, citation marks, starting additional instructions and starting run settings. Its key, owner and
 // sharing never change.
 func (s *Store) UpdatePreset(id int64, p Preset, actor *User) error {
 	if err := CheckPreset(&p); err != nil {
 		return err
 	}
 	res, err := s.db.Exec(`UPDATE presets SET name = ?, description = ?, pr_instruction = ?, pr_goal = ?, pr_summary = ?, issue_instruction = ?, issue_goal = ?, issue_summary = ?,
-		closing = ?, no_citation_marks = ?, additional = ?, updated_at = ?, updated_by = ? WHERE id = ?`, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
-		p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, now(), actor.ID, id)
+		closing = ?, no_citation_marks = ?, additional = ?, run_defaults = ?, updated_at = ?, updated_by = ? WHERE id = ?`, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+		p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, p.RunDefaults, now(), actor.ID, id)
 	if err != nil {
 		return err
 	}
@@ -250,9 +259,9 @@ func (s *Store) SeedPresets(seeds []Preset) error {
 		return err
 	}
 	for _, p := range seeds {
-		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, additional, created_at, updated_at)
-			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
-			p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, now(), now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, additional, run_defaults, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+			p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, p.RunDefaults, now(), now()); err != nil {
 			return err
 		}
 	}
@@ -318,6 +327,38 @@ func (s *Store) SeedPresetsV7(adds []Preset) error {
 	return s.seedPresetsOnce("presets_v7_subtraction", nil, adds)
 }
 
+// SeedPresetsV8 adds the Code Review - Lens Team preset, once, on a database seeded before it.
+func (s *Store) SeedPresetsV8(adds []Preset) error {
+	return s.seedPresetsOnce("presets_v8_lens_team", nil, adds)
+}
+
+// SetRunDefaultsOnce gives the shared presets with these keys their starting run settings, once per
+// marker, and only where they have none yet: an admin's own edit is kept.
+func (s *Store) SetRunDefaultsOnce(marker string, keys []string, runDefaults string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var done string
+	err = tx.QueryRow(`SELECT value FROM settings WHERE key = ?`, marker).Scan(&done)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	for _, k := range keys {
+		if _, err := tx.Exec(`UPDATE presets SET run_defaults = ?, updated_at = ? WHERE key = ? AND owner_id IS NULL AND run_defaults = ''`, runDefaults, now(), k); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, '1')`, marker); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // seedPresetsOnce renames untouched seeded presets and adds missing ones, once per marker.
 func (s *Store) seedPresetsOnce(marker string, renames []PresetRename, adds []Preset) error {
 	tx, err := s.db.Begin()
@@ -339,9 +380,9 @@ func (s *Store) seedPresetsOnce(marker string, renames []PresetRename, adds []Pr
 		}
 	}
 	for _, p := range adds {
-		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, additional, created_at, updated_at)
-			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
-			p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, now(), now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO presets (key, name, description, owner_id, pr_instruction, pr_goal, pr_summary, issue_instruction, issue_goal, issue_summary, closing, no_citation_marks, additional, run_defaults, created_at, updated_at)
+			VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO NOTHING`, p.Key, p.Name, p.Description, p.PRInstruction, p.PRGoal, p.PRSummary, p.IssueInstruction, p.IssueGoal,
+			p.IssueSummary, p.Closing, p.NoCitationMarks, p.Additional, p.RunDefaults, now(), now()); err != nil {
 			return err
 		}
 	}

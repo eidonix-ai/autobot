@@ -115,7 +115,7 @@ func TestApprovalOnPageAndResume(t *testing.T) {
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ev", Status: "done", Port: "out", Output: "PR First Ready #7"})
 	e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: "waiting", StartedAt: time.Now()})
 	ap, _ := e.st.OpenApproval(id, "ap", "Run Retry uploads on cn7?", time.Now().Add(time.Hour))
-	e.st.StopOrphanWorkflows()
+	e.st.StopOrphanWorkflows(workflow.Restartable)
 	if _, err := e.st.SaveCharter(ws.ID, 1, "THE CHARTER", derek); err != nil {
 		t.Fatal(err)
 	}

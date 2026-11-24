@@ -283,3 +283,24 @@ const Junction = "junction"
 // JunctionSettings are a Node's settings: none, but the type is kept so that its form is a settings
 // form like any other block's.
 type JunctionSettings struct{}
+
+// Restartable says whether the node of a graph (as JSON) may simply run again after Autobot restarted
+// while it ran: an Agent, a Decision, a Condition or a Node only compute, and a run of them that was
+// cut off left nothing behind. A Post, a Case Entry, a Test Run or an Approval may have written,
+// posted or started something already, so they are never run twice.
+func Restartable(graph, node string) bool {
+	var g Graph
+	if json.Unmarshal([]byte(graph), &g) != nil {
+		return false
+	}
+	for _, n := range g.Nodes {
+		if n.ID == node {
+			switch n.Type {
+			case Agent, Decision, Condition, Junction:
+				return true
+			}
+			return false
+		}
+	}
+	return false
+}

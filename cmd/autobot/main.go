@@ -25,6 +25,7 @@ import (
 	"github.com/eidonix-ai/autobot/internal/netguard"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/web"
+	"github.com/eidonix-ai/autobot/internal/workflow"
 	"golang.org/x/term"
 )
 
@@ -105,7 +106,7 @@ func serve(args []string) error {
 	if err := st.StopOrphanRuns(); err != nil { // their goroutines died with the last process
 		return err
 	}
-	if err := st.StopOrphanWorkflows(); err != nil {
+	if err := st.StopOrphanWorkflows(workflow.Restartable); err != nil { // what may run again goes back to the queue
 		return err
 	}
 	if err := st.MoveRunFiles(); err != nil { // test-run output and agent messages that earlier versions kept in the database

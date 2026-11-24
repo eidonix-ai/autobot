@@ -311,7 +311,10 @@ git only through its environment, never a command line or the mirror's config.
    takes the agent's commands over a long poll (GET /connector/v1/runs/{id}/commands, answered at
    .../commands/{cid}/result) and runs each with Docker exec; files go in through a read-only inbox
    folder the connector writes itself. Queues live in memory in the web Server, so a restart ends
-   sessions (StopOrphanRuns); a session idle for 10 minutes, or whose agent ended, is closed. Tools:
+   sessions (StopOrphanRuns); a workflow run cut off by a restart is not lost (Derek, 2026-11-24): its Agent,
+   Decision, Condition and Node steps that were running start over and the run goes back to the queue,
+   keeping what had finished (StopOrphanWorkflows with workflow.Restartable); a Post, Case Entry, Test Run or
+   Approval step never runs twice and fails, and a dry run fails as before; a session idle for 10 minutes, or whose agent ended, is closed. Tools:
    bash (background with bash_output/bash_kill), read_file, write_file, edit_file, grep, glob.
    The engine (internal/web/engine.go) runs a workflow on one PR or issue from an event block
    (shift-click it: number, dry run): steps run when all their inputs have finished and at least

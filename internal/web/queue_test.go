@@ -351,7 +351,7 @@ func TestRestartStartsQueuedRuns(t *testing.T) {
 	e.gate.openAll()
 	orphan := e.queuedRun("running")
 	q1, q2, q3 := e.queuedRun("queued"), e.queuedRun("queued"), e.queuedRun("queued")
-	if err := e.st.StopOrphanWorkflows(); err != nil {
+	if err := e.st.StopOrphanWorkflows(workflow.Restartable); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.statuses(orphan, q1, q2, q3); got != "failed queued queued queued" {

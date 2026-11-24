@@ -237,19 +237,74 @@ func (s *Store) WorkflowSteps(run int64) (map[string]WorkflowStep, error) {
 	return out, rows.Err()
 }
 
-// StopOrphanWorkflows ends the runs an earlier Autobot process left running: their steps were
-// running in that process. Call it once at start.
-func (s *Store) StopOrphanWorkflows() error {
+// StopOrphanWorkflows deals with the runs an earlier Autobot process left running: their steps were
+// running in that process. Call it once at start, with restartable saying whether a node of a run's
+// graph may simply run again (Derek, 2026-11-24: a deploy must not kill the runs in progress). Such a
+// step of a run that is not a dry run goes back to pending, and its run goes back to the queue (to
+// the head of it: the queue starts the oldest first), keeping every step that had finished; a run that
+// also waits for a person stays running and is resumed with the others that wait. Any other step that
+// was running fails, and a run with nothing to start again or wait for fails. A dry run's values were
+// kept only in memory, so its steps are never started again.
+func (s *Store) StopOrphanWorkflows(restartable func(graph, node string) bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE workflow_steps SET status = 'failed', error = 'Autobot restarted while it ran', finished_at = ?
-		WHERE status = 'running' AND run_id IN (SELECT id FROM workflow_runs WHERE status = 'running')`, now()); err != nil {
+	type orphan struct {
+		id      int64
+		graph   string
+		dry     bool
+		running []string
+	}
+	rows, err := tx.Query(`SELECT w.id, w.graph, w.dry_run, s.node_id FROM workflow_runs w JOIN workflow_steps s ON s.run_id = w.id
+		WHERE w.status = 'running' AND s.status = 'running' ORDER BY w.id`)
+	if err != nil {
 		return err
 	}
-	// A run waiting for a person is kept, to be resumed; only runs with nothing left to wait for end.
+	var orphans []*orphan
+	for rows.Next() {
+		var o orphan
+		var node string
+		if err := rows.Scan(&o.id, &o.graph, &o.dry, &node); err != nil {
+			rows.Close()
+			return err
+		}
+		if n := len(orphans); n > 0 && orphans[n-1].id == o.id {
+			orphans[n-1].running = append(orphans[n-1].running, node)
+			continue
+		}
+		o.running = []string{node}
+		orphans = append(orphans, &o)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, o := range orphans {
+		again := false
+		for _, node := range o.running {
+			if !o.dry && restartable != nil && restartable(o.graph, node) {
+				again = true
+				if _, err := tx.Exec(`UPDATE workflow_steps SET status = 'pending', port = '', output = '', error = '', agent_run = 0, started_at = 0, finished_at = 0
+					WHERE run_id = ? AND node_id = ?`, o.id, node); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := tx.Exec(`UPDATE workflow_steps SET status = 'failed', error = 'Autobot restarted while it ran', finished_at = ?
+				WHERE run_id = ? AND node_id = ?`, now(), o.id, node); err != nil {
+				return err
+			}
+		}
+		if again {
+			if _, err := tx.Exec(`UPDATE workflow_runs SET status = 'queued' WHERE id = ?
+				AND id NOT IN (SELECT run_id FROM workflow_steps WHERE status = 'waiting')`, o.id); err != nil {
+				return err
+			}
+		}
+	}
+	// A run waiting for a person is kept, to be resumed; only runs with nothing left to start or wait for end.
 	if _, err := tx.Exec(`UPDATE workflow_runs SET status = 'failed', finished_at = ? WHERE status = 'running'
 		AND id NOT IN (SELECT run_id FROM workflow_steps WHERE status = 'waiting')`, now()); err != nil {
 		return err

@@ -140,7 +140,7 @@ func TestDecide(t *testing.T) {
 	// A run waiting for a person survives a restart; others end.
 	st.SetWorkflowStep(run, WorkflowStep{NodeID: "ap", Status: "waiting"})
 	other, _ := st.StartWorkflowRun(WorkflowRun{WorkspaceID: ws.ID, Kind: "pr", EventNode: "ev", Item: 8, Graph: "{}"}, []string{"ev"}, admin)
-	st.StopOrphanWorkflows()
+	st.StopOrphanWorkflows(nil)
 	if r, _ := st.WorkflowRun(run); r.Status != "running" {
 		t.Fatal("a waiting run was ended at start")
 	}

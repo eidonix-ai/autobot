@@ -66,6 +66,9 @@ git only through its environment, never a command line or the mirror's config.
    model discovery, decision providers for /v1/decisions and System One's /v1/systemone.
    Roles (Derek, 2026-11-22): admin is a super-admin (workspaces, members, users, sees all); a user
    configures everything inside their assigned workspaces but cannot create, rename or delete them.
+   Agent presets (piece 5) follow the same split (Derek, 2026-11-23): shared ones are made and changed by
+   admins and used by everyone; a user's own are changed only by their owner and usable in any workspace
+   they are assigned to; an admin can look at another user's but not change them.
 4. Case files (done): one per issue or PR, a Markdown log opened by intake (workflows, not built
    yet; `autobot case open` meanwhile). Writers add contributions: a draft they may revise until
    finalized, then appended and immutable, with its line range. Human edits are recorded with a
@@ -137,7 +140,7 @@ git only through its environment, never a command line or the mirror's config.
    10 minutes) writes the report from the scratchpad and finishes with it. The research's finish asks
    for a short summary only (the full report is written next). The writing session's finish takes two
    parts, both required: a summary (at most about 300 words: the 5 to 8 findings that matter most, one
-   line each with its citation, then the open questions) and the full report (opening with a short "Key
+   line each with its citation, then the open questions; or, when the block has a summary format, that format) and the full report (opening with a short "Key
    findings" section); both get the "(not opened)" marks. A finish with no summary is not refused: the
    summary is made from the report's Key findings section, else its first 300 words, and says so. Every
    run that has a report has a summary (a block with no closing step: its report; a failed writer, a
@@ -184,6 +187,34 @@ git only through its environment, never a command line or the mirror's config.
    paths that exist on the default branch. A source that is missing (no code copy or index yet, GitHub
    down) says "(not available: why)" in its section and never fails the run. A "Community (Discord)" section
    is left for when the Discord gateway reads exist.
+   Presets (Derek, 2026-11-23) live in the database (`presets` table, internal/store/presets.go), not in code:
+   key (a slug made from the name, never changed; a block stores only the key in `AgentSettings.Persona`),
+   name, one-line description, owner (none: shared), the Instruction, Done when and Summary format for pull
+   requests and again for issues, and the closing step. The built-in ones (internal/workflow/personas.go,
+   `SeedPresets`: their texts include their heads) are put in once, the first time a database is used; after
+   that the database is the authority and a removed one stays removed. A block on a preset follows its current
+   text (the web layer resolves the key with `Server.agentSettings` and hands the preset to the settings with
+   `WithPreset`; `EffectiveInstruction`, `EffectiveGoal`, `EffectiveSummaryFormat` and `EffectiveClosing` read it,
+   and a block whose preset is gone fails its check "the preset no longer exists"). Who may do what, on the
+   server: admins create, edit and remove shared presets; any user creates their own, from nothing or by
+   copying any preset (anyone signed in can open and copy any preset); only the owner edits or removes their
+   own (an admin cannot change another user's); a person may give a block Custom, a shared preset, their own,
+   or the one it already follows (not someone else's). On save the four texts and the formats pass
+   `CheckTemplates` for their kind with no step outputs (built-in tags only). The Presets page (`/presets`, top
+   bar) lists Shared and Mine (an admin also Other users', read-only) with "used by N blocks in M workspaces"
+   and one Open action per row; the form has name, description, pull request and issue Instruction, Done when,
+   Summary format, closing step, Save, Copy to my presets and Remove. Removing is two pages: the first says how
+   many blocks in how many workspaces will switch; the second switches every block that follows it (in every
+   saved workflow and every running run's snapshot, in one transaction, each changed workflow getting a new
+   version) to Custom, copying the preset's text for the block's kind, summary format and closing step into
+   the block. The block's dropdown groups Shared and Mine, plus the block's current preset if it is someone
+   else's, marked "(by user)", read-only with a link to copy it. Editing a shared preset shows how many blocks
+   will follow the new text. A preset's (or a Custom block's) Summary format, with the closing step "report",
+   is what the writing session's summary follows exactly (`writerPromptFor`: "follows this format exactly,
+   filling every field; keep the labels; write 'None.' where a field allows it and there is nothing"); with no
+   format the summary is the short one of about 300 words. Gather Information is seeded with a format for pull
+   requests (Author, Motivation, Scale, Proposal, Touches, Related items, Link, Autobot comments) and one for
+   issues (Reporter, Problem, Affects, Related items, Link, Autobot comments).
    Sub-agents: with "Max sub-agents at a time" above 0 the main agent has `spawn_agent` (title, task),
    which waits for the sub-agent and returns its report, its outcome, an index (no bodies) of its notes
    and the run's totals ("Sub-agents so far: 3 started, 112 turns used."); a call made while that many are

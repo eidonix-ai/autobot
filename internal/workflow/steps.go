@@ -635,8 +635,12 @@ func checkTag(kind string, outputs OutputSet, tag string) error {
 		return nil
 	}
 	if parent := TagField(tag); parent != "" {
-		if _, isOutput := outputs[parent]; isOutput || parent == "input" {
+		isAgent, isOutput := outputs[parent]
+		switch {
+		case isAgent || parent == "input":
 			return fmt.Errorf("{%s} is not a tag here: the parts of a step's output use a dot, such as {%s.report}", tag, parent)
+		case isOutput:
+			return fmt.Errorf("{%s} is not a tag here: a decision's output is one value, written {%s}", tag, parent)
 		}
 		return fmt.Errorf("{%s} is not a tag here: see the Tags list for the fields of {%s}", tag, parent)
 	}

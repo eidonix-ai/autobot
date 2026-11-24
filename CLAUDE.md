@@ -163,6 +163,9 @@ git only through its environment, never a command line or the mirror's config.
    opened is marked "(not opened)" where it is cited; the plan is the agent's own notes. Only an
    optional check model (Verify) can send it back, and that report is kept meanwhile. It is told
    once, at 5 turns left, and on its last turn only finish may be called, so a run always ends with a report.
+   A session cut off by its time limit gets one more turn, finish only, with 5 minutes of its own (a stop
+   still ends it at once); an Agent step whose agent still left no report fails, so nothing after it
+   decides or posts from nothing (Derek, 2026-11-24).
    The tools array is the same on every turn (a changed one makes the provider start over on the whole
    request): a turn that allows less (the last, the forced compact, the save turn) says which tools are
    allowed in its message, and a call to any other is answered with an error and not run.
@@ -288,7 +291,7 @@ git only through its environment, never a command line or the mirror's config.
    thread); the main agent reads them with scratchpad_index, scratchpad_read and scratchpad_search, agent
    "s1", and copies nothing automatically. The main agent's compaction message and the writing session's
    first message list the sub-agents. The run's totals include theirs; the run page shows each as
-   "Sub-agent s2: title". Time warning ("Warn before the time limit", 10% by default, 0 for none): when
+   "Sub-agent s2: title". Time warning ("Warn before the time limit", 20% by default since 2026-11-24, 0 for none): when
    that share of the time is left every session still working (the main one, each sub-agent, a late one
    on its first turn, the writing session of its own 10 minutes) is told once, at its next turn,
    "About N minutes left: finish with your report soon." Built so far: PR and web tools, personas, and machine sessions: an agent whose

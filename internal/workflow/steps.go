@@ -180,7 +180,7 @@ const (
 )
 
 // DefaultTimeWarn is the share of the time limit, in percent, left when the sessions of a run are warned.
-const DefaultTimeWarn = 10
+const DefaultTimeWarn = 20
 
 // EffectiveTimeWarn is the time warning in percent of the time limit; 0 is none.
 func (s AgentSettings) EffectiveTimeWarn() int {

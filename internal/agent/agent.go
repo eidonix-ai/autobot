@@ -179,6 +179,13 @@ const turnsWarned = 5
 // lastTurn is the agent's last message: on that turn finish is its only tool.
 const lastTurn = "This is your last turn: call finish now with your report of what you have found."
 
+// A session that reaches its time limit without finishing gets one more turn, on which only finish
+// may be called, with finishGrace of its own (Derek, 2026-11-24: an agent cut off at its limit left no
+// report, and the Decision after it chose from nothing). A person's stop still ends it at once.
+var finishGrace = 5 * time.Minute
+
+const timeUp = "The time limit is reached. "
+
 // session is one Run: a conversation being added to.
 type session struct {
 	cfg       Config
@@ -186,6 +193,7 @@ type session struct {
 	tr        *Transcript
 	tools     map[string]Tool
 	lineShown bool // this turn's answers already carry the context line
+	overtime  bool // the time limit is reached: this turn is the extra one, finish only
 }
 
 func (s *session) now() time.Time {
@@ -217,9 +225,13 @@ func (s *session) window() int {
 // outside it is answered with an error and not run. The last turn allows only finish; when the next
 // request is estimated past 85% of the window, only what the agent needs to save its work and compact.
 func (s *session) turnSpecs(turn int) (allowed []string, last, forced bool) {
-	if s.cfg.MaxTurns > 1 && turn == s.cfg.MaxTurns-1 {
+	if s.overtime || (s.cfg.MaxTurns > 1 && turn == s.cfg.MaxTurns-1) {
 		allowed = []string{"finish"}
-		s.conv.add(Message{Role: "user", Content: lastTurn + " Only " + availableOn(allowed) + "."})
+		say := lastTurn
+		if s.overtime {
+			say = timeUp + lastTurn
+		}
+		s.conv.add(Message{Role: "user", Content: say + " Only " + availableOn(allowed) + "."})
 		return allowed, true, false
 	}
 	if est := s.conv.estimate(); hasTool(s.conv.Tools, "compact") && est*100 > s.window()*forceAt {
@@ -280,8 +292,14 @@ func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 		}
 	}
 	nudges, rejected, warned := 0, 0, false
+	extra := -1 // the turn given after the time limit, once it is reached
 	for turn := 0; ; turn++ {
-		if turn >= cfg.MaxTurns {
+		if s.overtime && turn > extra {
+			tr.Outcome, tr.Error = Budget, "stopped at the time limit without finishing"
+			save()
+			return tr
+		}
+		if turn >= cfg.MaxTurns && turn != extra {
 			tr.Outcome, tr.Error = Budget, fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
 			save()
 			return tr
@@ -301,6 +319,15 @@ func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			s.compact(carriedByAutobot)
 			allowed, last, forced = s.turnSpecs(turn)
 			reply, use, err = complete(ctx, cfg.Model, conv.request(), conv.Tools)
+		}
+		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !IsStopped(ctx) && !s.overtime {
+			// Out of time: one more turn, finish only, with a little time of its own.
+			s.overtime, extra, warned = true, turn+1, true
+			gctx, cancel := detached(ctx, finishGrace)
+			defer cancel()
+			ctx = gctx
+			save()
+			continue
 		}
 		if err != nil {
 			tr.Outcome, tr.Error = Failed, err.Error()
@@ -328,6 +355,9 @@ func run(ctx context.Context, cfg Config, conv *Conversation) *Transcript {
 			}
 			if last && strings.TrimSpace(reply.Content) != "" { // it answered in words: that is its report
 				tr.Outcome, tr.Report, tr.Summary, tr.Error = Budget, reply.Content, "", fmt.Sprintf("stopped after %d turns without finishing", cfg.MaxTurns)
+				if s.overtime {
+					tr.Error = "stopped at the time limit without finishing"
+				}
 				save()
 				return tr
 			}

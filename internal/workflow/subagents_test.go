@@ -48,15 +48,15 @@ func TestSubAgentsPerRunSetting(t *testing.T) {
 	}
 }
 
-// The time warning is 10% of the time limit by default and for a block saved before it was a setting;
+// The time warning is 20% of the time limit by default and for a block saved before it was a setting;
 // 0 means none; the form sets it.
 func TestTimeWarningSetting(t *testing.T) {
-	if DefaultAgent(PR).EffectiveTimeWarn() != 10 {
-		t.Fatal("the default is not 10")
+	if DefaultAgent(PR).EffectiveTimeWarn() != 20 {
+		t.Fatal("the default is not 20")
 	}
 	var old AgentSettings
 	json.Unmarshal([]byte(`{"max_minutes":20}`), &old)
-	if old.EffectiveTimeWarn() != 10 {
+	if old.EffectiveTimeWarn() != DefaultTimeWarn {
 		t.Fatalf("an old block: %d", old.EffectiveTimeWarn())
 	}
 	var none AgentSettings
@@ -69,7 +69,7 @@ func TestTimeWarningSetting(t *testing.T) {
 			t.Errorf("%q: %d", in, got.EffectiveTimeWarn())
 		}
 	}
-	if got := form(nil); got.TimeWarnPercent != nil || got.EffectiveTimeWarn() != 10 { // a form that does not send it
+	if got := form(nil); got.TimeWarnPercent != nil || got.EffectiveTimeWarn() != DefaultTimeWarn { // a form that does not send it
 		t.Fatalf("%+v", got)
 	}
 	for _, bad := range []string{"-1", "51", "soon"} {

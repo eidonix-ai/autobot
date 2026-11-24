@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1093,6 +1094,13 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		if run.Status == "running" {
 			continue
 		}
+		if !hasReport(run) && run.Status != agent.Stopped {
+			// No report: the step fails, so nothing after it decides or posts from nothing (Derek,
+			// 2026-11-24: a Decision chose "yes" from "(The agent ended without a report…)").
+			var tr agent.Transcript
+			json.Unmarshal([]byte(run.Summary), &tr)
+			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent ended without a report: %s", cmp.Or(tr.Error, run.Status))}
+		}
 		tr, parts := s.agentParts(a.EffectiveClosing(rs.run.Kind) == workflow.ClosingReport, run)
 		if run.Status == agent.Failed {
 			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent failed: %s", tr.Error)}
@@ -1105,6 +1113,13 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		}
 		return o
 	}
+}
+
+// hasReport says whether an agent run ended with a report.
+func hasReport(run *store.AgentRun) bool {
+	var tr agent.Transcript
+	json.Unmarshal([]byte(run.Summary), &tr)
+	return strings.TrimSpace(tr.Report) != ""
 }
 
 // agentParts are what an Agent step hands on from its run, by suffix:

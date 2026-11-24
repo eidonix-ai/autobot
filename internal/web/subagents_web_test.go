@@ -201,9 +201,9 @@ func TestSubAgentAndTimeWarningSettingsInTheForm(t *testing.T) {
 	}
 	form := func() string { _, page := br.get("/w/o/r/workflows/pr/nodes/ag"); return page }
 
-	// A new block: no limit, the number box hidden, the time warning 10.
+	// A new block: no limit, the number box hidden, the time warning 20.
 	page := form()
-	if !strings.Contains(page, `name="limit_sub_agents" data-limit-subs>`) || !strings.Contains(page, `data-when-limit hidden`) || !strings.Contains(page, `name="time_warn_percent" min="0" max="50" value="10"`) ||
+	if !strings.Contains(page, `name="limit_sub_agents" data-limit-subs>`) || !strings.Contains(page, `data-when-limit hidden`) || !strings.Contains(page, `name="time_warn_percent" min="0" max="50" value="20"`) ||
 		!strings.Contains(page, "Max sub-agents at a time") || !strings.Contains(page, "Warn before the time limit (%)") {
 		t.Fatalf("a new block's form:\n%s", page)
 	}

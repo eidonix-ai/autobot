@@ -476,7 +476,7 @@ func TestPacketCharter(t *testing.T) {
 	f := newPacketFixture(t, packetGH{ci: "passed"})
 	sec := part(f.run(), "The charter")
 	mustHave(t, "charter", sec, "- (charter line 2) Helios is the compression engine and stays the priority.", "- (charter line 3) Docs must change with every feature.",
-		"The full charter is available as {charter}.")
+		"Read the full charter with read_charter.")
 	mustNot(t, "charter", sec, "storage backends")
 	var long strings.Builder
 	for i := 0; i < 20; i++ {
@@ -545,7 +545,7 @@ func TestPacketWithoutSources(t *testing.T) {
 	}
 	mustHave(t, "the author", part(text, "The author"), "alice, GitHub's association with the repository: NONE", "History: (not available: ")
 	// A new workspace has the template charter; an emptied one is said to be empty.
-	mustHave(t, "the template charter", part(text, "The charter"), "The full charter is available as {charter}.")
+	mustHave(t, "the template charter", part(text, "The charter"), "Read the full charter with read_charter.")
 	e.st.SaveCharter(ws.ID, 1, "\n", derek)
 	mustHave(t, "an empty charter", part(e.ui.orientation(context.Background(), ws, "tok-good", workflow.PR, 7, values, info, files), "The charter"), "(not available: the charter is empty)")
 	// An item the copy does not have, in a workspace whose copy is ready.

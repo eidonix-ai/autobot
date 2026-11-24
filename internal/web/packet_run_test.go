@@ -47,7 +47,7 @@ func TestAgentRunGetsThePacket(t *testing.T) {
 		t.Fatalf("the order is head %d, packet %d, instruction %d in:\n%.1500s", head, packet, instruction, first)
 	}
 	mustHave(t, "the first message", first, "#2 (open, issue) Alice's other issue — found by: same author", "### The author\n- alice, GitHub's association",
-		"Done when: Every angle has been looked into", "{charter}")
+		"Done when: Every angle has been looked into", "read_charter")
 	if strings.Contains(first, "{pr:packet}") {
 		t.Errorf("the tag was left unfilled")
 	}

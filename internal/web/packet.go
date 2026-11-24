@@ -516,5 +516,5 @@ func (p *packet) charterSection() string {
 	case total > len(rows):
 		text += fmt.Sprintf("\n- …%d more matching lines", total-len(rows))
 	}
-	return text + "\nThe full charter is available as {charter}."
+	return text + "\nRead the full charter with read_charter."
 }

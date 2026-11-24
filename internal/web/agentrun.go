@@ -75,7 +75,24 @@ var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)
 // readOnlyTools are the tools of a research session that the session writing its report keeps: the
 // code, pull request and item readers. No shell, no write tools, no web.
 var readOnlyTools = []string{"pr_files", "pr_diff", "pr_comments", "list_files", "read_file", "search_code", "search_history",
-	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob"}
+	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob", "read_charter"}
+
+// charterTool reads the workspace's project charter, as it is now: the orientation packet quotes only
+// the lines that mention the change's areas.
+func (s *Server) charterTool(ws *store.Workspace) agent.Tool {
+	return agent.Tool{Spec: agent.ToolSpec{Name: "read_charter", Description: "Read the project charter in full: the project's vision, goals, non-goals and roadmap, as the people running " + ws.Name + " wrote them in Autobot.",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+		Run: func(context.Context, json.RawMessage) (string, error) {
+			c, err := s.st.Charter(ws.ID, 0)
+			if errors.Is(err, store.ErrNotFound) || (err == nil && strings.TrimSpace(c.Body) == "") {
+				return "This workspace has no charter yet.", nil
+			}
+			if err != nil {
+				return "", err
+			}
+			return c.Body, nil
+		}}
+}
 
 // subAgentTools are the tools a sub-agent has out of its main agent's: the read-only ones, and the web
 // ones only when the block allows the internet. Never a shell, a write tool or spawn_agent.
@@ -172,6 +189,7 @@ func (s *Server) startAgent(ws *store.Workspace, kind string, n workflow.Node, a
 	}
 	// Once the workspace's copy of its pull requests and issues is complete, the agent can search and read it.
 	cfg.Tools = append(cfg.Tools, s.itemTools(ws)...)
+	cfg.Tools = append(cfg.Tools, s.charterTool(ws))
 	// With machines to use, the agent gets a shell on one, and reads the code there (at the pull
 	// request's head, or the default branch's) instead of through GitHub.
 	sess, note, err := s.openSandbox(ctx, ws, a, token, commit, by)

@@ -347,5 +347,13 @@ git only through its environment, never a command line or the mirror's config.
 
 ## Testing
 
-`go test -p 1 ./...`. Every rule that protects data or access has a test, and a test is only
-trusted once it has been seen to fail when the rule is broken.
+Two sizes (Derek, 2026-11-24: tests must not slow iteration down):
+- **Quick, while iterating:** `scripts/test.sh quick [package…]`: vet and tests of the changed
+  packages only, no browser tests.
+- **Full, for releases:** `scripts/test.sh full`: vet, every test, the browser tests, and the race
+  detector on the core packages. `deploy/install.sh` runs it first and does not deploy on a failure
+  (`AUTOBOT_SKIP_TESTS=1` only in an emergency).
+
+Every rule that protects data or access, or controls what gets posted or run, has a test, and such a
+test is only trusted once it has been seen to fail when the rule is broken. Other changes get ordinary
+tests, without the deliberate breakage.

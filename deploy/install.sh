@@ -5,6 +5,11 @@ set -eu
 host=${1:-triage}
 cd "$(dirname "$0")/.."
 
+# A release passes the full tests first. AUTOBOT_SKIP_TESTS=1 skips them, for an emergency only.
+if [ "${AUTOBOT_SKIP_TESTS:-}" != "1" ]; then
+	scripts/test.sh full
+fi
+
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/autobot-linux ./cmd/autobot
 scp -q /tmp/autobot-linux "$host":autobot.new
 scp -q deploy/autobot.service "$host":autobot.service.new

@@ -483,6 +483,7 @@ var inputTags = []Tag{
 
 var prTags = []Tag{
 	{"pr", "the pull request's link", false},
+	{"pr:link", "its link: the same as {pr}", true},
 	{"pr:number", "its number", true},
 	{"pr:title", "its title", true},
 	{"pr:body", "its description", true},
@@ -497,6 +498,7 @@ var prTags = []Tag{
 
 var issueTags = []Tag{
 	{"issue", "the issue's link", false},
+	{"issue:link", "its link: the same as {issue}", true},
 	{"issue:number", "its number", true},
 	{"issue:title", "its title", true},
 	{"issue:body", "its description", true},
@@ -633,6 +635,12 @@ func Value(values map[string]string, name string) string {
 	}
 	if n, ok := oldTags[name]; ok {
 		return values[n]
+	}
+	switch name { // the item's link, under the name that says what it is
+	case "pr:link":
+		return values["pr"]
+	case "issue:link":
+		return values["issue"]
 	}
 	if name == "case_file" {
 		return values["pr:case_file"] + values["issue:case_file"]

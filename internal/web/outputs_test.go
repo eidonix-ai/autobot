@@ -156,9 +156,10 @@ func TestInputAfterAnAgentAnAnotherStepAndAMerge(t *testing.T) {
 	c := newContEnv(t, nil)
 	c.llm.reply = outputsModel(`{"status":"met","report":"RESEARCH SHORT"}`)
 	a := c.agentNode("A", "Researcher", func(s *workflow.AgentSettings) {
-		s.Closing, s.ReportTurns, s.MaxTurns, s.SubAgents = workflow.ClosingReport, 4, 10, 1
+		s.Closing, s.ReportTurns, s.MaxTurns, s.SubAgents, s.OutputTo = workflow.ClosingReport, 4, 10, 1, "gather"
 	})
 	nodes := append(append([]workflow.Node{}, events...), a,
+		caseEntryNode("viatag", "Via tag", "T=[{gather.summary}] [{gather.report}] [{gather.scratchpad}]"), // the output tag, for a later step of the same run
 		caseEntryNode("whole", "Whole", "{input}"),
 		caseEntryNode("parts", "Parts", "S=[{input.summary}] R=[{input.report}] N=[{input.scratchpad}] P=[{previous_output}]"),
 		caseEntryNode("side", "Side", "SIDE TEXT"),
@@ -166,7 +167,7 @@ func TestInputAfterAnAgentAnAnotherStepAndAMerge(t *testing.T) {
 		caseEntryNode("merge", "Merge", "{input.report}"),
 		caseEntryNode("mergeall", "Merge all", "{input}"),
 		caseEntryNode("mergenotes", "Merge notes", "{input.scratchpad}|{input.summary}"))
-	c.saveGraph(nodes, [2]string{"ev1", "A"}, [2]string{"A", "whole"}, [2]string{"A", "parts"}, [2]string{"ev1", "side"}, [2]string{"side", "after"},
+	c.saveGraph(nodes, [2]string{"ev1", "A"}, [2]string{"A", "viatag"}, [2]string{"A", "whole"}, [2]string{"A", "parts"}, [2]string{"ev1", "side"}, [2]string{"side", "after"},
 		[2]string{"A", "merge"}, [2]string{"side", "merge"}, [2]string{"A", "mergeall"}, [2]string{"side", "mergeall"}, [2]string{"A", "mergenotes"}, [2]string{"side", "mergenotes"})
 	steps := c.run("ev1")
 	for id, s := range steps {
@@ -177,8 +178,9 @@ func TestInputAfterAnAgentAnAnotherStepAndAMerge(t *testing.T) {
 	bundle := "## Summary\n\nTHE SUMMARY\n\n## Report\n\nTHE REPORT\n\n## Notes\n\n" + notesText
 	want := map[string]string{
 		// After the agent.
-		"whole": bundle,
-		"parts": "S=[THE SUMMARY] R=[THE REPORT] N=[" + notesText + "] P=[THE REPORT]",
+		"whole":  bundle,
+		"viatag": "T=[THE SUMMARY] [THE REPORT] [" + notesText + "]",
+		"parts":  "S=[THE SUMMARY] R=[THE REPORT] N=[" + notesText + "] P=[THE REPORT]",
 		// After a step that is not an agent: its output, twice, and no notes.
 		"after": "SIDE TEXT | SIDE TEXT | SIDE TEXT | [] | SIDE TEXT",
 		// Several in: each under its name.

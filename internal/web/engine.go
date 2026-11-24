@@ -327,6 +327,31 @@ func (s *Server) drive(rs *runState) {
 	for _, l := range rs.g.Links {
 		incoming[l.To] = append(incoming[l.To], l)
 	}
+	// firedFrom are the sources of a step: the finished steps whose links into it fired. A Node
+	// (Junction) only connects, so the step after it has the steps that fired into the Node as its
+	// sources, as if their links went to it directly; a step reached twice counts once.
+	var firedFrom func(id string) []source
+	firedFrom = func(id string) []source {
+		var out []source
+		add := func(s source) {
+			if !slices.ContainsFunc(out, func(o source) bool { return o.node.ID == s.node.ID }) {
+				out = append(out, s)
+			}
+		}
+		for _, l := range incoming[id] {
+			src := steps[l.From]
+			switch {
+			case src.Status != "done" || src.Port != l.Out:
+			case nodes[l.From].Type == workflow.Junction:
+				for _, s := range firedFrom(l.From) {
+					add(s)
+				}
+			default:
+				add(source{nodes[l.From], src})
+			}
+		}
+		return out
+	}
 	type finished struct {
 		id string
 		o  stepOutcome
@@ -380,10 +405,7 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
-				var sources []source // copied here: the steps change while this one runs
-				for _, l := range fired {
-					sources = append(sources, source{nodes[l.From], steps[l.From]})
-				}
+				sources := firedFrom(n.ID) // copied here: the steps change while this one runs
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
 				// they came down its own branch or another, and the run goes on adding to the map.
 				tags := maps.Clone(rs.tags)
@@ -532,6 +554,9 @@ type stepOutcome struct {
 // runStep runs one step with the tags kept so far (those of the case and of the steps of this run
 // that have finished) and the output of the steps linked into it.
 func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
+	if n.Type == workflow.Junction { // a Node does no work: its output is what came into it
+		return stepOutcome{port: "out", output: s.inputValues(rs, sources)["input"]}
+	}
 	values := map[string]string{}
 	for k, v := range tags {
 		values[k] = v

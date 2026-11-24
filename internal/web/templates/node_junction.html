@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

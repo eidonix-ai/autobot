@@ -975,6 +975,8 @@ func stepWhat(n Node, kind string, models func(ModelRef) string) string {
 			first = string([]rune(first)[:49]) + "…"
 		}
 		return first
+	case Junction:
+		return "connects links"
 	case CaseEntry:
 		s, err := CaseEntrySettingsOf(n)
 		if err != nil {

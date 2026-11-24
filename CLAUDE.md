@@ -383,7 +383,7 @@ git only through its environment, never a command line or the mirror's config.
    driven from its record (`runState`, as a resumed run is). Stop works on a queued run (it becomes stopped
    and never starts). A run waiting for approval after a restart resumes without a slot.
    The Runs page, /w/{owner}/{repo}/workflow-runs (linked from the workspace tile and the canvas header):
-   the runs in progress (running ones, then queued ones in line order, "queued (2nd in line)", grey dot),
+   the runs in progress (running ones at work, then those waiting only for a person, "waiting: <block>", hollow dot, holding no place, then queued ones in line order, "queued (2nd in line)", grey dot),
    then the 100 most recent, with columns Item, Author (the item's, from the local copy, else the poller's
    record), Block (with the dry-run badge, on one line), Status, Started, Started by (a person, or "Live"
    for the poller) and Took, and below them the recent canvas tests; a case page lists the runs on its item

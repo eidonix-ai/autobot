@@ -418,7 +418,7 @@ func TestStoppedRunWritesNothing(t *testing.T) {
 		},
 	}
 	for what, do := range checks {
-		discordSent = nil
+		discordSent, fakeComments = nil, nil
 		do()
 		if len(fakeComments) != 0 || len(discordSent) != 0 {
 			t.Errorf("%s of a stopped run posted: %q %q", what, fakeComments, discordSent)

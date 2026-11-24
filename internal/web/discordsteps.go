@@ -209,6 +209,7 @@ func (s *Server) resume(ctx context.Context, id int64) error {
 		return err
 	}
 	rs := &runState{ws: ws, run: run, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}}
+	rs.builtIn["repo:opt_out"] = s.optOut(ws)
 	if c, err := s.st.CaseByNumber(ws.ID, run.Item); err == nil {
 		if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
 			return err

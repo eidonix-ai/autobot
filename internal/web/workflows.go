@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -61,8 +62,9 @@ func (s *Server) summaries(ws *store.Workspace, g workflow.Graph, kind string) m
 	out := map[string]string{}
 	tags := g.OutputNames(kind)
 	problems := s.templateProblems(g, kind)
+	optOut := s.optOut(ws)
 	for _, n := range g.Nodes {
-		out[n.ID] = workflow.Summary(n, kind, tags[n.ID], func(m workflow.ModelRef) string { return m.Model })
+		out[n.ID] = workflow.Summary(n, kind, tags[n.ID], optOut, func(m workflow.ModelRef) string { return m.Model })
 		if p, bad := problems[n.ID]; bad {
 			out[n.ID] = "⚠ " + p
 		}
@@ -514,6 +516,7 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		data["Machines"] = machines
 	default:
 		data["Activities"] = workflow.Activities
+		data["OptOut"] = s.optOut(ws)
 	}
 	if page != "node_event.html" {
 		if n.Type == workflow.Agent || n.Type == workflow.Decision {
@@ -642,6 +645,9 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)
+		if tag := s.optOut(ws); err == nil && workflow.Stops(e.SummonPhrase, tag) {
+			err = fmt.Errorf("the summon phrase matches the workspace's opt-out tag “%s”, so every summons would opt out", tag)
+		}
 		settings = e
 	}
 	if err == nil && workflow.HasOutput(n.Type) {

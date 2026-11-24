@@ -154,8 +154,12 @@ func (it *item) values(ws *store.Workspace) map[string]string {
 
 // verdict says whether the event's conditions would have started the workflow on the item, and
 // how each stood. A manual run goes ahead either way; this says what the poller would have done.
-func verdict(n workflow.Node, it *item, caseExists bool) (bool, []string) {
+//
+// optOut is the workspace's opt-out tag, and counts says whether a comment by someone can opt the item
+// out (its author, or a maintainer); the tag in the description always does.
+func verdict(n workflow.Node, it *item, caseExists bool, optOut string, counts func(author string) bool) (bool, []string) {
 	ev, _ := workflow.EventSettingsOf(n)
+	ev = ev.WithOptOut(optOut)
 	ok := true
 	var lines []string
 	check := func(pass bool, yes, no string) {
@@ -181,11 +185,15 @@ func verdict(n workflow.Node, it *item, caseExists bool) (bool, []string) {
 	}
 	stopped, by := workflow.Stops(it.body, ev.StopTag), "its description"
 	for _, c := range it.comments {
-		if !stopped && workflow.Stops(c.Body, ev.StopTag) {
+		if !stopped && workflow.Stops(c.Body, ev.StopTag) && counts(c.Author) {
 			stopped, by = true, "a comment by "+c.Author
 		}
 	}
-	check(!stopped, "no stop tag “"+ev.StopTag+"”", "the stop tag “"+ev.StopTag+"” is in "+by)
+	if ev.StopTag == "" {
+		note("the workspace has no opt-out tag")
+	} else {
+		check(!stopped, "no opt-out tag “"+ev.StopTag+"”", "the opt-out tag “"+ev.StopTag+"” is in "+by)
+	}
 	summoned := false
 	for _, c := range it.comments {
 		summoned = summoned || workflow.Summons(c.Body, ev.SummonPhrase, ev.StopTag)
@@ -250,6 +258,7 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 		return 0, err
 	}
 	rs := &runState{ws: ws, g: g, it: it, builtIn: it.values(ws), tags: map[string]string{}, by: by}
+	rs.builtIn["repo:opt_out"] = s.optOut(ws)
 	var caseFile *store.Case
 	if c, err := s.st.CaseByNumber(ws.ID, number); err == nil {
 		caseFile = c
@@ -262,7 +271,8 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		rs.builtIn["charter"] = c.Body
 	}
-	pass, lines := verdict(*ev, it, caseFile != nil)
+	token, _ := s.token(ws)
+	pass, lines := verdict(*ev, it, caseFile != nil, s.optOut(ws), s.stopRule(ctx, ws, token, it))
 	head := "The event would have started it."
 	if !pass {
 		head = "The event would not have started it; run by hand anyway."

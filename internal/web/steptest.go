@@ -496,6 +496,7 @@ func (s *Server) fillFromItem(ctx context.Context, ws *store.Workspace, values m
 		}
 	}
 	set("repo", ws.Name)
+	set("repo:opt_out", s.optOut(ws))
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		set("charter", c.Body)
 	}

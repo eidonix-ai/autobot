@@ -40,7 +40,7 @@ func TestPostSettings(t *testing.T) {
 		if got := s.Where(); got != want {
 			t.Errorf("%+v: %q, want %q", s, got, want)
 		}
-		if got := Summary(Node{Type: Post, Settings: mustJSON(s)}, PR, "", nil); got != want {
+		if got := Summary(Node{Type: Post, Settings: mustJSON(s)}, PR, "", "", nil); got != want {
 			t.Errorf("the card of %+v: %q, want %q", s, got, want)
 		}
 	}

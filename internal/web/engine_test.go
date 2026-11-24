@@ -110,13 +110,14 @@ func TestVerdict(t *testing.T) {
 	n := workflow.Node{ID: "e", Type: "pr_ready", Settings: b}
 	it := &item{kind: workflow.PR, number: 7, state: "open", author: "dependabot[bot]", pr: &github.PullRequest{Base: "main"},
 		comments: []github.Comment{{Author: "alice", Body: "@autobot review please"}, {Author: "bob", Body: "Autobot: ignore this one"}}}
-	ok, lines := verdict(n, it, false)
+	author := func(who string) bool { return who == "bob" || who == it.author }
+	ok, lines := verdict(n, it, false, "Autobot: ignore", author)
 	all := strings.Join(lines, "\n")
-	if ok || !strings.Contains(all, "✗ the stop tag “Autobot: ignore” is in a comment by bob") || !strings.Contains(all, "is a bot") {
+	if ok || !strings.Contains(all, "✗ the opt-out tag “Autobot: ignore” is in a comment by bob") || !strings.Contains(all, "is a bot") {
 		t.Fatalf("%v\n%s", ok, all)
 	}
 	it.comments, it.author = it.comments[:1], "alice"
-	if ok, lines := verdict(n, it, false); !ok {
+	if ok, lines := verdict(n, it, false, "Autobot: ignore", author); !ok {
 		t.Fatalf("should start:\n%s", strings.Join(lines, "\n"))
 	}
 }

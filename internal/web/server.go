@@ -163,6 +163,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/charter", s.auth(s.charterSave))
 	s.mux.Handle("GET /w/{owner}/{repo}/settings", s.auth(s.settings))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/name", s.admin(s.renameWorkspace))
+	s.mux.Handle("POST /w/{owner}/{repo}/settings/opt-out", s.auth(s.saveOptOut))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github", s.auth(s.setGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/github/remove", s.auth(s.removeGitHub))
 	s.mux.Handle("POST /w/{owner}/{repo}/settings/members", s.admin(s.setMembers))

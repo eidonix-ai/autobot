@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -83,4 +84,25 @@ func (s *Store) SetSettingIfEmpty(key, value string) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+func optOutKey(workspaceID int64) string { return "opt_out/" + strconv.FormatInt(workspaceID, 10) }
+
+// OptOutTag returns a workspace's opt-out tag: what the author of a pull request or issue, or a
+// maintainer, writes to keep Autobot off it. "" means no opt-out. ErrNotFound means it was never set.
+func (s *Store) OptOutTag(workspaceID int64) (string, error) {
+	return s.Setting(optOutKey(workspaceID))
+}
+
+// SetOptOutTag sets a workspace's opt-out tag ("" for none).
+func (s *Store) SetOptOutTag(ws *Workspace, tag string, actor *User) error {
+	tag = strings.TrimSpace(tag)
+	if err := s.SetSetting(optOutKey(ws.ID), tag); err != nil {
+		return err
+	}
+	what := "removed the opt-out tag"
+	if tag != "" {
+		what = "set the opt-out tag to “" + tag + "”"
+	}
+	return addEvent(s.db, ws.ID, actor, what)
 }

@@ -297,8 +297,11 @@ type EventSettings struct {
 	Mode          string `json:"mode"`           // "summoned": only when summoned; "always": whenever the event happens
 	SummonPhrase  string `json:"summon_phrase"`  // a comment containing it summons Autobot
 	ReviewRequest bool   `json:"review_request"` // PRs: a review request to the workspace's GitHub user also summons
-	StopTag       string `json:"stop_tag"`       // the item or any comment containing it stops the run
-	TrustedOnly   bool   `json:"trusted_only"`   // honor summons and the stop tag only from the author and collaborators
+	// StopTag was the block's own opt-out tag. The workspace has one now (its Settings), which every
+	// block uses; the old field stays in saved blocks, unused, and the callers of Decide and Summons
+	// put the workspace's in it.
+	StopTag     string `json:"stop_tag,omitempty"`
+	TrustedOnly bool   `json:"trusted_only"` // honor summons only from the author and collaborators
 
 	// PR Activity only: what activity on an open pull request runs it, and how long to wait for a
 	// burst of activity to settle first.
@@ -328,7 +331,7 @@ var Activities = []struct{ Key, Label string }{
 
 // DefaultEvent is a new event node's settings.
 func DefaultEvent(typ string) EventSettings {
-	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", StopTag: "Autobot: ignore", TrustedOnly: true}
+	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", TrustedOnly: true}
 	t, _ := TypeOf(typ)
 	if t.Kind == Issue {
 		s.SummonPhrase = "@autobot"
@@ -363,12 +366,8 @@ func (s EventSettings) Check(typ string) error {
 	switch {
 	case s.Mode != "summoned" && s.Mode != "always":
 		return errors.New("choose when it runs: only if summoned, or always")
-	case strings.TrimSpace(s.StopTag) == "" || len(s.StopTag) > 100:
-		return errors.New("the stop tag must be 1 to 100 characters")
 	case strings.TrimSpace(s.SummonPhrase) == "" || len(s.SummonPhrase) > 100:
 		return errors.New("the summon phrase must be 1 to 100 characters")
-	case Stops(s.SummonPhrase, s.StopTag):
-		return errors.New("the stop tag matches the summon phrase itself, so every summons would stop the run")
 	}
 	if kind == Issue {
 		return nil
@@ -423,7 +422,15 @@ func (s EventSettings) HasActivity(key string) bool {
 	return false
 }
 
-// Summary is the one line an event node shows on the canvas.
+// WithOptOut is the settings with the workspace's opt-out tag, which is what stops a run whatever the
+// block saved.
+func (s EventSettings) WithOptOut(tag string) EventSettings {
+	s.StopTag = strings.TrimSpace(tag)
+	return s
+}
+
+// Summary is the one line an event node shows on the canvas; its StopTag is the workspace's opt-out tag
+// (WithOptOut).
 func (s EventSettings) Summary() string {
 	parts := []string{"Always runs"}
 	if s.Mode == "summoned" {
@@ -432,7 +439,9 @@ func (s EventSettings) Summary() string {
 	if s.CaseExists {
 		parts = append(parts, "with a case file")
 	}
-	parts = append(parts, "stops on “"+s.StopTag+"”")
+	if s.StopTag != "" {
+		parts = append(parts, "stops on “"+s.StopTag+"”")
+	}
 	return strings.Join(parts, " · ")
 }
 
@@ -444,7 +453,6 @@ func EventFromForm(typ string, get func(string) string, all func(string) []strin
 	s := EventSettings{
 		Mode:         get("mode"),
 		SummonPhrase: strings.TrimSpace(get("summon_phrase")),
-		StopTag:      strings.TrimSpace(get("stop_tag")),
 		TrustedOnly:  get("trusted_only") == "on",
 	}
 	if kind == Issue {

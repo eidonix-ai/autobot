@@ -451,6 +451,7 @@ func isOutputPart(name string) bool {
 
 var commonTags = []Tag{
 	{"repo", "the repository, owner/name", true},
+	{"repo:opt_out", "the opt-out tag: what the item's author or a maintainer writes to stop Autobot (a workspace setting)", true},
 	{"charter", "the project charter (kept in Autobot)", true},
 	{"case", "the item's case file so far", true},
 	{"case:link", "the link to the case file, which anyone with it can read", true},
@@ -855,11 +856,11 @@ func stepWhat(n Node, kind string, models func(ModelRef) string) string {
 }
 
 // Summary is the one line any node shows on the canvas; tag is the node's output tag (OutputNames),
-// and models names a model reference.
-func Summary(n Node, kind, tag string, models func(ModelRef) string) string {
+// optOut the workspace's opt-out tag, and models names a model reference.
+func Summary(n Node, kind, tag, optOut string, models func(ModelRef) string) string {
 	if t, _ := TypeOf(n.Type); t.Event {
 		if s, err := EventSettingsOf(n); err == nil {
-			return s.Summary()
+			return s.WithOptOut(optOut).Summary()
 		}
 		return ""
 	}

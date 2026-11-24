@@ -179,6 +179,7 @@ type pollWS struct {
 	ws     *store.Workspace
 	token  string
 	login  string // Autobot's GitHub user here; what it says itself is never news
+	optOut string // the workspace's opt-out tag, for every event block
 	now    time.Time
 	starts int
 	branch string // the repository's default branch, once asked
@@ -191,7 +192,7 @@ func (s *Server) pollWorkspace(ctx context.Context, ws *store.Workspace, wfs []s
 	if err != nil {
 		return err
 	}
-	pw := &pollWS{s: s, ws: ws, token: token, now: s.poll.now(), nodes: map[string][]workflow.Node{}}
+	pw := &pollWS{s: s, ws: ws, token: token, now: s.poll.now(), nodes: map[string][]workflow.Node{}, optOut: s.optOut(ws)}
 	if id, _ := s.identity(ws); id != nil {
 		pw.login = id.Login
 	}
@@ -585,6 +586,7 @@ func (pw *pollWS) decideNode(ctx context.Context, kind string, n workflow.Node) 
 func (pw *pollWS) decideItem(ctx context.Context, kind string, n workflow.Node, number int) error {
 	st := pw.s.st
 	ev, _ := workflow.EventSettingsOf(n)
+	ev = ev.WithOptOut(pw.optOut) // the workspace's, whatever the block saved
 	it, err := st.PollItem(pw.ws.ID, number)
 	if err != nil {
 		return err
@@ -711,18 +713,22 @@ func (pw *pollWS) facts(ctx context.Context, kind string, n workflow.Node, ev wo
 	if err != nil {
 		return f, err
 	}
-	// Only a comment that says the summon phrase or the stop tag needs to be known as trusted.
+	// Trusted is the item's author, or someone with write access. Only a comment that has the opt-out
+	// tag, or the summon phrase where summons are for the trusted only, needs it looked up.
 	trusted := func(who, text string) (bool, error) {
-		if !ev.TrustedOnly || who == f.Author {
+		if strings.EqualFold(who, f.Author) {
 			return true, nil
 		}
-		if !workflow.Stops(text, ev.StopTag) && !workflow.Summons(text, ev.SummonPhrase, ev.StopTag) {
+		if !workflow.Stops(text, ev.StopTag) && !(ev.TrustedOnly && workflow.Summons(text, ev.SummonPhrase, ev.StopTag)) {
 			return false, nil
 		}
 		role, err := pw.role(ctx, who)
 		return writes(role), err
 	}
 	for _, c := range comments {
+		if pw.login != "" && strings.EqualFold(c.Author, pw.login) {
+			continue // what Autobot says itself is never an opt-out nor a summons
+		}
 		t, err := trusted(c.Author, c.Body)
 		if err != nil {
 			return f, err

@@ -146,11 +146,11 @@ func TestSummaryShowsTheOutputTag(t *testing.T) {
 		if !HasOutput(c.n.Type) {
 			tag = ""
 		}
-		if got := Summary(c.n, PR, tag, models); got != c.want {
+		if got := Summary(c.n, PR, tag, "", models); got != c.want {
 			t.Errorf("%s: %q, want %q", c.n.Type, got, c.want)
 		}
 	}
-	if got := Summary(Node{Type: "pr_ready"}, PR, "", models); strings.Contains(got, "→") {
+	if got := Summary(Node{Type: "pr_ready"}, PR, "", "", models); strings.Contains(got, "→") {
 		t.Errorf("an event block: %q", got)
 	}
 }

@@ -31,6 +31,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 	e := newEnv(t)
 	admin := e.user("derek", true)
 	ws, _ := e.st.CreateWorkspace("o/r", admin, "", "")
+	e.st.SetOptOutTag(ws, "autobot: skip", admin) // the workspace's; the event block shows it
 	prov, err := e.st.CreateProvider(store.ProviderEdit{Name: "Eidonix", Kind: store.KindOpenAI, Endpoint: "https://llm.example/v1"}, admin)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +122,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		chromedp.Click(`#node-1 .wf-title`, chromedp.ByQuery),
 		chromedp.WaitVisible(`#wf-modal form.node-form`),
 		chromedp.Click(`#wf-modal input[name=mode][value=summoned]`),
-		chromedp.SetValue(`#wf-modal input[name=stop_tag]`, "autobot: skip"),
+		chromedp.SetValue(`#wf-modal input[name=summon_phrase]`, "autobot: go"),
 		chromedp.SetValue(`#wf-modal input[name=name]`, "New ready PRs"),
 		chromedp.Click(`#wf-modal form.node-form button:not([type])`),
 		waitSaved,
@@ -134,7 +135,7 @@ func TestBrowserWorkflowCanvas(t *testing.T) {
 		t.Fatalf("settings: %v\nstatus: %q\nmodal: %s", err, status, modalText)
 	}
 	s, _ := workflow.EventSettingsOf(stored().Nodes[0])
-	if s.Mode != "summoned" || s.StopTag != "autobot: skip" || stored().Nodes[0].ID != id {
+	if s.Mode != "summoned" || s.SummonPhrase != "autobot: go" || stored().Nodes[0].ID != id {
 		t.Fatalf("stored settings: %+v", s)
 	}
 	if name != "New ready PRs" || stored().Nodes[0].Name != "New ready PRs" {

@@ -165,7 +165,7 @@ func TestRunsPageWhoIsWho(t *testing.T) {
 		return ""
 	}
 	for id, wants := range map[int64][]string{
-		byHand: {`<td class="nowrap">alice-in-index</td>`, `<td>PR First Ready <span class="muted">dry run</span></td>`, `<td class="nowrap">derek</td>`},
+		byHand: {`<td class="nowrap">alice-in-index</td>`, `<td class="nowrap">PR First Ready <span class="muted">dry run</span></td>`, `<td class="nowrap">derek</td>`},
 		live:   {`<td class="nowrap">bob-from-poller</td>`, `<span class="muted">Live</span>`},
 		q1:     {`<span class="dot off"></span> queued (1st in line)`, `<span class="muted">Live</span>`},
 		q2:     {`<span class="dot off"></span> queued (2nd in line)`, `<td class="nowrap">derek</td>`},

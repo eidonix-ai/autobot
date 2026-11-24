@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/eidonix-ai/autobot/internal/agent"
@@ -27,6 +28,7 @@ type runRow struct {
 	Kind      string // "pull request" or "issue"
 	Block     string // the event block it started from
 	State     string // the run's status: queued, running, done, failed or stopped
+	Waiting   bool   // running, with nothing at work but a step waiting for a person's answer
 	Status    string // State as the page says it: a queued run says its place in line
 	Dot       string // busy, on or off
 	Dry       bool
@@ -123,9 +125,39 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 		if row.Dot == "" {
 			row.Dot = "off"
 		}
+		if r.Status == "running" {
+			// A run whose only unfinished work is a person's answer gives its place to others (see
+			// queue.go): it says so, and is not counted as one of those running.
+			if name := waitingOn(s.st, r.ID, g); name != "" {
+				row.Status, row.Dot, row.Waiting = "waiting: "+name, "wait", true
+			}
+		}
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// waitingOn is the name of the step a running run waits on for a person's answer, when no step of it
+// is working; "" otherwise.
+func waitingOn(st *store.Store, run int64, g workflow.Graph) string {
+	steps, err := st.WorkflowSteps(run)
+	if err != nil {
+		return ""
+	}
+	name := ""
+	for id, step := range steps {
+		switch step.Status {
+		case "running":
+			return ""
+		case "waiting":
+			for _, n := range g.Nodes {
+				if n.ID == id && (name == "" || g.NameOf(n) < name) {
+					name = g.NameOf(n)
+				}
+			}
+		}
+	}
+	return name
 }
 
 // runsPage lists a workspace's workflow runs, those in progress first, then the most recent, and its
@@ -146,6 +178,19 @@ func (s *Server) runsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := s.runRows(ws, runs)
+	// The runs at work first, then those waiting for a person, then the queue, then those that ended.
+	rank := func(r runRow) int {
+		switch {
+		case r.State == "running" && !r.Waiting:
+			return 0
+		case r.Waiting:
+			return 1
+		case r.State == "queued":
+			return 2
+		}
+		return 3
+	}
+	slices.SortStableFunc(rows, func(a, b runRow) int { return rank(a) - rank(b) })
 	running := false
 	for _, row := range rows {
 		running = running || row.State == "running" || row.State == "queued"

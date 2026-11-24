@@ -196,3 +196,30 @@ func TestRunsPageWhoIsWho(t *testing.T) {
 		}
 	}
 }
+
+// A running run whose only unfinished step waits for a person says so, by the step's name, and is
+// listed after the runs at work: it does not hold one of their places.
+func TestRunsPageWaitingRuns(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	approvalWorkflow(t, e, ws, derek)
+	w, _ := e.st.Workflow(ws.ID, workflow.PR)
+	start := func(item int, step string) int64 {
+		id, err := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: item, Graph: w.Graph}, []string{"ev", "ap"}, derek)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.st.SetWorkflowStep(id, store.WorkflowStep{NodeID: "ap", Status: step})
+		return id
+	}
+	working := start(6, "running")
+	waiting := start(7, "waiting") // the newer: listed first among those running, but for its wait
+	_, body := e.signIn("derek").get("/w/o/r/workflow-runs")
+	if !strings.Contains(body, `<span class="dot wait"></span> waiting: Hardware`) {
+		t.Fatalf("the waiting run does not say so:\n%s", body)
+	}
+	if strings.Index(body, `workflow-runs/`+itoa(waiting)+`"`) < strings.Index(body, `workflow-runs/`+itoa(working)+`"`) {
+		t.Fatal("the waiting run is listed before the one at work")
+	}
+}

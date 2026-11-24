@@ -144,6 +144,7 @@ details[open] summary { margin-bottom: 0.6rem; }
 .dot.on { background: #2ea043; }
 .dot.busy { background: #d29922; }
 .dot.off { background: var(--muted); }
+.dot.wait { background: transparent; box-shadow: inset 0 0 0 2px #d29922; }
 ul.machines li { padding: 0.3rem 0; }
 .state { font-size: 0.8rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 1rem; border: 1px solid var(--line); vertical-align: middle; }
 .state.passed { color: #2ea043; border-color: #2ea043; }

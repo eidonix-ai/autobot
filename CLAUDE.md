@@ -14,7 +14,7 @@ Autobot is a fresh start (2026-11-22) after an earlier attempt, the "triage harn
 
 - **App host:** `192.168.5.123` (SSH alias `triage`, user `agent`, passwordless sudo) running `autobot.service` as user `autobot`, listening on `192.168.5.123:8080`, SQLite DB `/var/lib/autobot/autobot.db`, gzipped run logs/conversations in `/var/lib/autobot/runs`. Deploy or upgrade with `deploy/install.sh`.
 - **DMZ proxy:** Published at `https://autobot.eidonix.com` via nginx on `192.168.5.2` (SSH alias `dmz`, no systemd: reload with `nginx -s reload`). Public since **2026-11-23** (Derek's OK, after the security audit: two independent reviews, Go 1.27.4, security fixes); nginx still limits sign-ins per IP, connections, and request sizes. Pre-public config backup: `/etc/nginx/nginx.conf.pre-autobot-public-20261123`.
-- **Old services:** `triage.service` and `donor-hub.service` were stopped and disabled on **2026-11-22** (Derek's OK); their data remains in `/var/lib/triage` — **do not delete it without asking**.
+- **Old services:** `triage.service` and `donor-hub.service` were stopped/disabled on **2026-11-22**, and their data (`/var/lib/triage`), binaries, and unit files were removed on **2026-11-25** (Derek's OK).
 
 ## Package Map
 

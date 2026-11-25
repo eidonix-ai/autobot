@@ -30,7 +30,7 @@ type tagField struct {
 	Long               bool // a text box rather than a line
 }
 
-var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true, "discord:message": true, "discord:context": true}
+var longTags = map[string]bool{"input": true, "input.summary": true, "input.report": true, "input.scratchpad": true, "discord:message": true, "discord:context": true, "lfa:prompt": true}
 
 // stepTemplates is a node's settings and templates, or an error saying why it cannot be tested.
 func (srv *Server) stepTemplates(n workflow.Node, kind string) (any, []string, error) {
@@ -87,7 +87,12 @@ func (s *Server) renderTest(w http.ResponseWriter, r *http.Request, status int, 
 	data["Name"], data["Type"], data["Node"] = workflow.DisplayName(n), t, n
 	data["Action"] = ws.Path() + "/workflows/" + kind + "/nodes/" + n.ID + "/test"
 	if t.Event { // an event block runs the whole workflow from itself
-		data["Action"], data["Kind"] = ws.Path()+"/workflows/"+kind+"/nodes/"+n.ID+"/run", kind
+		data["Action"], data["Kind"], data["IsLFA"] = ws.Path()+"/workflows/"+kind+"/nodes/"+n.ID+"/run", kind, workflow.IsLFA(kind)
+		if n.Type == workflow.LFAKickOff {
+			if ev, err := workflow.EventSettingsOf(n); err == nil {
+				data["KickOffGuide"] = ev.KickOffGuide
+			}
+		}
 		s.renderFragment(w, r, status, "node_run.html", data)
 		return
 	}

@@ -268,7 +268,14 @@ nav.tabs a.on { color: var(--text); border-color: var(--line); background: var(-
 /* A block whose templates use a tag the rules do not allow: a red border and the reason, in red. */
 .wf-canvas .drawflow .drawflow-node.wf-problem { border-color: var(--error); border-width: 2px; }
 .wf-canvas .wf-problem .wf-sub { color: var(--error); font-weight: 600; }
-.wf-pr_ready, .wf-pr_draft, .wf-pr_activity, .wf-pr_backlog, .wf-issue_opened, .wf-issue_backlog, .wf-discord_mention { border-left: 4px solid #2ea043 !important; }
+.wf-pr_ready, .wf-pr_draft, .wf-pr_activity, .wf-pr_backlog, .wf-issue_opened, .wf-issue_backlog, .wf-discord_mention, .wf-lfa_kickoff { border-left: 4px solid #2ea043 !important; }
+.wf-pages-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.45rem 0 0.55rem; }
+.wf-pages-bar .wf-pages { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.wf-page-pop { position: relative; }
+.wf-page-pop summary { list-style: none; cursor: pointer; font-size: 0.85rem; padding: 0.3rem 0.65rem; }
+.wf-page-pop summary::-webkit-details-marker { display: none; }
+.wf-page-pop .wf-page-form { position: absolute; left: 0; top: calc(100% + 0.35rem); z-index: 30; width: min(24rem, 85vw); box-shadow: 0 8px 24px rgb(0 0 0 / 0.45); }
+.wf-page-desc { font-size: 0.85rem; margin-left: 0.25rem; }
 .wf-menu { position: fixed; z-index: 50; display: grid; min-width: 11rem; padding: 0.3rem; background: var(--panel);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.4); }
 .wf-menu button { all: unset; padding: 0.4rem 0.7rem; border-radius: 5px; cursor: pointer; color: var(--text); }

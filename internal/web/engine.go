@@ -236,6 +236,7 @@ type runState struct {
 	g       workflow.Graph
 	it      *item
 	discord *DiscordTrigger // set when run.Kind == workflow.Discord
+	lfa     *LFATrigger     // set when workflow.IsLFA(run.Kind)
 	builtIn map[string]string
 	tags    map[string]string // output tags: the case's, then this run's
 	by      *store.User
@@ -439,6 +440,8 @@ func (s *Server) drive(rs *runState) {
 				if rs.run.Kind == workflow.Discord && rs.discord != nil {
 					ch := rs.builtIn["discord:channel"]
 					st.Output = fmt.Sprintf("%s in %s by %s: %s", workflow.DisplayName(n), ch, rs.discord.Author, oneLineOf(rs.discord.Content, 120))
+				} else if workflow.IsLFA(rs.run.Kind) && rs.lfa != nil {
+					st.Output = fmt.Sprintf("%s · %s: %s", rs.lfa.PageTitle, rs.lfa.Title, oneLineOf(rs.lfa.Prompt, 120))
 				} else {
 					st.Output = fmt.Sprintf("%s #%d: %s", workflow.DisplayName(n), rs.it.number, rs.it.title)
 				}
@@ -832,6 +835,9 @@ func (s *Server) runCase(rs *runState) (*store.Case, error) {
 	if rs.run.DryRun {
 		return s.st.DryCase(rs.run.ID)
 	}
+	if workflow.IsLFA(rs.run.Kind) {
+		return s.st.CaseByLFARun(rs.ws.ID, rs.run.ID)
+	}
 	return s.st.CaseByNumber(rs.ws.ID, rs.it.number)
 }
 
@@ -844,6 +850,14 @@ func (s *Server) caseForRun(rs *runState) (*store.Case, error) {
 	opened := fmt.Sprintf("Opened by a workflow run, %s.", time.Now().In(et).Format("Jan 2, 2006 3:04 PM MST"))
 	if rs.run.DryRun {
 		c, _, err := s.st.OpenDryCase(rs.ws, rs.run.ID, rs.it.number, rs.it.kind, rs.it.title, store.DryHeadline(rs.run.ID)+" "+opened)
+		return c, err
+	}
+	if workflow.IsLFA(rs.run.Kind) {
+		head := opened
+		if rs.lfa != nil && rs.lfa.PageTitle != "" {
+			head = fmt.Sprintf("Large feature workflow (%s): %s. %s", rs.lfa.PageTitle, rs.lfa.Title, opened)
+		}
+		c, _, err := s.st.OpenLFACase(rs.ws, rs.run.ID, rs.it.title, head)
 		return c, err
 	}
 	c, _, err := s.st.OpenCase(rs.ws, rs.it.number, rs.it.kind, rs.it.title, opened)
@@ -1123,7 +1137,7 @@ func (s *Server) openPRStep(ctx context.Context, rs *runState, n workflow.Node, 
 	title := strings.TrimSpace(workflow.Render(op.Title, values))
 	body := strings.TrimSpace(workflow.Render(op.Body, values))
 	branch := workflow.SanitizeBranch(workflow.Render(op.Branch, values))
-	base := strings.TrimSpace(op.Base)
+	base := strings.TrimSpace(workflow.Render(op.Base, values))
 	kindWord := "Ready PR"
 	if op.Draft {
 		kindWord = "Draft PR"
@@ -1441,6 +1455,38 @@ func (s *Server) runWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
+	if workflow.IsLFA(kind) {
+		title := strings.TrimSpace(r.PostForm.Get("title"))
+		prompt := strings.TrimSpace(r.PostForm.Get("prompt"))
+		if title == "" {
+			fail("Give this feature run a title.")
+			return
+		}
+		if prompt == "" {
+			fail("Write a prompt or direction for the Kick Off.")
+			return
+		}
+		pageID := workflow.LFAPageID(kind)
+		pageTitle := "Large feature"
+		if p, err := s.st.WorkflowPage(ws.ID, pageID); err == nil {
+			pageTitle = p.Title
+		}
+		trig := LFATrigger{
+			PageID:    pageID,
+			PageTitle: pageTitle,
+			Title:     title,
+			Prompt:    prompt,
+			Base:      strings.TrimSpace(r.PostForm.Get("base")),
+			Author:    me(r).Name(),
+		}
+		id, err := s.startLFAWorkflow(ctx, ws, kind, n.ID, trig, r.PostForm.Get("dry_run") == "on", me(r))
+		if err != nil {
+			fail("Not started: " + err.Error() + ".")
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("%s/workflow-runs/%d", ws.Path(), id), http.StatusSeeOther)
+		return
+	}
 	if kind == workflow.Discord {
 		msg := strings.TrimSpace(r.PostForm.Get("message"))
 		if msg == "" {
@@ -1566,8 +1612,20 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 		}
 		title = fmt.Sprintf("Discord run (%s) · %s", ch, ws.Name)
 		heading = fmt.Sprintf("Discord mention in %s", ch)
+	default:
+		if workflow.IsLFA(run.Kind) {
+			trig := parseLFATrigger(run.TriggerData)
+			what = cmp.Or(trig.PageTitle, "Large feature")
+			title = fmt.Sprintf("%s: %s · %s", what, trig.Title, ws.Name)
+			heading = fmt.Sprintf("%s · %s", what, trig.Title)
+		}
 	}
 	data := map[string]any{"Title": title, "Heading": heading, "WS": ws, "Run": run, "Steps": views, "What": what}
+	if !run.DryRun && workflow.IsLFA(run.Kind) {
+		if c, err := s.st.CaseByLFARun(ws.ID, run.ID); err == nil {
+			data["LFACasePath"] = casePath(ws, c)
+		}
+	}
 	if run.Status == "queued" {
 		data["QueueText"] = "Queued"
 		if place, ok := s.queuePlaces(ws.ID)[run.ID]; ok {

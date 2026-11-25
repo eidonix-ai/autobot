@@ -30,12 +30,16 @@ type Case struct {
 // Lines is how many lines the case file has.
 func (c Case) Lines() int { return strings.Count(c.Contents, "\n") }
 
-// Label is how the case is named: "PR #459" or "Issue #12".
+// Label is how the case is named: "PR #459", "Issue #12", or "LFA #57".
 func (c Case) Label() string {
-	if c.Kind == "pr" {
+	switch c.Kind {
+	case "pr":
 		return fmt.Sprintf("PR #%d", c.Number)
+	case "lfa":
+		return fmt.Sprintf("LFA #%d", c.Number)
+	default:
+		return fmt.Sprintf("Issue #%d", c.Number)
 	}
-	return fmt.Sprintf("Issue #%d", c.Number)
 }
 
 // DryHeadline is the first line of a dry run's case file.
@@ -82,7 +86,7 @@ func scanCase(row scanner) (*Case, error) {
 		}
 		return nil, err
 	}
-	if c.DryRunOf != 0 { // its number column is minus the run's id: the item's is in item
+	if c.DryRunOf != 0 || (c.Kind == "lfa" && item > 0) { // dry-run & LFA cases store -run in number, run/item id in item
 		c.Number = int(item)
 	}
 	c.CreatedAt, c.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
@@ -129,12 +133,53 @@ func (s *Store) OpenCase(ws *Workspace, number int, kind, title, firstLine strin
 	return c, true, err
 }
 
+// OpenLFACase returns the real case file for a Large Feature Addition workflow run, creating it if
+// none exists yet. It stores -run in the number column (avoiding any collision with GitHub PR/issue
+// numbers) and run in item (read back as Case.Number).
+func (s *Store) OpenLFACase(ws *Workspace, run int64, title, firstLine string) (*Case, bool, error) {
+	if run <= 0 {
+		return nil, false, errors.New("an LFA case belongs to a workflow run")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	if c, err := scanCase(tx.QueryRow(`SELECT `+caseCols+` FROM cases WHERE workspace_id = ? AND number = ? AND kind = 'lfa' AND dry_run_of = 0`, ws.ID, -run)); err == nil {
+		return c, false, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, false, err
+	}
+	id, t := newUUID(), now()
+	if _, err := tx.Exec(`INSERT INTO cases (uuid, workspace_id, number, kind, title, contents, created_at, updated_at, dry_run_of, item)
+		VALUES (?, ?, ?, 'lfa', ?, ?, ?, ?, 0, ?)`, id, ws.ID, -run, title, firstLine+"\n", t, t, run); err != nil {
+		return nil, false, err
+	}
+	if _, err := tx.Exec(`INSERT INTO case_contributions (case_uuid, author, kind, start_line, end_line, started_at, finalized_at)
+		VALUES (?, 'Autobot', 'system', 1, 1, ?, ?)`, id, t, t); err != nil {
+		return nil, false, err
+	}
+	if err := addEvent(tx, ws.ID, nil, fmt.Sprintf("opened a case for LFA #%d", run)); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	c, err := s.Case(id)
+	return c, true, err
+}
+
+// CaseByLFARun returns a real LFA run's case file, or ErrNotFound.
+func (s *Store) CaseByLFARun(workspaceID, run int64) (*Case, error) {
+	return scanCase(s.db.QueryRow(`SELECT `+caseCols+` FROM cases WHERE workspace_id = ? AND number = ? AND kind = 'lfa' AND dry_run_of = 0`, workspaceID, -run))
+}
+
 // OpenDryCase returns the case of a dry run, creating it if the run has none yet: a case of its own
 // for the item, flagged as the run's, whose title says so. It is never the item's real case, and the
 // item's real case is never touched. It starts, as OpenCase's does, with one line by Autobot.
 func (s *Store) OpenDryCase(ws *Workspace, run int64, number int, kind, title, firstLine string) (*Case, bool, error) {
-	if kind != "pr" && kind != "issue" {
-		return nil, false, fmt.Errorf("case kind %q is not pr or issue", kind)
+	if kind != "pr" && kind != "issue" && kind != "lfa" {
+		return nil, false, fmt.Errorf("case kind %q is not pr, issue or lfa", kind)
 	}
 	if run <= 0 {
 		return nil, false, errors.New("a dry-run case belongs to a run")

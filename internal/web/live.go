@@ -16,8 +16,12 @@ func (s *Server) setLive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	kind, ok := workflowKind(w, r)
+	kind, ok := s.workflowKindFor(w, r, ws)
 	if !ok {
+		return
+	}
+	if workflow.IsLFA(kind) {
+		http.Redirect(w, r, ws.Path()+"/workflows/"+kind, http.StatusSeeOther)
 		return
 	}
 	back := ws.Path() + "/workflows/" + kind

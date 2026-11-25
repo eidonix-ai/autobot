@@ -192,6 +192,15 @@ Help only with questions relevant to {repo}, its pull requests and issues, its p
 			NoCitationMarks: true,
 		}
 	}
+	if IsLFA(kind) {
+		return AgentSettings{
+			Persona:    "custom",
+			Closing:    ClosingReport,
+			MaxTurns:   60,
+			MaxMinutes: 30,
+			Rerun:      "resume",
+		}
+	}
 	// A preset's Instruction and Done when are its own: the block stores only which preset.
 	return AgentSettings{Persona: SeedPresets[0].Key, MaxTurns: 60, MaxMinutes: 20, Rerun: "resume"}
 }
@@ -276,6 +285,17 @@ func (s AgentSettings) EffectiveGoal(kind string) string {
 
 // DefaultDecision is a new decision node's settings, for a workflow of kind.
 func DefaultDecision(kind string) DecisionSettings {
+	if IsLFA(kind) {
+		return DecisionSettings{
+			Output:   "probabilities",
+			Context:  "Feature: {lfa:title}\n\n{charter}\n\n{input.report}",
+			Question: "Have the goals for {lfa:title} been met?",
+			Choices: []Choice{
+				{Name: "met", Description: "All goals and verification checks are met; ready to open a PR."},
+				{Name: "needs_work", Description: "Gaps, defects, or verification failures remain; run another PDCA cycle."},
+			},
+		}
+	}
 	if kind == Discord {
 		return DecisionSettings{
 			Output:      "decision",
@@ -617,10 +637,21 @@ var discordCommonTags = []Tag{
 	{"loop:feedback", "feedback passed by a Loop block when jumping back to its target", true},
 }
 
+var lfaTags = []Tag{
+	{"lfa:title", "the feature or task title entered at Kick Off", true},
+	{"lfa:prompt", "the user's Kick Off prompt and direction", true},
+	{"lfa:page", "the LFA workflow page title", true},
+	{"lfa:base", "target base branch (defaults to repository default branch)", true},
+	{"lfa:slug", "branch-safe slug derived from the title", true},
+}
+
 // Tags lists the built-in tags of a workflow kind, as the Tags list shows them.
 func Tags(kind string) []Tag {
 	if kind == Discord {
 		return slices.Concat(discordTags, discordCommonTags, inputTags)
+	}
+	if IsLFA(kind) {
+		return slices.Concat(lfaTags, commonTags, inputTags)
 	}
 	item := prTags
 	if kind == Issue {
@@ -644,10 +675,13 @@ func CanonicalTag(name, kind string) string {
 	return name
 }
 
-// ItemTag is the parent tag of a workflow kind's item: pr or issue.
+// ItemTag is the parent tag of a workflow kind's item: pr, issue, or lfa.
 func ItemTag(kind string) string {
 	if kind == Issue {
 		return "issue"
+	}
+	if IsLFA(kind) {
+		return "lfa"
 	}
 	return "pr"
 }
@@ -930,7 +964,7 @@ func (sc tagScope) check(templates []string) error {
 
 // builtInParents are the names a tag may begin with that are Autobot's, not a block's: a tag that begins
 // with one and is not built in has no such tag.
-var builtInParents = []string{"pr", "issue", "discord", "repo", "case", "charter", "machines", "input", "case_file"}
+var builtInParents = []string{"pr", "issue", "discord", "lfa", "repo", "case", "charter", "machines", "input", "case_file", "run", "loop"}
 
 // unknown says why the tag, which is no tag of the block's, is none: written is the tag as it is in the
 // text, {x} or [[x]].

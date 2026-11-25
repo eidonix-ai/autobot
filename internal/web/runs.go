@@ -119,6 +119,12 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 		}
 		if r.Kind == workflow.Issue {
 			row.Kind = "issue"
+		} else if workflow.IsLFA(r.Kind) {
+			trig := parseLFATrigger(r.TriggerData)
+			row.Kind = cmp.Or(trig.PageTitle, "large feature")
+			row.ItemURL = ""
+			row.Title = trig.Title
+			row.Author = trig.Author
 		} else if r.Kind == workflow.Discord {
 			trig := parseDiscordTrigger(r.TriggerData)
 			ch := trig.Channel

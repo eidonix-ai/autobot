@@ -235,6 +235,11 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 			if sandboxCommit == "" && strings.TrimSpace(values["run:base_commit"]) != "" {
 				sandboxCommit = strings.TrimSpace(values["run:base_commit"])
 			}
+			if sandboxCommit == "" && workflow.IsLFA(kind) && strings.TrimSpace(values["lfa:base"]) != "" {
+				if sha, serr := s.gh.CommitSHA(ctx, token, ws.Name, strings.TrimSpace(values["lfa:base"])); serr == nil && sha != "" {
+					sandboxCommit = sha
+				}
+			}
 			var note string
 			sess, note, err = s.openSandbox(ctx, ws, a, token, sandboxCommit, by, !test)
 			if err != nil {
@@ -451,6 +456,24 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 // subAgentContext builds the shared item header and orientation packet that spawn_agent prepends
 // when the main agent sets include_context: true.
 func subAgentContext(kind string, values map[string]string) string {
+	if workflow.IsLFA(kind) {
+		title := strings.TrimSpace(values["lfa:title"])
+		prompt := strings.TrimSpace(values["lfa:prompt"])
+		if title == "" && prompt == "" {
+			return ""
+		}
+		var b strings.Builder
+		if page := strings.TrimSpace(values["lfa:page"]); page != "" {
+			fmt.Fprintf(&b, "Workflow page: %s\n", page)
+		}
+		if title != "" {
+			fmt.Fprintf(&b, "Feature: %s\n", title)
+		}
+		if prompt != "" {
+			b.WriteString("\n" + prompt + "\n")
+		}
+		return strings.TrimSpace(b.String())
+	}
 	tag, label := "pr", "Pull request"
 	if kind == workflow.Issue {
 		tag, label = "issue", "Issue"

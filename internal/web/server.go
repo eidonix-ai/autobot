@@ -200,6 +200,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /connector/v1/runs/{id}/commands/{cid}/result", s.connectorAPIMax(8<<20, s.sessionResult))
 
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows", s.auth(s.workflowsIndex))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/lfa/pages", s.auth(s.createLFAPage))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/lfa/pages/{page}/rename", s.auth(s.renameLFAPage))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/lfa/pages/{page}/delete", s.auth(s.deleteLFAPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}", s.auth(s.workflowPage))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/layout", s.auth(s.saveLayout))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/paste", s.auth(s.pasteNode))

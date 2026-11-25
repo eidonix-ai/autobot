@@ -24,6 +24,15 @@ type OpenPRSettings struct {
 
 // DefaultOpenPR is a new Open PR node's settings, in trial mode until turned off.
 func DefaultOpenPR(kind string) OpenPRSettings {
+	if IsLFA(kind) {
+		return OpenPRSettings{
+			Title:  "{lfa:title}",
+			Body:   "{input.summary}\n\n[[case|Case File]]",
+			Branch: "autobot/lfa-{lfa:slug}",
+			Base:   "{lfa:base}",
+			Trial:  true,
+		}
+	}
 	if kind == PR {
 		return OpenPRSettings{
 			Title:  "Follow-up for #{pr:number}: {pr:title}",

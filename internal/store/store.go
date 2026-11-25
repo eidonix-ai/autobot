@@ -85,8 +85,23 @@ CREATE INDEX cases_by_dry_run ON cases (dry_run_of) WHERE dry_run_of != 0;
 // store their trigger details as JSON so queued or resumed runs keep full context.
 const schemaDiscordRuns = `ALTER TABLE workflow_runs ADD COLUMN trigger_data TEXT NOT NULL DEFAULT '';`
 
+// schemaWorkflowPages: user-defined Large Feature Addition (LFA) workflow pages per workspace.
+// Each page's canvas graph is stored in workflows under kind = "lfa:<id>".
+const schemaWorkflowPages = `
+CREATE TABLE workflow_pages (
+	id           TEXT    PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	title        TEXT    NOT NULL,
+	description  TEXT    NOT NULL DEFAULT '',
+	created_by   INTEGER REFERENCES users(id),
+	created_at   INTEGER NOT NULL,
+	updated_at   INTEGER NOT NULL
+);
+CREATE INDEX workflow_pages_ws ON workflow_pages (workspace_id, created_at);
+`
+
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped, schemaDryCases, schemaCitationMarks, schemaApprovalQuestion, schemaRunDefaults, schemaNoTools, schemaDiscordRuns, schemaStandalonePages}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped, schemaDryCases, schemaCitationMarks, schemaApprovalQuestion, schemaRunDefaults, schemaNoTools, schemaDiscordRuns, schemaStandalonePages, schemaWorkflowPages}
 
 const schemaV1 = `
 CREATE TABLE users (

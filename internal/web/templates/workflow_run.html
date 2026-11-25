@@ -6,6 +6,7 @@
 <p class="status"><span class="dot {{if eq .Run.Status "running"}}busy{{else if eq .Run.Status "done"}}on{{else}}off{{end}}"></span>
   {{if eq .Run.Status "running"}}Running{{else if eq .Run.Status "queued"}}{{.QueueText}}{{else if eq .Run.Status "done"}}Finished{{else if eq .Run.Status "stopped"}}Stopped{{else}}Failed{{end}} · started {{ts .Run.StartedAt}} by {{.Run.StartedBy}}{{if eq .Run.Status "stopped"}} · stopped by {{.Run.StoppedBy}} {{ts .Run.StoppedAt}}{{end}}</p>
 {{with .DryCase}}<p><a href="{{$.WS.Path}}/dry-cases/{{$.Run.ID}}">Case file (dry run)</a></p>{{end}}
+{{with .LFACasePath}}<p><a href="{{.}}">Case file</a></p>{{end}}
 {{if or (eq .Run.Status "running") (eq .Run.Status "queued")}}<div class="row">
   {{if eq .Run.Status "queued"}}<form method="post" action="{{.WS.Path}}/workflow-runs/{{.Run.ID}}/bypass">
     <input type="hidden" name="csrf" value="{{.CSRF}}">

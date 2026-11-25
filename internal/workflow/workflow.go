@@ -21,10 +21,37 @@ const (
 	PR      = "pr"
 	Issue   = "issue"
 	Discord = "discord"
+	LFA     = "lfa" // Large Feature Addition tab, organized into user-defined pages ("lfa:<pageID>")
 )
 
 // DiscordMention is the event node that triggers when someone @mentions the bot in Discord.
 const DiscordMention = "discord_mention"
+
+// LFAKickOff is the manual kick-off event node for Large Feature Addition workflow pages.
+const LFAKickOff = "lfa_kickoff"
+
+// IsLFA reports whether kind is the LFA tab or one of its pages ("lfa:<pageID>").
+func IsLFA(kind string) bool { return kind == LFA || strings.HasPrefix(kind, LFA+":") }
+
+// BaseKind maps any LFA page kind ("lfa:<pageID>") to LFA, leaving other kinds unchanged.
+func BaseKind(kind string) string {
+	if IsLFA(kind) {
+		return LFA
+	}
+	return kind
+}
+
+// LFAPageID returns the page id from an LFA page kind ("lfa:<pageID>"), or "" otherwise.
+func LFAPageID(kind string) string {
+	id, ok := strings.CutPrefix(kind, LFA+":")
+	if !ok {
+		return ""
+	}
+	return id
+}
+
+// LFAKind builds the workflow kind key for an LFA page id.
+func LFAKind(pageID string) string { return LFA + ":" + pageID }
 
 // PRBacklog and IssueBacklog are idle catch-up event blocks: while the workflow is Live and the
 // workspace is idle, they pick open items with no case file yet.
@@ -37,15 +64,17 @@ const (
 func IsBacklogEvent(typ string) bool { return typ == PRBacklog || typ == IssueBacklog }
 
 // Kinds lists the workflow kinds in tab order.
-var Kinds = []string{PR, Issue, Discord}
+var Kinds = []string{PR, Issue, Discord, LFA}
 
 // KindLabel names a kind for a tab.
 func KindLabel(kind string) string {
-	switch kind {
+	switch BaseKind(kind) {
 	case PR:
 		return "Pull requests"
 	case Discord:
 		return "Discord"
+	case LFA:
+		return "Large features"
 	default:
 		return "Issues"
 	}
@@ -71,6 +100,7 @@ var Types = []NodeType{
 	{Type: "issue_opened", Kind: Issue, Label: "Issue Opened", Event: true},
 	{Type: IssueBacklog, Kind: Issue, Label: "Issue Backlog", Event: true},
 	{Type: DiscordMention, Kind: Discord, Label: "Discord Mention", Event: true},
+	{Type: LFAKickOff, Kind: LFA, Label: "Kick Off", Event: true},
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
 	{Type: CaseEntry, Label: "Case Entry", OnlyItems: true},
@@ -89,9 +119,10 @@ var Types = []NodeType{
 
 // TypesFor lists the node types a kind's canvas offers.
 func TypesFor(kind string) []NodeType {
+	base := BaseKind(kind)
 	var out []NodeType
 	for _, t := range Types {
-		if (t.Kind == kind || t.Kind == "") && !t.Hidden && !(t.OnlyItems && kind == Discord) {
+		if (t.Kind == base || t.Kind == "") && !t.Hidden && !(t.OnlyItems && base == Discord) {
 			t.Outputs = Outputs(Node{Type: t.Type})
 			out = append(out, t)
 		}
@@ -205,7 +236,8 @@ const MaxNodes = 100
 // event settings that check out and step settings that can be read (a step placed but not yet set
 // up is allowed; it cannot run), and links without loops between ports the nodes have.
 func (g Graph) Check(kind string) error {
-	if kind != PR && kind != Issue && kind != Discord {
+	base := BaseKind(kind)
+	if base != PR && base != Issue && base != Discord && base != LFA {
 		return fmt.Errorf("no workflow kind %q", kind)
 	}
 	if len(g.Nodes) > MaxNodes {
@@ -214,7 +246,7 @@ func (g Graph) Check(kind string) error {
 	byID := map[string]Node{}
 	for _, n := range g.Nodes {
 		t, ok := TypeOf(n.Type)
-		if !ok || (t.Kind != kind && t.Kind != "") || (t.OnlyItems && kind == Discord) {
+		if !ok || (t.Kind != base && t.Kind != "") || (t.OnlyItems && base == Discord) {
 			return fmt.Errorf("a %s workflow has no node type %q", KindLabel(kind), n.Type)
 		}
 		if !idRE.MatchString(n.ID) {
@@ -357,6 +389,9 @@ type EventSettings struct {
 	BacklogOrder  string `json:"backlog_order,omitempty"`  // "newest" or "oldest"
 	IdleSlots     int    `json:"idle_slots,omitempty"`     // max concurrent runs when idle (1..20)
 	IncludeDrafts bool   `json:"include_drafts,omitempty"` // PR Backlog only: also catch up draft PRs
+
+	// LFA Kick Off only: optional prompt guide shown in the Kick Off modal.
+	KickOffGuide string `json:"kickoff_guide,omitempty"`
 }
 
 // Activities are the kinds of activity on an open pull request that can run PR Activity, in the
@@ -375,6 +410,9 @@ func DefaultEvent(typ string) EventSettings {
 	t, _ := TypeOf(typ)
 	if t.Kind == Discord {
 		return EventSettings{CooldownSeconds: 10}
+	}
+	if t.Kind == LFA {
+		return EventSettings{}
 	}
 	if IsBacklogEvent(typ) {
 		s := EventSettings{BacklogOrder: "newest", IdleSlots: 1}
@@ -414,6 +452,12 @@ var branchRE = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)
 func (s EventSettings) Check(typ string) error {
 	t, _ := TypeOf(typ)
 	kind := t.Kind
+	if kind == LFA {
+		if len(s.KickOffGuide) > 2000 {
+			return errors.New("the prompt guide is limited to 2000 characters")
+		}
+		return nil
+	}
 	if kind == Discord {
 		if s.CooldownSeconds < 0 || s.CooldownSeconds > 3600 {
 			return errors.New("the cooldown is 0 to 3600 seconds")
@@ -535,6 +579,9 @@ func (s EventSettings) Summary() string {
 
 // SummaryFor is the one line an event node shows on the canvas.
 func (s EventSettings) SummaryFor(typ string) string {
+	if typ == LFAKickOff {
+		return "Manual kick off · user prompt"
+	}
 	if typ == DiscordMention {
 		parts := []string{"Any channel"}
 		if c := strings.TrimSpace(s.Channels); c != "" {
@@ -603,6 +650,9 @@ func MatchesDiscordChannel(ev EventSettings, channelName, channelID string) bool
 func EventFromForm(typ string, get func(string) string, all func(string) []string) EventSettings {
 	t, _ := TypeOf(typ)
 	kind := t.Kind
+	if kind == LFA {
+		return EventSettings{KickOffGuide: strings.TrimSpace(get("kickoff_guide"))}
+	}
 	if kind == Discord {
 		cd, _ := strconv.Atoi(strings.TrimSpace(get("cooldown_seconds")))
 		return EventSettings{

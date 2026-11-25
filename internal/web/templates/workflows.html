@@ -1,18 +1,67 @@
-{{define "head"}}<link rel="stylesheet" href="/static/vendor/drawflow-0.0.60/drawflow.min.css">{{end}}
+{{define "head"}}{{if not .EmptyLFA}}<link rel="stylesheet" href="/static/vendor/drawflow-0.0.60/drawflow.min.css">{{end}}{{end}}
 {{define "content"}}
 <div class="wf-top">
   <p class="crumbs"><a href="/">Workspaces</a> / <a href="{{.WS.Path}}">{{.WS.Name}}</a> /</p>
-  <nav class="tabs">{{range .Tabs}}<a href="{{$.WS.Path}}/workflows/{{.Kind}}"{{if eq .Kind $.Kind}} class="on" aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
-  {{if ne .Kind "discord"}}<a href="{{.WS.Path}}/items/{{.Kind}}">{{range .Tabs}}{{if eq .Kind $.Kind}}{{.Label}}{{end}}{{end}}</a>{{end}}
+  <nav class="tabs">{{range .Tabs}}<a href="{{$.WS.Path}}/workflows/{{.Kind}}"{{if eq .Kind $.ActiveTab}} class="on" aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
+  {{if and (ne .ActiveTab "discord") (ne .ActiveTab "lfa")}}<a href="{{.WS.Path}}/items/{{.Kind}}">{{range .Tabs}}{{if eq .Kind $.Kind}}{{.Label}}{{end}}{{end}}</a>{{end}}
   <a href="{{.WS.Path}}/workflow-runs">Runs</a>
   <span class="wf-status" id="wf-status" role="status"></span>
+  {{if .IsLFA}}
+    {{with .KickOffNode}}<button type="button" id="wf-kickoff" data-node="{{.}}">Kick Off…</button>{{end}}
+  {{else}}
   <form method="post" action="{{.Base}}/live" class="wf-live">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="hidden" name="live" value="{{if .Live}}off{{else}}on{{end}}">
     <span{{if .Live}} class="wf-on"{{end}}>Live: {{if .Live}}on{{else}}off{{end}}</span>
     <button class="secondary">{{if .Live}}Turn off{{else}}Turn on{{end}}</button>
   </form>
+  {{end}}
 </div>
+{{if .IsLFA}}
+<div class="wf-pages-bar">
+  <nav class="tabs wf-pages" aria-label="Workflow pages">
+    {{range .Pages}}<a href="{{$.WS.Path}}/workflows/lfa:{{.ID}}"{{if and $.Page (eq .ID $.Page.ID)}} class="on" aria-current="page"{{end}}>{{.Title}}</a>{{end}}
+  </nav>
+  <details class="wf-page-pop"><summary class="button secondary">+ New page</summary>
+    <form method="post" action="{{.WS.Path}}/workflows/lfa/pages" class="panel stack wf-page-form">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Page title <input name="title" maxlength="80" placeholder="e.g. Flare Support for New Model" required autocomplete="off"></label>
+      <label>Description (optional) <input name="description" maxlength="400" placeholder="What this large-feature workflow is for" autocomplete="off"></label>
+      <button>Create page</button>
+    </form>
+  </details>
+  {{with .Page}}
+  <details class="wf-page-pop"><summary class="button secondary">Page settings</summary>
+    <div class="panel stack wf-page-form">
+      <form method="post" action="{{$.WS.Path}}/workflows/lfa/pages/{{.ID}}/rename" class="stack">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <label>Page title <input name="title" value="{{.Title}}" maxlength="80" required autocomplete="off"></label>
+        <label>Description <input name="description" value="{{.Description}}" maxlength="400" autocomplete="off"></label>
+        <button>Save page</button>
+      </form>
+      <form method="post" action="{{$.WS.Path}}/workflows/lfa/pages/{{.ID}}/delete" onsubmit="return confirm('Delete this workflow page and its canvas?');">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button class="danger">Delete page</button>
+      </form>
+    </div>
+  </details>
+  {{with .Description}}<span class="muted wf-page-desc">{{.}}</span>{{end}}
+  {{end}}
+</div>
+{{with .PageError}}<p class="error">{{.}}</p>{{end}}
+{{end}}
+{{if .EmptyLFA}}
+<section class="panel stack" style="max-width:36rem;margin-top:1rem;">
+  <h2>Create your first Large Feature workflow page</h2>
+  <p class="hint">Organize user-defined PDCA workflows (e.g. model enablement, de-slop refactors, major subsystem additions) as separate pages under this workspace.</p>
+  <form method="post" action="{{.WS.Path}}/workflows/lfa/pages" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Page title <input name="title" maxlength="80" placeholder="e.g. Flare Support for New Model" required autocomplete="off"></label>
+    <label>Description (optional) <input name="description" maxlength="400" placeholder="What this workflow builds and verifies" autocomplete="off"></label>
+    <div><button>Create page</button></div>
+  </form>
+</section>
+{{else}}
 {{with .LiveStatus}}<p class="hint"><span class="dot on"></span> {{.}}</p>{{end}}
 {{with .LiveProblem}}<p class="error">{{.}}</p>{{end}}
 <div class="wf-wrap">
@@ -22,10 +71,11 @@
 <div id="wf-menu" class="wf-menu" hidden></div>
 <div id="wf-ghost" class="wf-ghost" hidden></div>
 <div id="wf-modal" class="modal" popover></div>
-<p class="hint wf-hint">Right-click the canvas to add or paste a block. Right-click a block to copy or delete it. Click a block to set it up, shift-click to test it; drag from its dot to link it to the next step.</p>
+<p class="hint wf-hint">Right-click the canvas to add or paste a block. Right-click a block to copy or delete it. Click a block to set it up, shift-click to test{{if .IsLFA}} or kick off{{end}} it; drag from its dot to link it to the next step.</p>
 {{if .Recent}}<details class="more"><summary>Recent ({{len .Recent}})</summary>
 <ul class="wf-recent">{{range .Recent}}<li>{{ts .At}} · #{{.Number}} · {{.Node}}: {{if .Run}}<a href="{{$.WS.Path}}/workflow-runs/{{.Run}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}</li>{{end}}</ul>
 </details>{{end}}
 <script src="/static/vendor/drawflow-0.0.60/drawflow.min.js"></script>
 <script src="/static/workflow.js"></script>
+{{end}}
 {{end}}

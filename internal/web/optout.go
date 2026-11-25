@@ -34,7 +34,7 @@ func (s *Server) optOut(ws *store.Workspace) string {
 // blocksStopTag is the stop tag most event blocks of the workspace's workflows have saved, or "".
 func (s *Server) blocksStopTag(ws *store.Workspace) string {
 	counts := map[string]int{}
-	for _, kind := range workflow.Kinds {
+	for _, kind := range []string{workflow.PR, workflow.Issue} {
 		stored, err := s.st.Workflow(ws.ID, kind)
 		if err != nil {
 			continue

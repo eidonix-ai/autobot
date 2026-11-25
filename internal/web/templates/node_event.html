@@ -5,7 +5,11 @@
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="version" value="">
   <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
-  {{if eq .Node.Type "discord_mention"}}
+  {{if eq .Node.Type "lfa_kickoff"}}
+  <p class="hint">Starts this workflow manually when a user clicks <strong>Kick Off…</strong> (or shift-clicks this block) and provides a feature title and prompt/direction. Every run opens its own Case File and persistent Scratchpads, with <code>{lfa:title}</code>, <code>{lfa:prompt}</code>, <code>{lfa:base}</code>, and <code>{lfa:slug}</code> available to downstream blocks.</p>
+  <label><span class="lbl">Prompt guide (optional) <span class="info" tabindex="0" data-tip="Shown as placeholder/hint text in the Kick Off form to remind the operator what details to supply (e.g. model name, quant, target GPUs, or paths to refactor).">ⓘ</span></span>
+    <textarea name="kickoff_guide" rows="4" maxlength="2000" placeholder="e.g. Model name / HuggingFace repo, quantization targets (FP8, NVFP4, BF16), target GPUs, and performance/accuracy goals.">{{.S.KickOffGuide}}</textarea></label>
+  {{else if eq .Node.Type "discord_mention"}}
   <p class="hint">Starts when someone @mentions the workspace's Discord bot in a server channel. Messages from bots and DMs are always ignored.</p>
   <label><span class="lbl">Channels <span class="info" tabindex="0" data-tip="Comma-separated channel names (e.g. general, support) or IDs. Leave blank to listen in any channel the bot can see.">ⓘ</span></span>
     <input name="channels" value="{{.S.Channels}}" placeholder="Any channel the bot can see" autocomplete="off"></label>

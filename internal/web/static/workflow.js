@@ -447,6 +447,8 @@
   }
 
   modal.addEventListener('click', function (e) { if (e.target.closest('[data-close]')) { modal.hidePopover(); } });
+  var ko = document.getElementById('wf-kickoff');
+  if (ko && ko.dataset.node) { ko.addEventListener('click', function () { openTest(ko.dataset.node); }); }
 
   // An (i)'s note opens inside the dialog: wrapped, as wide as the dialog allows, shifted left when the
   // icon is near the right edge, and above the icon when there is more room there.

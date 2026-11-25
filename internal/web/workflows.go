@@ -17,14 +17,19 @@ import (
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
-// workflowKind reads the kind in the URL, writing a 404 for an unknown one.
-func workflowKind(w http.ResponseWriter, r *http.Request) (string, bool) {
+// workflowKindFor reads the kind in the URL, verifying an LFA page belongs to ws.
+func (s *Server) workflowKindFor(w http.ResponseWriter, r *http.Request, ws *store.Workspace) (string, bool) {
 	k := r.PathValue("kind")
-	if k != workflow.PR && k != workflow.Issue && k != workflow.Discord {
-		http.NotFound(w, r)
-		return "", false
+	if k == workflow.PR || k == workflow.Issue || k == workflow.Discord {
+		return k, true
 	}
-	return k, true
+	if pid := workflow.LFAPageID(k); pid != "" {
+		if _, err := s.st.WorkflowPage(ws.ID, pid); err == nil {
+			return k, true
+		}
+	}
+	http.NotFound(w, r)
+	return "", false
 }
 
 func loadGraph(stored *store.StoredWorkflow) (workflow.Graph, error) {
@@ -80,9 +85,17 @@ func (s *Server) MigrateWorkflows() {
 		return
 	}
 	for i := range all {
-		for _, kind := range workflow.Kinds {
+		for _, kind := range []string{workflow.PR, workflow.Issue, workflow.Discord} {
 			if _, _, err := s.loadWorkflow(&all[i], kind); err != nil {
 				log.Printf("migrating %s's %s workflow: %v", all[i].Name, kind, err)
+			}
+		}
+		if pages, err := s.st.WorkflowPages(all[i].ID); err == nil {
+			for _, p := range pages {
+				k := workflow.LFAKind(p.ID)
+				if _, _, err := s.loadWorkflow(&all[i], k); err != nil {
+					log.Printf("migrating %s's LFA page %s: %v", all[i].Name, p.Title, err)
+				}
 			}
 		}
 	}
@@ -225,7 +238,41 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	kind, ok := workflowKind(w, r)
+	rawKind := r.PathValue("kind")
+	var tabs []map[string]string
+	for _, k := range workflow.Kinds {
+		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
+	}
+	if rawKind == workflow.LFA {
+		pages, err := s.st.WorkflowPages(ws.ID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		if len(pages) > 0 && r.URL.Query().Get("error") == "" {
+			http.Redirect(w, r, ws.Path()+"/workflows/"+workflow.LFAKind(pages[0].ID), http.StatusSeeOther)
+			return
+		}
+		if len(pages) > 0 {
+			http.Redirect(w, r, ws.Path()+"/workflows/"+workflow.LFAKind(pages[0].ID)+"?error="+urlQueryEscape(r.URL.Query().Get("error")), http.StatusSeeOther)
+			return
+		}
+		data := map[string]any{
+			"Title":      "Large features · " + ws.Name,
+			"WS":         ws,
+			"Kind":       workflow.LFA,
+			"ActiveTab":  workflow.LFA,
+			"IsLFA":      true,
+			"EmptyLFA":   true,
+			"Pages":      pages,
+			"Tabs":       tabs,
+			"Wide":       true,
+			"PageError":  r.URL.Query().Get("error"),
+		}
+		s.render(w, r, http.StatusOK, "workflows.html", data)
+		return
+	}
+	kind, ok := s.workflowKindFor(w, r, ws)
 	if !ok {
 		return
 	}
@@ -237,14 +284,35 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 	names, outputs := canvasFacts(g)
 	state, _ := json.Marshal(map[string]any{"version": stored.Version, "graph": g, "summaries": s.summaries(ws, g, kind),
 		"names": names, "outputs": outputs, "continues": continuesFacts(g, kind), "problems": s.templateProblems(g, kind), "types": workflow.TypesFor(kind)})
-	var tabs []map[string]string
-	for _, k := range workflow.Kinds {
-		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
+	title := workflow.KindLabel(kind) + " workflow · " + ws.Name
+	data := map[string]any{"Title": title,
+		"WS": ws, "Kind": kind, "ActiveTab": workflow.BaseKind(kind), "IsLFA": workflow.IsLFA(kind),
+		"Tabs": tabs, "State": string(state), "Wide": true,
+		"Base": ws.Path() + "/workflows/" + kind, "PageError": r.URL.Query().Get("error")}
+	if workflow.IsLFA(kind) {
+		pages, err := s.st.WorkflowPages(ws.ID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		pid := workflow.LFAPageID(kind)
+		for i := range pages {
+			if pages[i].ID == pid {
+				data["Page"] = pages[i]
+				data["Title"] = pages[i].Title + " · Large features · " + ws.Name
+				break
+			}
+		}
+		data["Pages"] = pages
+		for _, n := range g.Nodes {
+			if n.Type == workflow.LFAKickOff {
+				data["KickOffNode"] = n.ID
+				break
+			}
+		}
+	} else {
+		s.pollView(data, ws, kind, stored, g)
 	}
-	data := map[string]any{"Title": workflow.KindLabel(kind) + " workflow · " + ws.Name,
-		"WS": ws, "Kind": kind, "Tabs": tabs, "State": string(state), "Wide": true,
-		"Base": ws.Path() + "/workflows/" + kind}
-	s.pollView(data, ws, kind, stored, g)
 	s.render(w, r, http.StatusOK, "workflows.html", data)
 }
 
@@ -255,7 +323,7 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	kind, ok := workflowKind(w, r)
+	kind, ok := s.workflowKindFor(w, r, ws)
 	if !ok {
 		return
 	}
@@ -339,7 +407,7 @@ func (s *Server) pasteNode(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	kind, ok := workflowKind(w, r)
+	kind, ok := s.workflowKindFor(w, r, ws)
 	if !ok {
 		return
 	}
@@ -354,7 +422,15 @@ func (s *Server) pasteNode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "The canvas sent something unreadable; reload the page.")
 		return
 	}
-	if req.SourceKind != workflow.PR && req.SourceKind != workflow.Issue && req.SourceKind != workflow.Discord {
+	validSrc := req.SourceKind == workflow.PR || req.SourceKind == workflow.Issue || req.SourceKind == workflow.Discord
+	if !validSrc {
+		if pid := workflow.LFAPageID(req.SourceKind); pid != "" {
+			if _, err := s.st.WorkflowPage(ws.ID, pid); err == nil {
+				validSrc = true
+			}
+		}
+	}
+	if !validSrc {
 		jsonError(w, http.StatusBadRequest, "Unknown source workflow.")
 		return
 	}
@@ -375,7 +451,8 @@ func (s *Server) pasteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, ok := workflow.TypeOf(src.Type)
-	if !ok || t.Hidden || (t.Kind != "" && t.Kind != kind) || (t.OnlyItems && kind == workflow.Discord) {
+	dstBase := workflow.BaseKind(kind)
+	if !ok || t.Hidden || (t.Kind != "" && t.Kind != dstBase) || (t.OnlyItems && dstBase == workflow.Discord) {
 		jsonError(w, http.StatusBadRequest, fmt.Sprintf("A %s block cannot be pasted into a %s workflow.", t.Label, workflow.KindLabel(kind)))
 		return
 	}
@@ -776,7 +853,7 @@ func (s *Server) findNode(w http.ResponseWriter, r *http.Request) (*store.Worksp
 	if !ok {
 		return nil, "", nil, workflow.Graph{}, 0, false
 	}
-	kind, ok := workflowKind(w, r)
+	kind, ok := s.workflowKindFor(w, r, ws)
 	if !ok {
 		return nil, "", nil, workflow.Graph{}, 0, false
 	}
@@ -1076,7 +1153,7 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		e := workflow.EventFromForm(n.Type, f.Get, func(k string) []string { return f[k] })
 		err = e.Check(n.Type)
-		if kind != workflow.Discord {
+		if kind != workflow.Discord && !workflow.IsLFA(kind) {
 			if tag := s.optOut(ws); err == nil && workflow.Stops(e.SummonPhrase, tag) {
 				err = fmt.Errorf("the summon phrase matches the workspace's opt-out tag “%s”, so every summons would opt out", tag)
 			}

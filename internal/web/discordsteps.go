@@ -284,6 +284,26 @@ func (s *Server) runState(ctx context.Context, id int64) (*runState, error) {
 	if err := json.Unmarshal([]byte(run.Graph), &g); err != nil {
 		return nil, err
 	}
+	if workflow.IsLFA(run.Kind) {
+		trig := parseLFATrigger(run.TriggerData)
+		it := &item{kind: workflow.LFA, number: int(run.ID), author: trig.Author, title: trig.Title, body: trig.Prompt}
+		rs := &runState{ws: ws, run: run, g: g, it: it, lfa: &trig, builtIn: trig.values(ws), tags: map[string]string{}}
+		if run.StartedByID != 0 {
+			rs.by, _ = s.st.User(run.StartedByID)
+		}
+		if !run.DryRun {
+			if c, err := s.st.CaseByLFARun(ws.ID, run.ID); err == nil {
+				if vals, err := s.st.CaseValues(c.UUID); err == nil {
+					rs.tags = vals
+				}
+			}
+		}
+		if c, err := s.st.Charter(ws.ID, 0); err == nil {
+			rs.builtIn["charter"] = c.Body
+		}
+		rs.builtIn["machines"] = s.machinesSummary(ws)
+		return rs, nil
+	}
 	if run.Kind == workflow.Discord {
 		trig := parseDiscordTrigger(run.TriggerData)
 		it := &item{kind: workflow.Discord, author: trig.Author, title: trig.Channel, body: trig.Content, url: trig.URL}

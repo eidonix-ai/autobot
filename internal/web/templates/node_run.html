@@ -3,7 +3,12 @@
 {{with .Error}}<p class="error">{{.}}</p>{{end}}
 <form method="post" action="{{.Action}}" class="stack wide step-form test-form" target="_blank" data-native>
   <input type="hidden" name="csrf" value="{{.CSRF}}">
-  {{if eq .Kind "discord"}}
+  {{if .IsLFA}}
+  <label>Feature / task title <input name="title" value="{{.Form.Get "title"}}" placeholder="e.g. Add Qwen3.9-MoE support (FP8/NVFP4)" maxlength="140" required autocomplete="off"></label>
+  <label>Prompt &amp; direction <textarea name="prompt" rows="8" placeholder="{{if .KickOffGuide}}{{.KickOffGuide}}{{else}}Describe the model, architecture, quantization targets, scope/paths, and success criteria…{{end}}" required>{{.Form.Get "prompt"}}</textarea></label>
+  <label>Base branch (optional) <input name="base" value="{{.Form.Get "base"}}" placeholder="repository default branch" autocomplete="off"></label>
+  <label class="check"><input type="checkbox" name="dry_run"{{if .Form.Get "dry_run"}} checked{{end}}> Dry run <span class="info" tabindex="0" data-tip="Runs all steps into an isolated dry-run case file; Open PR writes a preview instead of pushing a branch or opening a pull request.">ⓘ</span></label>
+  {{else if eq .Kind "discord"}}
   <label>Message <textarea name="message" rows="3" placeholder="what's the status of PR #498?" required>{{.Form.Get "message"}}</textarea></label>
   <div class="row">
     <label>Channel <input name="channel" value="{{or (.Form.Get "channel") "general"}}" placeholder="general" autocomplete="off"></label>

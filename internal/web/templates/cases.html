@@ -11,8 +11,8 @@
 <div class="scroll"><table class="list dense cases">
 <thead><tr><th>Case</th><th>Title</th><th>Lines</th><th>Changed</th></tr></thead>
 <tbody>{{range .Cases}}<tr>
-  <td class="nowrap"><a href="{{$.WS.Path}}/cases/{{.Number}}">{{.Label}}</a></td>
-  <td><a href="{{$.WS.Path}}/cases/{{.Number}}" class="plainlink">{{.Title}}</a></td>
+  <td class="nowrap"><a href="{{$.WS.Path}}/cases/{{if eq .Kind "lfa"}}lfa-{{end}}{{.Number}}">{{.Label}}</a></td>
+  <td><a href="{{$.WS.Path}}/cases/{{if eq .Kind "lfa"}}lfa-{{end}}{{.Number}}" class="plainlink">{{.Title}}</a></td>
   <td>{{.Lines}}</td>
   <td class="muted nowrap">{{tsShort .UpdatedAt}}</td>
 </tr>{{end}}</tbody>

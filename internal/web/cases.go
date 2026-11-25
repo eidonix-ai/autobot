@@ -201,8 +201,16 @@ func (s *Server) openCase(w http.ResponseWriter, r *http.Request) (*store.Worksp
 	if !ok {
 		return nil, nil, false
 	}
-	n, _ := strconv.Atoi(r.PathValue("number"))
-	c, err := s.st.CaseByNumber(ws.ID, n)
+	raw := r.PathValue("number")
+	var c *store.Case
+	var err error
+	if idStr, ok := strings.CutPrefix(raw, "lfa-"); ok {
+		runID, _ := strconv.ParseInt(idStr, 10, 64)
+		c, err = s.st.CaseByLFARun(ws.ID, runID)
+	} else {
+		n, _ := strconv.Atoi(raw)
+		c, err = s.st.CaseByNumber(ws.ID, n)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return nil, nil, false
@@ -236,6 +244,9 @@ func (s *Server) openDryCase(w http.ResponseWriter, r *http.Request) (*store.Wor
 func casePath(ws *store.Workspace, c *store.Case) string {
 	if c.DryRunOf != 0 {
 		return ws.Path() + "/dry-cases/" + strconv.FormatInt(c.DryRunOf, 10)
+	}
+	if c.Kind == "lfa" {
+		return ws.Path() + "/cases/lfa-" + strconv.Itoa(c.Number)
 	}
 	return ws.Path() + "/cases/" + strconv.Itoa(c.Number)
 }
@@ -274,14 +285,20 @@ func (s *Server) showCase(w http.ResponseWriter, r *http.Request, ws *store.Work
 	}
 	var runs []runRow
 	if c.DryRunOf == 0 { // the runs on the item; a dry run's case belongs to one run
-		list, err := s.st.WorkflowRunsOfItem(ws.ID, c.Number, 20)
-		if err != nil {
-			s.fail(w, err)
-			return
+		if c.Kind == "lfa" {
+			if run, err := s.st.WorkflowRun(int64(c.Number)); err == nil && run.WorkspaceID == ws.ID {
+				runs = s.runRows(ws, []store.WorkflowRun{*run})
+			}
+		} else {
+			list, err := s.st.WorkflowRunsOfItem(ws.ID, c.Number, 20)
+			if err != nil {
+				s.fail(w, err)
+				return
+			}
+			runs = s.runRows(ws, list)
 		}
-		runs = s.runRows(ws, list)
 	}
-	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "Newest": newest, "Runs": runs,
+	data := map[string]any{"Title": c.Label() + " · " + ws.Name, "WS": ws, "Case": c, "CasePath": casePath(ws, c), "Newest": newest, "Runs": runs,
 		"HTML": template.HTML(html.String()), "API": publicURL(r) + "/api/v1/cases/" + c.UUID, "Private": s.facts(r.Context(), ws).private}
 	if r.URL.Query().Has("saved") {
 		data["Notice"] = "Saved."

@@ -258,6 +258,9 @@ type ApprovalSettings struct {
 
 // DefaultApproval is a new Human Approval node's settings, for a workflow of kind.
 func DefaultApproval(kind string) ApprovalSettings {
+	if IsLFA(kind) {
+		return ApprovalSettings{Question: "Proceed with {lfa:title}?", Hours: 24}
+	}
 	if kind == Issue {
 		return ApprovalSettings{Question: "Go on with {issue}?", Hours: 24}
 	}

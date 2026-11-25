@@ -16,6 +16,11 @@
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button class="danger">Stop</button>
   </form>
+</div>{{else if and (not .Run.DryRun) (or (eq .Run.Status "failed") (eq .Run.Status "stopped"))}}<div class="row">
+  <form method="post" action="{{.WS.Path}}/workflow-runs/{{.Run.ID}}/resume">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button>Resume from failed step</button>
+  </form>
 </div>{{end}}
 </div>
 <section class="panel"><h2>The event</h2><pre class="verdict">{{.Run.Note}}</pre></section>

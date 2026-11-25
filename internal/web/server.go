@@ -219,6 +219,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/items/{kind}/run", s.auth(s.runItem))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflow-runs/{id}", s.auth(s.workflowRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/bypass", s.auth(s.bypassWorkflowRun))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/resume", s.auth(s.resumeWorkflowRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/stop", s.auth(s.stopWorkflowRun))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflow-runs/{id}/approvals/{approval}", s.auth(s.decideOnPage))
 	s.mux.Handle("GET /w/{owner}/{repo}/models", s.auth(s.modelsPage))

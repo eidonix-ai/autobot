@@ -114,8 +114,14 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 				row.By = "Live" // the poller or Discord listener started it
 			}
 		}
-		if place, ok := places[r.ID]; ok {
-			row.Status = fmt.Sprintf("queued (%s in line)", ordinal(place))
+		if r.Status == "queued" && !r.RetryAfter.IsZero() && r.RetryAfter.After(time.Now()) {
+			row.Status = fmt.Sprintf("retry %d/%d in %s", r.RetryCount, len(retryBackoffs), formatRetryWait(time.Until(r.RetryAfter)))
+		} else if place, ok := places[r.ID]; ok {
+			if r.RetryCount > 0 {
+				row.Status = fmt.Sprintf("queued retry %d/%d (%s in line)", r.RetryCount, len(retryBackoffs), ordinal(place))
+			} else {
+				row.Status = fmt.Sprintf("queued (%s in line)", ordinal(place))
+			}
 		}
 		if r.Kind == workflow.Issue {
 			row.Kind = "issue"

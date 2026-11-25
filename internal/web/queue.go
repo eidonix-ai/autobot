@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -12,9 +13,30 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eidonix-ai/autobot/internal/github"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
+
+// retryBackoffs is the backoff schedule when a workflow run hits a transient GitHub failure
+// (5xx, rate limit, or network/timeout error): 1m, 5m, 20m, 60m, then permanently fail.
+// Between attempts the run returns to the queue and releases its slot so other runs keep moving.
+var retryBackoffs = []time.Duration{
+	1 * time.Minute,
+	5 * time.Minute,
+	20 * time.Minute,
+	60 * time.Minute,
+}
+
+func formatRetryWait(d time.Duration) string {
+	if d <= 0 {
+		return "now"
+	}
+	if d >= time.Minute {
+		return fmt.Sprintf("%dm", int((d+30*time.Second)/time.Minute))
+	}
+	return d.Round(time.Second).String()
+}
 
 // A workspace runs at most so many workflow runs at once (Derek, 2026-11-24: "max jobs"; the
 // workspace's Settings say how many, 3 unless changed). A run counts against the limit while it
@@ -216,6 +238,16 @@ func (s *Server) startQueued(id int64) {
 	if err != nil {
 		log.Printf("workflow run %d: could not start: %v", id, err)
 		if run, rerr := s.st.WorkflowRun(id); rerr == nil {
+			if !run.DryRun && github.IsTransient(err) && run.RetryCount < len(retryBackoffs) {
+				delay := retryBackoffs[run.RetryCount]
+				nextCount := run.RetryCount + 1
+				msg := fmt.Sprintf("Could not start: %s — queued retry %d/%d in %s", err.Error(), nextCount, len(retryBackoffs), formatRetryWait(delay))
+				if qerr := s.st.RequeueStartRetry(id, run.EventNode, nextCount, time.Now().Add(delay), msg); qerr == nil {
+					log.Printf("workflow run %d: transient start error; requeued retry %d/%d in %s", id, nextCount, len(retryBackoffs), delay)
+					s.releaseSlot(id)
+					return
+				}
+			}
 			s.st.FailStart(id, run.EventNode, "Could not start: "+err.Error())
 		}
 		s.releaseSlot(id)
@@ -345,6 +377,63 @@ func (s *Server) bypassWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		}
 		if claimed {
 			go s.startQueued(run.ID)
+		}
+	}
+	if r.FormValue("from") == "list" {
+		http.Redirect(w, r, ws.Path()+"/workflow-runs", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("%s/workflow-runs/%d", ws.Path(), run.ID), http.StatusSeeOther)
+}
+
+// resumeWorkflowRun puts a failed or stopped non-dry run back into the queue, preserving all
+// already-completed steps and resetting only failed/stopped steps and their downstream skipped
+// dependents back to pending.
+func (s *Server) resumeWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.openWorkspace(w, r)
+	if !ok {
+		return
+	}
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	run, err := s.st.WorkflowRun(id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && run.WorkspaceID != ws.ID) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if !run.DryRun && (run.Status == "failed" || run.Status == "stopped") {
+		steps, serr := s.st.WorkflowSteps(run.ID)
+		if serr != nil {
+			s.fail(w, serr)
+			return
+		}
+		var g workflow.Graph
+		_ = json.Unmarshal([]byte(run.Graph), &g)
+		resetSet := map[string]bool{}
+		for nid, st := range steps {
+			if st.Status == "failed" || st.Status == "stopped" || st.Status == "running" {
+				resetSet[nid] = true
+				for rid := range g.ReachableFrom(nid) {
+					if rid != nid && steps[rid].Status == "skipped" {
+						resetSet[rid] = true
+					}
+				}
+			}
+		}
+		var resetNodes []string
+		for nid := range resetSet {
+			resetNodes = append(resetNodes, nid)
+		}
+		resumed, rerr := s.st.ResumeFailedRun(run.ID, resetNodes)
+		if rerr != nil {
+			s.fail(w, rerr)
+			return
+		}
+		if resumed {
+			s.dispatch(ws.ID)
 		}
 	}
 	if r.FormValue("from") == "list" {

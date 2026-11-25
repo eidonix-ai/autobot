@@ -487,6 +487,7 @@ func (s *Server) drive(rs *runState) {
 	}
 	results := make(chan finished)
 	running := 0
+	transientNodes := map[string]string{} // node id -> error for transient failures eligible for queue retry
 	// A run counts against its workspace's PR/Issue limit (see queue.go) except while everything
 	// going on is steps waiting for a person's answer or machine-bound test steps (which have their
 	// own 1-per-machine queue so hardware tests never wait behind or occupy PR/Issue review slots).
@@ -601,6 +602,9 @@ func (s *Server) drive(rs *runState) {
 		st.Status = "done"
 		if f.o.err != nil {
 			st.Status, st.Error, st.Port = "failed", f.o.err.Error(), ""
+			if (f.o.transient || github.IsTransient(f.o.err)) && !rs.run.DryRun && rs.run.RetryCount < len(retryBackoffs) {
+				transientNodes[f.id] = f.o.err.Error()
+			}
 		} else if f.o.note != "" {
 			st.Error = f.o.note
 		}
@@ -649,9 +653,38 @@ func (s *Server) drive(rs *runState) {
 		return
 	}
 	status := "done"
-	for _, st := range steps {
+	permFailed := false
+	for id, st := range steps {
 		if st.Status == "failed" {
 			status = "failed"
+			if _, ok := transientNodes[id]; !ok {
+				permFailed = true
+			}
+		}
+	}
+	if len(transientNodes) > 0 && !permFailed && !rs.run.DryRun && rs.run.RetryCount < len(retryBackoffs) {
+		delay := retryBackoffs[rs.run.RetryCount]
+		nextCount := rs.run.RetryCount + 1
+		nextAt := time.Now().Add(delay)
+		notes := map[string]string{}
+		resetSet := map[string]bool{}
+		for id, msg := range transientNodes {
+			notes[id] = fmt.Sprintf("%s — queued retry %d/%d in %s", msg, nextCount, len(retryBackoffs), formatRetryWait(delay))
+			for rid := range rs.g.ReachableFrom(id) {
+				if rid != id && steps[rid].Status == "skipped" {
+					resetSet[rid] = true
+				}
+			}
+		}
+		var resetSkipped []string
+		for rid := range resetSet {
+			resetSkipped = append(resetSkipped, rid)
+		}
+		if err := s.st.RequeueForRetry(rs.run.ID, notes, resetSkipped, nextCount, nextAt); err != nil {
+			log.Printf("workflow run %d: requeuing for retry: %v", rs.run.ID, err)
+		} else {
+			log.Printf("workflow run %d: transient GitHub failure; requeued retry %d/%d in %s", rs.run.ID, nextCount, len(retryBackoffs), delay)
+			return
 		}
 	}
 	if err := s.st.FinishWorkflowRun(rs.run.ID, status); err != nil {
@@ -897,6 +930,7 @@ type stepOutcome struct {
 	port, output, note string
 	agentRun           int64
 	err                error
+	transient          bool // temporary failure (e.g. GitHub 5xx/timeout) eligible for queued backoff retry
 	// tags are the values an Agent's or a Decision's output tag takes, by suffix (see agentParts); nil
 	// for a step whose output is the tag's value.
 	tags map[string]string
@@ -1094,12 +1128,16 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 	}
 	var reports []string
 	failed := false
+	transient := false
 	report := func(where string, o stepOutcome) {
 		switch {
 		case errors.Is(o.err, errPrivateRepo):
 			reports = append(reports, where+": skipped, "+o.err.Error())
 		case o.err != nil:
 			failed = true
+			if o.transient || github.IsTransient(o.err) {
+				transient = true
+			}
 			reports = append(reports, where+": "+o.err.Error())
 		default:
 			reports = append(reports, where+": "+o.note)
@@ -1109,14 +1147,17 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 		report("GitHub", s.commentStep(ctx, rs, n, p.Trial, text))
 	}
 	if p.Discord {
-		if rs.run.DryRun {
+		if transient && !rs.run.DryRun && rs.run.RetryCount < len(retryBackoffs) {
+			// Hold Discord posting until the queued GitHub retry runs so we don't post to Discord twice.
+			reports = append(reports, "Discord: deferred until GitHub retry")
+		} else if rs.run.DryRun {
 			report("Discord", stepOutcome{note: "dry run: not posted"})
 		} else {
 			report("Discord", s.discordStep(ctx, rs, p.Summary, text))
 		}
 	}
 	if failed {
-		return stepOutcome{err: errors.New(strings.Join(reports, "; "))}
+		return stepOutcome{err: errors.New(strings.Join(reports, "; ")), transient: transient}
 	}
 	return stepOutcome{port: "out", output: text, note: strings.Join(reports, "; ")}
 }
@@ -1143,9 +1184,22 @@ func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node,
 	if token == "" {
 		return stepOutcome{err: errors.New("posting needs the workspace's GitHub identity: set it in the workspace's Settings")}
 	}
+	if rs.run.RetryCount > 0 {
+		// On retry after a GitHub 5xx or timeout, check recent comments first so we never double-post
+		// if GitHub actually saved the comment before returning the error.
+		if existing, cerr := s.gh.Comments(ctx, token, rs.ws.Name, rs.it.number); cerr == nil {
+			want := strings.TrimSpace(text)
+			for i := len(existing) - 1; i >= 0; i-- {
+				c := existing[i]
+				if strings.TrimSpace(c.Body) == want && (c.At.IsZero() || time.Since(c.At) <= 3*time.Hour) {
+					return stepOutcome{port: "out", output: text, note: "already posted on GitHub (verified on retry)"}
+				}
+			}
+		}
+	}
 	_, url, err := s.gh.Comment(ctx, token, rs.ws.Name, rs.it.number, text)
 	if err != nil {
-		return stepOutcome{err: err}
+		return stepOutcome{err: err, transient: github.IsTransient(err)}
 	}
 	return stepOutcome{port: "out", output: text, note: "posted " + url}
 }
@@ -1231,7 +1285,7 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 	if rs.it.pr != nil {
 		commit, ref = rs.it.pr.HeadSHA, rs.it.pr.HeadSHA
 	} else if commit, err = s.gh.CommitSHA(ctx, token, rs.ws.Name, "HEAD"); err != nil {
-		return stepOutcome{err: fmt.Errorf("finding the repository's latest commit: %v", err)}
+		return stepOutcome{err: fmt.Errorf("finding the repository's latest commit: %w", err)}
 	}
 	private := false
 	if token != "" {
@@ -1655,8 +1709,14 @@ func (s *Server) workflowRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if run.Status == "queued" {
 		data["QueueText"] = "Queued"
-		if place, ok := s.queuePlaces(ws.ID)[run.ID]; ok {
-			data["QueueText"] = fmt.Sprintf("Queued (%s in line)", ordinal(place))
+		if !run.RetryAfter.IsZero() && run.RetryAfter.After(time.Now()) {
+			data["QueueText"] = fmt.Sprintf("Waiting to retry (%d/%d) in %s", run.RetryCount, len(retryBackoffs), formatRetryWait(time.Until(run.RetryAfter)))
+		} else if place, ok := s.queuePlaces(ws.ID)[run.ID]; ok {
+			if run.RetryCount > 0 {
+				data["QueueText"] = fmt.Sprintf("Queued for retry %d/%d (%s in line)", run.RetryCount, len(retryBackoffs), ordinal(place))
+			} else {
+				data["QueueText"] = fmt.Sprintf("Queued (%s in line)", ordinal(place))
+			}
 		}
 	}
 	if run.DryRun { // the dry run's own case file, once it has opened one

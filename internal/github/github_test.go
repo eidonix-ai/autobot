@@ -225,3 +225,51 @@ func TestCIStateAndComments(t *testing.T) {
 		t.Fatalf("role of a bad name %q %v", role, err)
 	}
 }
+
+func TestTransientErrorClassification(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/r/issues/1/comments":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/repos/o/r/issues/2/comments":
+			w.WriteHeader(http.StatusBadGateway)
+		case "/repos/o/r/issues/3/comments":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "/repos/o/r/issues/4/comments":
+			w.WriteHeader(http.StatusForbidden)
+		case "/repos/o/r/issues/5/comments":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/repos/o/r/issues/6/comments":
+			w.WriteHeader(http.StatusUnprocessableEntity)
+		case "/repos/o/r/pulls/500":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c, ctx := &Client{BaseURL: srv.URL}, context.Background()
+
+	for _, num := range []int{1, 2, 3} {
+		if _, _, err := c.Comment(ctx, "tok", "o/r", num, "hi"); !IsTransient(err) {
+			t.Errorf("comment #%d: want transient error, got %v", num, err)
+		}
+	}
+	for _, num := range []int{4, 5, 6, 99} {
+		if _, _, err := c.Comment(ctx, "tok", "o/r", num, "hi"); err == nil || IsTransient(err) {
+			t.Errorf("comment #%d: want permanent error, got %v (transient=%v)", num, err, IsTransient(err))
+		}
+	}
+	if _, err := c.PullRequest(ctx, "tok", "o/r", 500); !IsTransient(err) {
+		t.Errorf("GET 503: want transient error, got %v", err)
+	}
+	bad := &Client{BaseURL: "http://127.0.0.1:1"}
+	if _, _, err := bad.Comment(ctx, "tok", "o/r", 1, "hi"); !IsTransient(err) {
+		t.Errorf("network error: want transient error, got %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, _, err := c.Comment(canceled, "tok", "o/r", 1, "hi"); IsTransient(err) {
+		t.Errorf("canceled context must not be transient, got %v", err)
+	}
+}

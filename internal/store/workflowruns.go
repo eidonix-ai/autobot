@@ -25,6 +25,8 @@ type WorkflowRun struct {
 	FinishedAt  time.Time
 	StoppedBy   string // the name of the person who stopped it
 	StoppedAt   time.Time
+	RetryCount  int       // transient-failure retries attempted so far
+	RetryAfter  time.Time // when queued for backoff retry, earliest time to pick back up
 }
 
 // WorkflowStep is one node's part in a run.
@@ -157,12 +159,12 @@ func (s *Store) WorkflowRun(id int64) (*WorkflowRun, error) {
 }
 
 const workflowRunSelect = `SELECT w.id, w.workspace_id, w.kind, w.event_node, w.item, w.trigger_data, w.dry_run, w.graph, w.status, w.note, ` + authorName + `, COALESCE(w.started_by, 0),
-	w.started_at, w.finished_at, w.stopped_by, w.stopped_at FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by`
+	w.started_at, w.finished_at, w.stopped_by, w.stopped_at, w.retry_count, w.retry_after FROM workflow_runs w LEFT JOIN users u ON u.id = w.started_by`
 
 func scanWorkflowRun(row scanner) (*WorkflowRun, error) {
 	var r WorkflowRun
-	var started, finished, stopped int64
-	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.TriggerData, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &r.StartedByID, &started, &finished, &r.StoppedBy, &stopped)
+	var started, finished, stopped, retryAfter int64
+	err := row.Scan(&r.ID, &r.WorkspaceID, &r.Kind, &r.EventNode, &r.Item, &r.TriggerData, &r.DryRun, &r.Graph, &r.Status, &r.Note, &r.StartedBy, &r.StartedByID, &started, &finished, &r.StoppedBy, &stopped, &r.RetryCount, &retryAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -175,6 +177,9 @@ func scanWorkflowRun(row scanner) (*WorkflowRun, error) {
 	}
 	if stopped != 0 {
 		r.StoppedAt = time.Unix(stopped, 0)
+	}
+	if retryAfter != 0 {
+		r.RetryAfter = time.Unix(retryAfter, 0)
 	}
 	return &r, nil
 }

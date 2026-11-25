@@ -24,16 +24,36 @@ var ErrNoRepo = errors.New("no such repository on GitHub")
 // ErrBadToken means GitHub did not accept the token: it is wrong, revoked or expired.
 var ErrBadToken = errors.New("GitHub did not accept the token (wrong, revoked or expired)")
 
+// TransientError wraps a temporary GitHub failure (5xx, rate limit, or network/timeout error)
+// that may succeed when retried after a backoff.
+type TransientError struct{ Err error }
+
+func (e *TransientError) Error() string { return e.Err.Error() }
+func (e *TransientError) Unwrap() error { return e.Err }
+
+// IsTransient reports whether err is a temporary GitHub failure worth retrying.
+func IsTransient(err error) bool {
+	var t *TransientError
+	return errors.As(err, &t)
+}
+
+func transient(err error) error {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return err
+	}
+	return &TransientError{Err: err}
+}
+
 // Client is a GitHub API client. The zero value uses the public API.
 type Client struct {
 	BaseURL string       // default https://api.github.com
-	HTTP    *http.Client // default: a client with a 10-second timeout
+	HTTP    *http.Client // default: a client with a 30-second timeout
 
 	mu    sync.Mutex
 	etags map[string]etagged // answers to getCached, by token and path
 }
 
-var defaultHTTP = &http.Client{Timeout: 10 * time.Second}
+var defaultHTTP = &http.Client{Timeout: 30 * time.Second}
 
 // get calls the API, with the token when there is one, and decodes a 200 answer into out.
 func (c *Client) get(ctx context.Context, token, path string, out any) (http.Header, error) {
@@ -68,7 +88,7 @@ func (c *Client) fetch(ctx context.Context, token, path string, out any, cache b
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("could not reach GitHub: %w", err)
+		return nil, transient(fmt.Errorf("could not reach GitHub: %w", err))
 	}
 	defer resp.Body.Close()
 	switch {
@@ -96,16 +116,22 @@ func (c *Client) fetch(ctx context.Context, token, path string, out any, cache b
 		return nil, ErrBadToken
 	case resp.StatusCode == http.StatusTooManyRequests,
 		resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0":
-		return nil, errors.New("GitHub is limiting how often we can ask; try again in a few minutes")
+		return nil, transient(errors.New("GitHub is limiting how often we can ask; try again in a few minutes"))
 	default:
 		var msg struct {
 			Message string `json:"message"`
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		var apiErr error
 		if json.Unmarshal(body, &msg) == nil && msg.Message != "" {
-			return nil, fmt.Errorf("GitHub refused: %s", msg.Message)
+			apiErr = fmt.Errorf("GitHub refused: %s", msg.Message)
+		} else {
+			apiErr = fmt.Errorf("GitHub answered %s", resp.Status)
 		}
-		return nil, fmt.Errorf("GitHub answered %s", resp.Status)
+		if resp.StatusCode >= 500 {
+			return nil, transient(apiErr)
+		}
+		return nil, apiErr
 	}
 }
 
@@ -255,14 +281,18 @@ func (c *Client) Tarball(ctx context.Context, token, name, commit string) (io.Re
 	}
 	resp, err := (&http.Client{Timeout: 15 * time.Minute}).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("could not reach GitHub: %w", err)
+		return nil, transient(fmt.Errorf("could not reach GitHub: %w", err))
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound && token == "" {
 			return nil, fmt.Errorf("GitHub has no public %s at %s; a private repository needs the workspace's GitHub identity", name, commit[:min(12, len(commit))])
 		}
-		return nil, fmt.Errorf("GitHub answered %s for %s at %s", resp.Status, name, commit[:min(12, len(commit))])
+		apiErr := fmt.Errorf("GitHub answered %s for %s at %s", resp.Status, name, commit[:min(12, len(commit))])
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return nil, transient(apiErr)
+		}
+		return nil, apiErr
 	}
 	return resp.Body, nil
 }
@@ -606,7 +636,7 @@ func (c *Client) send(ctx context.Context, method, token, path string, body, out
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("could not reach GitHub: %w", err)
+		return transient(fmt.Errorf("could not reach GitHub: %w", err))
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -620,12 +650,19 @@ func (c *Client) send(ctx context.Context, method, token, path string, body, out
 		return ErrNoRepo
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrBadToken
+	case resp.StatusCode == http.StatusTooManyRequests,
+		resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0":
+		return transient(errors.New("GitHub is limiting how often we can ask; try again in a few minutes"))
 	case resp.StatusCode == http.StatusForbidden:
 		return errors.New("GitHub refused: the token may not write comments on this repository (it needs Issues and Pull requests: read and write)")
 	}
 	var msg struct{ Message string }
 	json.Unmarshal(data, &msg)
-	return fmt.Errorf("GitHub answered %s: %s", resp.Status, msg.Message)
+	apiErr := fmt.Errorf("GitHub answered %s: %s", resp.Status, msg.Message)
+	if resp.StatusCode >= 500 {
+		return transient(apiErr)
+	}
+	return apiErr
 }
 
 // Comment adds a comment to an issue or pull request and returns its id and address.

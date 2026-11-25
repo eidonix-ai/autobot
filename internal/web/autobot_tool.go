@@ -235,6 +235,14 @@ func (s *Server) caseTools(ws *store.Workspace) []agent.Tool {
 					if link := s.caseLink(c); link != "" {
 						fmt.Fprintf(&b, "Case page: %s\n", link)
 					}
+					if pages, err := s.st.PagesOf(c.UUID); err == nil && len(pages) > 0 {
+						b.WriteString("Published report pages on this case:\n")
+						for _, pg := range pages {
+							if link := s.pageLink(pg.UUID); link != "" {
+								fmt.Fprintf(&b, "- %s: %s\n", workflow.LinkLabel(pg.Tag), link)
+							}
+						}
+					}
 				}
 				fmt.Fprintf(&b, "Updated: %s\n", c.UpdatedAt.In(eastern).Format("Jan 2, 2006 3:04 PM ET"))
 
@@ -254,6 +262,51 @@ func (s *Server) caseTools(ws *store.Workspace) []agent.Tool {
 				b.WriteString("\n--- Case file ---\n")
 				writePagedLines(&b, c.Contents, in.StartLine, in.EndLine, maxCaseToolChars)
 				return b.String(), nil
+			},
+		},
+		{
+			Spec: agent.ToolSpec{
+				Name:        "publish_page",
+				Description: "Publish a Markdown document to a hosted Autobot page (/p/<uuid>.html, kept for 30 days) and get its URL, so your Discord reply can stay brief and link to the full list, table, or details with [Label](url).",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"title": {"type": "string", "description": "Short page title (e.g. 'Open DGX Spark PRs' or 'PR #498 Status')."},
+						"content": {"type": "string", "description": "Markdown body of the page."}
+					},
+					"required": ["title", "content"]
+				}`),
+			},
+			Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var in struct {
+					Title   string `json:"title"`
+					Content string `json:"content"`
+				}
+				if err := json.Unmarshal(raw, &in); err != nil {
+					return "Provide title and content.", nil
+				}
+				title := strings.TrimSpace(in.Title)
+				content := strings.TrimSpace(in.Content)
+				if title == "" || content == "" {
+					return "Both title and content are required.", nil
+				}
+				if len(title) > 120 {
+					title = strings.ToValidUTF8(title[:120], "")
+				}
+				if len(content) > 200_000 {
+					return "Page content is limited to 200,000 characters.", nil
+				}
+				if s.facts(ctx, ws).private {
+					return "Standalone pages are not published for private repositories.", nil
+				}
+				if s.siteAddress() == "" {
+					return "Cannot publish page: the site's public address is not set in Autobot.", nil
+				}
+				uuid, err := s.st.PublishStandalone(ws.ID, title, content)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Published page: %s\nMarkdown link: [%s](%s)", s.pageLink(uuid), title, s.pageLink(uuid)), nil
 			},
 		},
 	}

@@ -29,6 +29,17 @@ type links struct {
 // runLinks are a run's: its pages are published into its case file (the item's, opened if it has none;
 // a dry run's own, which it deletes with them), and [[case]] is that file.
 func (s *Server) runLinks(rs *runState) links {
+	if rs.run.Kind == workflow.Discord {
+		return links{
+			publish: func(tag, content string) (string, error) {
+				if rs.run.DryRun {
+					return "", errors.New("not published in a dry run")
+				}
+				return s.st.PublishStandalone(rs.ws.ID, workflow.LinkLabel(tag), content)
+			},
+			caseOf: func() (*store.Case, error) { return nil, store.ErrNotFound },
+		}
+	}
 	return links{
 		publish: func(tag, content string) (string, error) {
 			c, err := s.runCase(rs)
@@ -132,5 +143,9 @@ func (s *Server) publishedPage(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(text) == "" {
 		text = "_This is empty._"
 	}
-	s.publicPage(w, r, workflow.LinkLabel(p.Tag)+" · "+ws.Name+" #"+strconv.Itoa(p.Item), text, "Raw Markdown for agents: "+s.addressOf(r)+"/p/"+p.UUID+".md")
+	heading := workflow.LinkLabel(p.Tag) + " · " + ws.Name + " #" + strconv.Itoa(p.Item)
+	if p.Item == 0 {
+		heading = p.Tag + " · " + ws.Name
+	}
+	s.publicPage(w, r, heading, text, "Raw Markdown for agents: "+s.addressOf(r)+"/p/"+p.UUID+".md")
 }

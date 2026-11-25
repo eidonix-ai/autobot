@@ -86,7 +86,7 @@ CREATE INDEX cases_by_dry_run ON cases (dry_run_of) WHERE dry_run_of != 0;
 const schemaDiscordRuns = `ALTER TABLE workflow_runs ADD COLUMN trigger_data TEXT NOT NULL DEFAULT '';`
 
 // migrations[i] takes the schema from version i to i+1. Append only; never edit a released entry.
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped, schemaDryCases, schemaCitationMarks, schemaApprovalQuestion, schemaRunDefaults, schemaNoTools, schemaDiscordRuns}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, schemaV9, schemaV10, schemaV11, schemaV12, schemaV13, schemaV14, schemaV15, schemaV16, schemaV17, schemaV18, schemaPoller, schemaItems, schemaRunFiles, schemaThreads, schemaSubAgents, schemaPadSummary, schemaPresets, schemaPublished, schemaMachineNotes, schemaStopped, schemaDryCases, schemaCitationMarks, schemaApprovalQuestion, schemaRunDefaults, schemaNoTools, schemaDiscordRuns, schemaStandalonePages}
 
 const schemaV1 = `
 CREATE TABLE users (

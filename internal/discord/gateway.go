@@ -125,6 +125,9 @@ func RunGateway(ctx context.Context, cfg GatewayConfig) error {
 		var fatal *GatewayFatalError
 		if errors.As(err, &fatal) {
 			report(false, sess.botUsername, fatal.Msg)
+			if cfg.OnLog != nil {
+				cfg.OnLog(fmt.Sprintf("fatal close %d: %s", fatal.Code, fatal.Msg))
+			}
 			return fatal
 		}
 		if time.Since(started) > 30*time.Second {
@@ -133,6 +136,9 @@ func RunGateway(ctx context.Context, cfg GatewayConfig) error {
 		msg := "disconnected"
 		if err != nil {
 			msg = err.Error()
+		}
+		if cfg.OnLog != nil {
+			cfg.OnLog("disconnected (" + msg + "); reconnecting in " + backoff.String())
 		}
 		report(false, sess.botUsername, "Reconnecting to Discord: "+msg)
 		if !sleepCtx(ctx, backoff) {
@@ -370,8 +376,12 @@ func readClientData(rw interface {
 		var cerr wsutil.ClosedError
 		if errors.As(err, &cerr) {
 			if ferr := fatalCloseError(cerr.Code); ferr != nil {
+				if cerr.Reason != "" {
+					ferr.(*GatewayFatalError).Msg += " (Discord: " + cerr.Reason + ")"
+				}
 				return nil, ferr
 			}
+			return nil, fmt.Errorf("close %d %s", cerr.Code, cerr.Reason)
 		}
 		return nil, err
 	}

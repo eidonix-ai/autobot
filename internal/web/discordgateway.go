@@ -251,20 +251,40 @@ func (s *Server) reconcileDiscord(ctx context.Context) {
 
 func (s *Server) runWorkspaceGateway(ctx context.Context, wsID int64, token string) {
 	defer survive(fmt.Sprintf("discord gateway for workspace %d", wsID), nil)
-	err := discord.RunGateway(ctx, discord.GatewayConfig{
-		Token: token,
-		OnStatus: func(connected bool, botName, problem string) {
-			s.discordHub.setStatus(wsID, discordGatewayStatus{Connected: connected, BotName: botName, Problem: problem})
-		},
-		OnLog: func(msg string) {
-			log.Printf("discord gateway (workspace %d): %s", wsID, msg)
-		},
-		OnMention: func(ev discord.MentionEvent) {
-			go s.handleDiscordMention(ctx, wsID, ev)
-		},
-	})
-	if err != nil && ctx.Err() == nil {
-		log.Printf("discord gateway (workspace %d): %v", wsID, err)
+	defer func() {
+		// Remove ourselves from active workers if we exit (e.g. fatal close 4014) so a future
+		// reconcile can retry automatically once the user fixes the Discord setting.
+		h := s.discordHub
+		h.mu.Lock()
+		if w, ok := h.workers[wsID]; ok && w.token == token {
+			delete(h.workers, wsID)
+		}
+		h.mu.Unlock()
+	}()
+	for {
+		err := discord.RunGateway(ctx, discord.GatewayConfig{
+			Token: token,
+			OnStatus: func(connected bool, botName, problem string) {
+				s.discordHub.setStatus(wsID, discordGatewayStatus{Connected: connected, BotName: botName, Problem: problem})
+			},
+			OnLog: func(msg string) {
+				log.Printf("discord gateway (workspace %d): %s", wsID, msg)
+			},
+			OnMention: func(ev discord.MentionEvent) {
+				go s.handleDiscordMention(ctx, wsID, ev)
+			},
+		})
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		log.Printf("discord gateway (workspace %d): %v (retrying in 60s)", wsID, err)
+		t := time.NewTimer(60 * time.Second)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
 	}
 }
 

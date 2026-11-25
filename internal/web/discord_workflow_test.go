@@ -332,6 +332,10 @@ func TestDiscordCaseTools(t *testing.T) {
 	e.st.SetDraft(id, "Found a race in prefix-cache eviction.")
 	e.st.FinalizeContribution(id)
 	e.st.SetCaseValue(c.UUID, "lens_team.report", "Blocking: cache.rs:88 race condition.", "n1")
+	pgUUID, err := e.st.Publish(c, "lens_team.report", "Full lens team report body")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Dry-run case and another workspace's case must never appear.
 	e.st.OpenDryCase(ws, 99, 42, "pr", "Dry run", "Dry headline")
 	e.st.OpenCase(other, 77, "pr", "Secret other repo", "Opened.")
@@ -361,7 +365,8 @@ func TestDiscordCaseTools(t *testing.T) {
 	}
 
 	read := runTool("read_case", `{"item":42}`)
-	if !strings.Contains(read, "Found a race in prefix-cache eviction.") || !strings.Contains(read, "lens_team.report") {
+	if !strings.Contains(read, "Found a race in prefix-cache eviction.") || !strings.Contains(read, "lens_team.report") ||
+		!strings.Contains(read, "https://autobot.example/p/"+pgUUID+".html") {
 		t.Fatalf("read_case: %s", read)
 	}
 	part := runTool("read_case", `{"item":42,"part":"lens_team.report"}`)
@@ -373,12 +378,85 @@ func TestDiscordCaseTools(t *testing.T) {
 		t.Fatalf("read_case missing: %s", missing)
 	}
 
-	// Private repo omits the public case page URL.
+	// publish_page publishes a standalone /p/<uuid>.html page readable without #0 in heading.
+	pubOut := runTool("publish_page", `{"title":"Open PR Summary","content":"# Open PRs\n- #42"}`)
+	if !strings.Contains(pubOut, "https://autobot.example/p/") || !strings.Contains(pubOut, "[Open PR Summary](") {
+		t.Fatalf("publish_page: %s", pubOut)
+	}
+	i := strings.Index(pubOut, "/p/")
+	j := strings.Index(pubOut[i:], ".html")
+	standalonePath := pubOut[i : i+j+5]
+	b := e.signIn("derek")
+	if code, body := b.get(standalonePath); code != 200 || !strings.Contains(body, "Open PR Summary") || strings.Contains(body, "#0") {
+		t.Fatalf("standalone HTML page %s: %d\n%s", standalonePath, code, body)
+	}
+	if code, body := b.get(strings.TrimSuffix(standalonePath, ".html")+".md"); code != 200 || !strings.Contains(body, "# Open PRs") {
+		t.Fatalf("standalone MD page: %d\n%s", code, body)
+	}
+
+	// Private repo omits the public case page URL and refuses standalone publishing.
 	e.ui.access.mu.Lock()
 	e.ui.access.byWS[ws.ID] = repoFacts{private: true, at: time.Now()}
 	e.ui.access.mu.Unlock()
 	priv := runTool("read_case", `{"item":42}`)
-	if strings.Contains(priv, "autobot.example/api/v1/cases/") {
-		t.Fatalf("private repo leaked case URL: %s", priv)
+	if strings.Contains(priv, "autobot.example/api/v1/cases/") || strings.Contains(priv, "/p/"+pgUUID) {
+		t.Fatalf("private repo leaked case/page URL: %s", priv)
+	}
+	if privPub := runTool("publish_page", `{"title":"Secret","content":"nope"}`); !strings.Contains(privPub, "private repositories") {
+		t.Fatalf("private repo published standalone page: %s", privPub)
+	}
+}
+
+// [[step.report|Label]] in a Discord Post block publishes a standalone page and renders a Markdown link.
+func TestDiscordPostDoubleBracketLink(t *testing.T) {
+	var posted string
+	dsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/channels/ch1/messages" {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			posted, _ = body["content"].(string)
+			io.WriteString(w, `{"id":"m2","channel_id":"ch1"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	oldAPI := discord.API
+	discord.API = dsrv.URL
+	t.Cleanup(func() { discord.API = oldAPI; dsrv.Close() })
+
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	e.st.SetSetting(publicAddressKey, "https://autobot.example")
+	pub, _, _ := ed25519.GenerateKey(nil)
+	e.st.SetDiscordBot(ws, "tok", hex.EncodeToString(pub), derek)
+
+	raw := func(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+	po := workflow.DefaultPostFor(workflow.Discord)
+	po.Message = "Summary — [[input|Full details]]"
+	g := workflow.Graph{
+		Nodes: []workflow.Node{
+			{ID: "ev", Type: workflow.DiscordMention, Settings: raw(workflow.DefaultEvent(workflow.DiscordMention))},
+			{ID: "po", Type: workflow.Post, Settings: raw(po)},
+		},
+		Links: []workflow.Link{{From: "ev", Out: "out", To: "po", In: "in"}},
+	}
+	if _, err := e.st.SaveWorkflow(ws.ID, workflow.Discord, 0, string(raw(g)), derek); err != nil {
+		t.Fatal(err)
+	}
+	id, err := e.ui.startDiscordWorkflow(t.Context(), ws, "ev", DiscordTrigger{
+		ChannelID: "ch1", Channel: "general", MessageID: "m1", Author: "Alice", Content: "details please",
+	}, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		if r, _ := e.st.WorkflowRun(id); r != nil && r.Status != "running" && r.Status != "queued" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(posted, "[Full details](https://autobot.example/p/") || !strings.Contains(posted, ".html)") {
+		t.Fatalf("posted reply did not publish [[input|Full details]]: %q", posted)
 	}
 }

@@ -55,17 +55,47 @@ func (s *Store) Publish(c *Case, tag, content string) (string, error) {
 	return uuid, err
 }
 
-// PublishedPage looks a page up by its uuid, or ErrNotFound.
+// schemaStandalonePages stores published pages not attached to a GitHub case (such as pages
+// published from a Discord workflow via [[step.part|Label]] or the publish_page tool).
+const schemaStandalonePages = `
+CREATE TABLE standalone_pages (
+	uuid         TEXT    PRIMARY KEY,
+	workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	title        TEXT    NOT NULL,
+	content      TEXT    NOT NULL,
+	created_at   INTEGER NOT NULL
+);
+CREATE INDEX standalone_pages_by_created ON standalone_pages (created_at);
+`
+
+// PublishStandalone stores content as a standalone published page for workspaceID and returns its uuid.
+func (s *Store) PublishStandalone(workspaceID int64, title, content string) (string, error) {
+	id := newUUID()
+	if _, err := s.db.Exec(`INSERT INTO standalone_pages (uuid, workspace_id, title, content, created_at)
+		VALUES (?, ?, ?, ?, ?)`, id, workspaceID, title, content, now()); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// PublishedPage looks a page up by its uuid (case-attached or standalone), or ErrNotFound.
 func (s *Store) PublishedPage(uuid string) (*Page, error) {
 	p := &Page{}
 	var at int64
 	err := s.db.QueryRow(`SELECT uuid, workspace_id, case_uuid, item, tag, content, created_at FROM published WHERE uuid = ?`, uuid).
 		Scan(&p.UUID, &p.WorkspaceID, &p.CaseUUID, &p.Item, &p.Tag, &p.Content, &at)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		err = s.db.QueryRow(`SELECT uuid, workspace_id, title, content, created_at FROM standalone_pages WHERE uuid = ?`, uuid).
+			Scan(&p.UUID, &p.WorkspaceID, &p.Tag, &p.Content, &at)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+	}
+	if err != nil {
+		return nil, err
 	}
 	p.CreatedAt = time.Unix(at, 0)
-	return p, err
+	return p, nil
 }
 
 // PagesOf lists a case's published pages, oldest first.
@@ -127,5 +157,10 @@ func (s *Store) PrunePages(at time.Time, complete func(ws int64) bool) (int, err
 			return 0, err
 		}
 	}
-	return len(gone), nil
+	res, err := s.db.Exec(`DELETE FROM standalone_pages WHERE created_at < ?`, cutoff)
+	if err != nil {
+		return len(gone), err
+	}
+	extra, _ := res.RowsAffected()
+	return len(gone) + int(extra), nil
 }

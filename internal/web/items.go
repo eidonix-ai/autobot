@@ -58,6 +58,16 @@ func since(now, t time.Time) string {
 	}
 }
 
+// itemKind reads the kind in the URL for GitHub items pages (pr or issue only).
+func itemKind(w http.ResponseWriter, r *http.Request) (string, bool) {
+	k := r.PathValue("kind")
+	if k != workflow.PR && k != workflow.Issue {
+		http.NotFound(w, r)
+		return "", false
+	}
+	return k, true
+}
+
 // itemsPage lists a workspace's pull requests or issues from the local copy, with a form to run the
 // workflow on each. While a run on any listed item is going the page updates itself.
 func (s *Server) itemsPage(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +75,7 @@ func (s *Server) itemsPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	kind, ok := workflowKind(w, r)
+	kind, ok := itemKind(w, r)
 	if !ok {
 		return
 	}
@@ -86,7 +96,7 @@ func (s *Server) renderItems(w http.ResponseWriter, r *http.Request, status int,
 	data := map[string]any{"WS": ws, "Kind": kind, "Q": words, "State": state, "HasCase": withCase, "Wide": true,
 		"Title": workflow.KindLabel(kind) + " · " + ws.Name}
 	var tabs []map[string]string
-	for _, k := range workflow.Kinds {
+	for _, k := range []string{workflow.PR, workflow.Issue} {
 		tabs = append(tabs, map[string]string{"Kind": k, "Label": workflow.KindLabel(k)})
 	}
 	data["Tabs"] = tabs
@@ -163,7 +173,7 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	kind, ok := workflowKind(w, r)
+	kind, ok := itemKind(w, r)
 	if !ok {
 		return
 	}

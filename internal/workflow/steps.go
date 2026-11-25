@@ -177,6 +177,7 @@ Recent channel context:
 
 Help only with questions relevant to {repo}, its pull requests and issues, its project charter, or Autobot's own runs and status:
 - Use list_cases / read_case to find and read Autobot's case files (research findings, reviews, decisions, approvals, and links).
+- Use publish_page if an answer needs a long list, table, or detailed breakdown so your Discord reply stays short and links to it with [Label](url).
 - Use autobot_status to check active, queued, waiting-for-approval, or recent workflow runs, test machines, and links to GitHub issues/PR lists.
 - Use search_items / read_item to look up specific issues or pull requests and link directly to them on GitHub.
 - Use read_charter or read-only repository tools when needed.

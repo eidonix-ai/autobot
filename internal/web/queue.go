@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eidonix-ai/autobot/internal/store"
+	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
 // A workspace runs at most so many workflow runs at once (Derek, 2026-11-24: "max jobs"; the
@@ -28,51 +30,71 @@ import (
 // queueEvery is how often the queue is looked at though nothing told it to start.
 var queueEvery = 30 * time.Second
 
-// slotWaiter is a run that has had a slot and needs one again: its approval was answered.
-type slotWaiter struct {
-	run, ws int64
-	ready   chan struct{}
+// maxDiscordRuns is how many Discord mention runs of one workspace may run at once, in a separate
+// pool from the workspace's PR/Issue "Runs at once" limit so quick Discord replies never wait
+// behind long PR or Issue reviews.
+var maxDiscordRuns = 2
+
+// slotPool identifies one independent concurrency pool: PR/Issue runs vs Discord mention runs.
+type slotPool struct {
+	ws      int64
+	discord bool
 }
 
-// slots are the runs that count against their workspace's limit, by run id, with the workspace.
+// slotWaiter is a run that has had a slot and needs one again: its approval was answered.
+type slotWaiter struct {
+	run  int64
+	pool slotPool
+	ready chan struct{}
+}
+
+// slots are the runs that count against their pool's limit, by run id.
 type slots struct {
 	mu      sync.Mutex
-	held    map[int64]int64
+	held    map[int64]slotPool
 	waiters []*slotWaiter // oldest first
 }
 
-// used is how many runs of a workspace hold a slot. The caller holds the mutex.
-func (k *slots) used(ws int64) int {
+// used is how many runs in a pool hold a slot. The caller holds the mutex.
+func (k *slots) used(p slotPool) int {
 	n := 0
-	for _, w := range k.held {
-		if w == ws {
+	for _, h := range k.held {
+		if h == p {
 			n++
 		}
 	}
 	return n
 }
 
-// take records a run as holding a slot. The caller holds the mutex.
-func (k *slots) take(run, ws int64) {
+// take records a run as holding a slot in p. The caller holds the mutex.
+func (k *slots) take(run int64, p slotPool) {
 	if k.held == nil {
-		k.held = map[int64]int64{}
+		k.held = map[int64]slotPool{}
 	}
-	k.held[run] = ws
+	k.held[run] = p
 }
 
-// waiting says whether a run of the workspace waits for a slot. The caller holds the mutex.
-func (k *slots) waiting(ws int64) bool {
-	return slices.ContainsFunc(k.waiters, func(w *slotWaiter) bool { return w.ws == ws })
+// waiting says whether a run in p waits for a slot. The caller holds the mutex.
+func (k *slots) waiting(p slotPool) bool {
+	return slices.ContainsFunc(k.waiters, func(w *slotWaiter) bool { return w.pool == p })
 }
 
-// admit records a new run: running, with a slot, when the workspace has one free and nothing waits
+func (s *Server) poolLimit(p slotPool) int {
+	if p.discord {
+		return maxDiscordRuns
+	}
+	return s.st.MaxRuns(p.ws)
+}
+
+// admit records a new run: running, with a slot, when its pool has one free and nothing waits
 // for it; otherwise queued.
 func (s *Server) admit(r store.WorkflowRun, nodes []string, by *store.User) (id int64, queued bool, err error) {
+	p := slotPool{ws: r.WorkspaceID, discord: r.Kind == workflow.Discord}
 	k := &s.slots
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	ahead, err := s.st.QueuedRuns(r.WorkspaceID)
-	free := err == nil && len(ahead) == 0 && !k.waiting(r.WorkspaceID) && k.used(r.WorkspaceID) < s.st.MaxRuns(r.WorkspaceID)
+	ahead, err := s.st.QueuedRunsFor(p.ws, p.discord)
+	free := err == nil && len(ahead) == 0 && !k.waiting(p) && k.used(p) < s.poolLimit(p)
 	if !free {
 		r.Status = "queued"
 	}
@@ -80,7 +102,7 @@ func (s *Server) admit(r store.WorkflowRun, nodes []string, by *store.User) (id 
 		return 0, false, err
 	}
 	if free {
-		k.take(id, r.WorkspaceID)
+		k.take(id, p)
 	}
 	return id, !free, nil
 }
@@ -97,29 +119,30 @@ func (s *Server) holdsSlot(run int64) bool {
 func (s *Server) releaseSlot(run int64) {
 	k := &s.slots
 	k.mu.Lock()
-	ws, ok := k.held[run]
+	p, ok := k.held[run]
 	delete(k.held, run)
 	k.mu.Unlock()
 	if ok {
-		s.dispatch(ws)
+		s.dispatchPool(p)
 	}
 }
 
 // acquireSlot waits until a run that gave its slot up (it was waiting for approvals) may hold one
 // again. It reports false when the run's context ended first.
-func (s *Server) acquireSlot(ctx context.Context, ws, run int64) bool {
+func (s *Server) acquireSlot(ctx context.Context, ws int64, kind string, run int64) bool {
+	p := slotPool{ws: ws, discord: kind == workflow.Discord}
 	k := &s.slots
 	k.mu.Lock()
 	if _, ok := k.held[run]; ok {
 		k.mu.Unlock()
 		return true
 	}
-	if !k.waiting(ws) && k.used(ws) < s.st.MaxRuns(ws) {
-		k.take(run, ws)
+	if !k.waiting(p) && k.used(p) < s.poolLimit(p) {
+		k.take(run, p)
 		k.mu.Unlock()
 		return true
 	}
-	w := &slotWaiter{run: run, ws: ws, ready: make(chan struct{})}
+	w := &slotWaiter{run: run, pool: p, ready: make(chan struct{})}
 	k.waiters = append(k.waiters, w)
 	k.mu.Unlock()
 	select {
@@ -133,24 +156,30 @@ func (s *Server) acquireSlot(ctx context.Context, ws, run int64) bool {
 	}
 }
 
-// dispatch gives a workspace's free slots to those waiting for one, then to its queued runs,
-// oldest first, and starts those.
+// dispatch starts queued runs in both the workspace's PR/Issue pool and its Discord pool.
 func (s *Server) dispatch(ws int64) {
+	s.dispatchPool(slotPool{ws: ws, discord: false})
+	s.dispatchPool(slotPool{ws: ws, discord: true})
+}
+
+// dispatchPool gives a pool's free slots to those waiting for one, then to its queued runs,
+// oldest first, and starts those.
+func (s *Server) dispatchPool(p slotPool) {
 	k := &s.slots
 	var start []int64
 	k.mu.Lock()
-	limit := s.st.MaxRuns(ws)
+	limit := s.poolLimit(p)
 fill:
-	for k.used(ws) < limit {
+	for k.used(p) < limit {
 		for i, w := range k.waiters {
-			if w.ws == ws {
+			if w.pool == p {
 				k.waiters = slices.Delete(k.waiters, i, i+1)
-				k.take(w.run, ws)
+				k.take(w.run, p)
 				close(w.ready)
 				continue fill
 			}
 		}
-		queued, err := s.st.QueuedRuns(ws)
+		queued, err := s.st.QueuedRunsFor(p.ws, p.discord)
 		if err != nil {
 			log.Printf("workflow queue: %v", err)
 			break
@@ -162,7 +191,7 @@ fill:
 				break fill
 			}
 			if claimed {
-				k.take(id, ws)
+				k.take(id, p)
 				start = append(start, id)
 				continue fill
 			}
@@ -217,8 +246,8 @@ func (s *Server) dispatchAll() {
 	}
 	s.slots.mu.Lock()
 	for _, w := range s.slots.waiters {
-		if !slices.Contains(ids, w.ws) {
-			ids = append(ids, w.ws)
+		if !slices.Contains(ids, w.pool.ws) {
+			ids = append(ids, w.pool.ws)
 		}
 	}
 	s.slots.mu.Unlock()
@@ -268,15 +297,59 @@ func (s *Server) saveMaxRuns(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, ws.Path()+"/settings?saved=1#max-runs", http.StatusSeeOther)
 }
 
-// queuePlaces are the places of a workspace's queued runs in line, by run id: the first to start is 1.
+// queuePlaces are the places of a workspace's queued runs in their own queue (PR/Issue vs Discord),
+// by run id: the first to start is 1.
 func (s *Server) queuePlaces(ws int64) map[int64]int {
 	places := map[int64]int{}
-	ids, err := s.st.QueuedRuns(ws)
-	if err != nil {
-		return places
-	}
-	for i, id := range ids {
-		places[id] = i + 1
+	for _, discord := range []bool{false, true} {
+		ids, err := s.st.QueuedRunsFor(ws, discord)
+		if err != nil {
+			continue
+		}
+		for i, id := range ids {
+			places[id] = i + 1
+		}
 	}
 	return places
+}
+
+// bypassWorkflowRun starts a queued run immediately, bypassing its pool's concurrency limit.
+// The run still takes a slot while it executes so remaining queued runs continue waiting until
+// active runs drop below the limit.
+func (s *Server) bypassWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.openWorkspace(w, r)
+	if !ok {
+		return
+	}
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	run, err := s.st.WorkflowRun(id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && run.WorkspaceID != ws.ID) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if run.Status == "queued" {
+		p := slotPool{ws: ws.ID, discord: run.Kind == workflow.Discord}
+		s.slots.mu.Lock()
+		claimed, cerr := s.st.ClaimQueuedRun(run.ID)
+		if cerr == nil && claimed {
+			s.slots.take(run.ID, p)
+		}
+		s.slots.mu.Unlock()
+		if cerr != nil {
+			s.fail(w, cerr)
+			return
+		}
+		if claimed {
+			go s.startQueued(run.ID)
+		}
+	}
+	if r.FormValue("from") == "list" {
+		http.Redirect(w, r, ws.Path()+"/workflow-runs", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("%s/workflow-runs/%d", ws.Path(), run.ID), http.StatusSeeOther)
 }

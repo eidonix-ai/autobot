@@ -116,22 +116,23 @@ func (s *Server) backlogRound(ctx context.Context) {
 	}
 }
 
-// backlogIdleFor reports whether workspace wsID has no queued runs, no runs waiting to reclaim a
-// slot after an approval, and fewer than min(maxSlots, workspace MaxRuns) active runs.
+// backlogIdleFor reports whether workspace wsID has no queued PR/Issue runs, no runs waiting to
+// reclaim a slot after an approval, and fewer than min(maxSlots, workspace MaxRuns) active PR/Issue runs.
 func (s *Server) backlogIdleFor(wsID int64, maxSlots int) bool {
-	if queued, err := s.st.QueuedRuns(wsID); err != nil || len(queued) > 0 {
+	if queued, err := s.st.QueuedRunsFor(wsID, false); err != nil || len(queued) > 0 {
 		return false
 	}
 	limit := min(maxSlots, s.st.MaxRuns(wsID))
 	if limit < 1 {
 		return false
 	}
+	p := slotPool{ws: wsID, discord: false}
 	s.slots.mu.Lock()
 	defer s.slots.mu.Unlock()
-	if s.slots.waiting(wsID) {
+	if s.slots.waiting(p) {
 		return false
 	}
-	return s.slots.used(wsID) < limit
+	return s.slots.used(p) < limit
 }
 
 // tryBacklogOne picks the next eligible open PR or issue with no case file and starts it.

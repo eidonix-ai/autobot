@@ -107,7 +107,7 @@ func TestBacklogCatchUpPRAndIssue(t *testing.T) {
 
 	// Verify low priority: while a run holds a slot (max_slots=1), backlogRound starts NOTHING.
 	e.ui.slots.mu.Lock()
-	e.ui.slots.take(999, ws.ID)
+	e.ui.slots.take(999, slotPool{ws: ws.ID})
 	e.ui.slots.mu.Unlock()
 	e.ui.backlogRound(t.Context())
 	if runs, _ := e.st.WorkflowRuns(ws.ID, 20); len(runs) != 1 { // only the earlier dry run

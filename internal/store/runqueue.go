@@ -57,6 +57,29 @@ func (s *Store) QueuedRuns(workspaceID int64) ([]int64, error) {
 	return out, rows.Err()
 }
 
+// QueuedRunsFor are a workspace's queued runs for either the Discord queue (discord=true) or the
+// PR/Issue queue (discord=false), oldest first.
+func (s *Store) QueuedRunsFor(workspaceID int64, discord bool) ([]int64, error) {
+	q := `SELECT id FROM workflow_runs WHERE workspace_id = ? AND kind != 'discord' AND status = 'queued' ORDER BY id`
+	if discord {
+		q = `SELECT id FROM workflow_runs WHERE workspace_id = ? AND kind = 'discord' AND status = 'queued' ORDER BY id`
+	}
+	rows, err := s.db.Query(q, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // WorkspacesWithQueue are the workspaces that have a queued run.
 func (s *Store) WorkspacesWithQueue() ([]int64, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT workspace_id FROM workflow_runs WHERE status = 'queued' ORDER BY workspace_id`)

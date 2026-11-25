@@ -516,7 +516,7 @@ func (s *Server) drive(rs *runState) {
 					continue
 				}
 				if len(fired) > 0 && !holding {
-					if !s.acquireSlot(rs.context(), rs.ws.ID, rs.run.ID) { // stopped while it waited
+					if !s.acquireSlot(rs.context(), rs.ws.ID, rs.run.Kind, rs.run.ID) { // stopped while it waited
 						progressed = false
 						break
 					}

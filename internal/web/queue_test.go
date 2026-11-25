@@ -426,3 +426,116 @@ func TestMaxRunsSetting(t *testing.T) {
 	e.waitStatus(r1, "done")
 	e.waitStatus(r2, "done")
 }
+
+// Discord mention runs use their own concurrency pool, independent of the workspace's PR/Issue
+// limit: filling the PR/Issue pool does not queue Discord mentions, and Discord's own queue caps
+// concurrent mentions separately.
+func TestDiscordUsesSeparateQueue(t *testing.T) {
+	e := newGateEnv(t, 1)
+	// Add a Discord workflow using the same gated LLM.
+	ag := workflow.DefaultAgent(workflow.Discord)
+	ag.Model = workflow.ModelRef{Provider: e.prov.ID, Model: "m"}
+	agBytes, _ := json.Marshal(ag)
+	dg := workflow.Graph{
+		Nodes: []workflow.Node{
+			{ID: "dm", Type: "discord_mention"},
+			{ID: "ag", Type: workflow.Agent, Name: "Answer", Settings: agBytes},
+		},
+		Links: []workflow.Link{{From: "dm", Out: "out", To: "ag", In: "in"}},
+	}
+	gb, _ := json.Marshal(dg)
+	w, _ := e.st.Workflow(e.ws.ID, workflow.Discord)
+	if _, err := e.st.SaveWorkflow(e.ws.ID, workflow.Discord, w.Version, string(gb), e.admin); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fill the single PR slot and queue a second PR run.
+	pr1 := e.startItem("ev1", false)
+	e.gate.waitEntered(t, 1)
+	pr2 := e.startItem("ev1", false)
+	if got := e.statuses(pr1, pr2); got != "running queued" {
+		t.Fatalf("PR pool: %s", got)
+	}
+
+	// Start 3 Discord mention runs while the PR pool is completely full.
+	// The first 2 (maxDiscordRuns) must start immediately; the 3rd queues in Discord's own queue.
+	startDiscord := func(msg string) int64 {
+		t.Helper()
+		id, err := e.ui.startDiscordWorkflow(t.Context(), e.ws, "dm", DiscordTrigger{
+			Channel: "general", Author: "alice", Content: msg,
+		}, false, e.admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	d1, d2, d3 := startDiscord("q1"), startDiscord("q2"), startDiscord("q3")
+	e.gate.waitEntered(t, 2) // both d1 and d2 entered the LLM immediately
+	if got := e.statuses(d1, d2, d3); got != "running running queued" {
+		t.Fatalf("Discord pool while PR full: %s", got)
+	}
+	// Both pr2 and d3 are 1st in line in their respective queues.
+	places := e.ui.queuePlaces(e.ws.ID)
+	if places[pr2] != 1 || places[d3] != 1 {
+		t.Fatalf("queue places: pr2=%d d3=%d (want both 1)", places[pr2], places[d3])
+	}
+
+	// Completing one Discord run dispatches d3, without unblocking pr2.
+	e.gate.openAll()
+	for _, id := range []int64{pr1, pr2, d1, d2, d3} {
+		e.waitStatus(id, "done")
+	}
+}
+
+// Bypass queue starts a queued run right away from either the Runs list or the run page (next to
+// Stop), even when all workspace slots are busy.
+func TestBypassQueue(t *testing.T) {
+	e := newGateEnv(t, 1)
+	e.user("mallory", false)
+	m := e.signIn("mallory")
+
+	r1 := e.startItem("ev1", false)
+	e.gate.waitEntered(t, 1)
+	r2 := e.startItem("ev1", false)
+	r3 := e.startItem("ev1", false)
+	if got := e.statuses(r1, r2, r3); got != "running queued queued" {
+		t.Fatalf("initial: %s", got)
+	}
+
+	// The Runs page and the queued run's page both show Bypass queue.
+	if _, body := e.b.get("/w/o/r/workflow-runs"); !strings.Contains(body, fmt.Sprintf("/workflow-runs/%d/bypass", r2)) {
+		t.Fatalf("runs page missing bypass button for queued run %d", r2)
+	}
+	if _, body := e.b.get(fmt.Sprintf("/w/o/r/workflow-runs/%d", r2)); !strings.Contains(body, "Bypass queue") {
+		t.Fatalf("run page missing Bypass queue button")
+	}
+
+	// Non-members cannot bypass.
+	if code, _, _ := m.post(fmt.Sprintf("/w/o/r/workflow-runs/%d/bypass", r2), url.Values{"csrf": {m.csrf()}}); code != http.StatusNotFound {
+		t.Fatalf("non-member bypass: %d, want 404", code)
+	}
+
+	// Bypassing r2 starts it immediately while r1 is still running; r3 stays queued.
+	code, loc, _ := e.b.post(fmt.Sprintf("/w/o/r/workflow-runs/%d/bypass", r2), url.Values{"csrf": {e.b.csrf()}})
+	if code != http.StatusSeeOther || !strings.HasSuffix(loc, fmt.Sprintf("/workflow-runs/%d", r2)) {
+		t.Fatalf("bypass redirect: %d %q", code, loc)
+	}
+	e.gate.waitEntered(t, 1)
+	e.waitStatus(r2, "running")
+	if got := e.statuses(r1, r2, r3); got != "running running queued" {
+		t.Fatalf("after bypass r2: %s", got)
+	}
+
+	// Bypassing r3 from the Runs list redirects back to /workflow-runs.
+	code, loc, _ = e.b.post(fmt.Sprintf("/w/o/r/workflow-runs/%d/bypass", r3), url.Values{"csrf": {e.b.csrf()}, "from": {"list"}})
+	if code != http.StatusSeeOther || !strings.HasSuffix(loc, "/workflow-runs") {
+		t.Fatalf("bypass from list redirect: %d %q", code, loc)
+	}
+	e.gate.waitEntered(t, 1)
+	e.waitStatus(r3, "running")
+
+	e.gate.openAll()
+	for _, id := range []int64{r1, r2, r3} {
+		e.waitStatus(id, "done")
+	}
+}

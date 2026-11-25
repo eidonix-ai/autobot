@@ -177,6 +177,8 @@ ul.runlist .l1 { display: flex; gap: 0.4rem; align-items: baseline; }
 ul.runlist .l1 .title { flex: 1; min-width: 0; }
 ul.runlist .l1 .end { margin-left: auto; padding-left: 0.6rem; white-space: nowrap; }
 ul.runlist .l1 .end > a { margin-left: 0.5rem; }
+ul.runlist .l1 .end form { display: inline; margin-left: 0.5rem; }
+ul.runlist .l1 .end button.link { color: var(--accent); font-size: inherit; }
 ul.runlist .l2 { font-size: 0.82rem; }
 ul.runlist .tag { font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
 table.cases td:nth-child(2) { width: 100%; } /* the title takes the spare width */

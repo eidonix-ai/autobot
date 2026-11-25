@@ -2,11 +2,16 @@ package web
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
@@ -198,5 +203,114 @@ func TestVerdictOptOut(t *testing.T) {
 		if got != stops {
 			t.Errorf("%s: stops %v, want %v\n%s", who, got, stops, strings.Join(lines, "\n"))
 		}
+	}
+}
+
+// TestQueuedRunStoppedOnOptOutAtDequeue verifies that if the opt-out tag is added by the author or
+// a maintainer while a live/backlog run sits in the queue, startQueued stops it immediately upon
+// dequeue without executing any steps (while an untrusted stranger's comment does not stop it).
+func TestQueuedRunStoppedOnOptOutAtDequeue(t *testing.T) {
+	var mu sync.Mutex
+	comments := map[int]string{
+		1: `[{"body":"please skip #autobot:ignore","created_at":"2026-11-25T14:00:00Z","user":{"login":"alice"}}]`,
+		2: `[{"body":"#autobot:ignore","created_at":"2026-11-25T14:00:00Z","user":{"login":"mallory"}}]`,
+		3: `[{"body":"#autobot:ignore","created_at":"2026-11-25T14:00:00Z","user":{"login":"alice"}},{"body":"actually @flare-autobot please review","created_at":"2026-11-25T14:05:00Z","user":{"login":"alice"}}]`,
+	}
+	srvGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/pulls/1":
+			w.Write([]byte(`{"number":1,"html_url":"https://github.com/o/r/pull/1","title":"PR 1","body":"b","state":"open","user":{"login":"alice"},"head":{"sha":"aaa"},"base":{"ref":"main"}}`))
+		case r.URL.Path == "/repos/o/r/pulls/2":
+			w.Write([]byte(`{"number":2,"html_url":"https://github.com/o/r/pull/2","title":"PR 2","body":"b","state":"open","user":{"login":"alice"},"head":{"sha":"bbb"},"base":{"ref":"main"}}`))
+		case r.URL.Path == "/repos/o/r/pulls/3":
+			w.Write([]byte(`{"number":3,"html_url":"https://github.com/o/r/pull/3","title":"PR 3","body":"b","state":"open","user":{"login":"alice"},"head":{"sha":"ccc"},"base":{"ref":"main"}}`))
+		case r.URL.Path == "/repos/o/r/pulls/1/files" || r.URL.Path == "/repos/o/r/pulls/2/files" || r.URL.Path == "/repos/o/r/pulls/3/files":
+			w.Write([]byte(`[]`))
+		case r.URL.Path == "/repos/o/r/issues/1/comments":
+			mu.Lock()
+			w.Write([]byte(comments[1]))
+			mu.Unlock()
+		case r.URL.Path == "/repos/o/r/issues/2/comments":
+			mu.Lock()
+			w.Write([]byte(comments[2]))
+			mu.Unlock()
+		case r.URL.Path == "/repos/o/r/issues/3/comments":
+			mu.Lock()
+			w.Write([]byte(comments[3]))
+			mu.Unlock()
+		case strings.HasSuffix(r.URL.Path, "/permission"):
+			w.Write([]byte(`{"permission":"read"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srvGH.Close)
+
+	e := newEnvWith(t, &github.Client{BaseURL: srvGH.URL})
+	admin := e.user("admin", true)
+	ws, err := e.st.CreateWorkspace("o/r", admin, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SetGitHub(ws.ID, "flare-autobot", "tok", admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SetOptOutTag(ws, "#autobot:ignore", admin); err != nil {
+		t.Fatal(err)
+	}
+
+	g := workflow.Graph{
+		Nodes: []workflow.Node{
+			{ID: "ev", Type: "pr_ready", Settings: mustJSON(workflow.EventSettings{Mode: "always", SummonPhrase: "@flare-autobot", TrustedOnly: true})},
+			{ID: "ce", Type: workflow.CaseEntry, Name: "Note", Settings: mustJSON(workflow.CaseEntrySettings{Entry: "Ran!", Finalize: true})},
+		},
+		Links: []workflow.Link{{From: "ev", Out: "out", To: "ce", In: "in"}},
+	}
+	raw, _ := json.Marshal(g)
+
+	// Queue three automated runs (StartedBy = nil, simulating Live/Backlog queued runs).
+	run1, err := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: 1, Graph: string(raw), Status: "queued"}, []string{"ev", "ce"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run2, err := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: 2, Graph: string(raw), Status: "queued"}, []string{"ev", "ce"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run3, err := e.st.StartWorkflowRun(store.WorkflowRun{WorkspaceID: ws.ID, Kind: workflow.PR, EventNode: "ev", Item: 3, Graph: string(raw), Status: "queued"}, []string{"ev", "ce"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.ui.dispatch(ws.ID)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r1, _ := e.st.WorkflowRun(run1)
+		r2, _ := e.st.WorkflowRun(run2)
+		r3, _ := e.st.WorkflowRun(run3)
+		if r1 != nil && r2 != nil && r3 != nil && r1.Status == "stopped" && r2.Status == "done" && r3.Status == "done" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	r1, _ := e.st.WorkflowRun(run1)
+	if r1.Status != "stopped" || !strings.Contains(r1.StoppedBy, "#autobot:ignore") {
+		t.Fatalf("PR 1 (author opted out while queued): status=%q stopped_by=%q, want stopped by #autobot:ignore", r1.Status, r1.StoppedBy)
+	}
+	steps1, _ := e.st.WorkflowSteps(run1)
+	if steps1["ce"].Status != "pending" {
+		t.Fatalf("PR 1 must not run any steps after opt-out: ce=%+v", steps1["ce"])
+	}
+
+	r2, _ := e.st.WorkflowRun(run2)
+	if r2.Status != "done" {
+		t.Fatalf("PR 2 (stranger comment must not opt out): status=%q, want done", r2.Status)
+	}
+
+	r3, _ := e.st.WorkflowRun(run3)
+	if r3.Status != "done" {
+		t.Fatalf("PR 3 (explicit @flare-autobot after #autobot:ignore must win): status=%q, want done", r3.Status)
 	}
 }

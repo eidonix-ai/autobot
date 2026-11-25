@@ -193,19 +193,20 @@ func verdict(n workflow.Node, it *item, caseExists bool, optOut string, counts f
 		check(!caseExists, "it has no case file yet", "it already has a case file")
 	}
 	stopped, by := workflow.Stops(it.body, ev.StopTag), "its description"
+	summoned := false
 	for _, c := range it.comments {
-		if !stopped && workflow.Stops(c.Body, ev.StopTag) && counts(c.Author) {
+		switch {
+		case workflow.Stops(c.Body, ev.StopTag) && counts(c.Author):
 			stopped, by = true, "a comment by "+c.Author
+		case workflow.Summons(c.Body, ev.SummonPhrase, ev.StopTag) && (!ev.TrustedOnly || counts(c.Author)):
+			stopped, by = false, ""
+			summoned = true
 		}
 	}
 	if ev.StopTag == "" {
 		note("the workspace has no opt-out tag")
 	} else {
 		check(!stopped, "no opt-out tag “"+ev.StopTag+"”", "the opt-out tag “"+ev.StopTag+"” is in "+by)
-	}
-	summoned := false
-	for _, c := range it.comments {
-		summoned = summoned || workflow.Summons(c.Body, ev.SummonPhrase, ev.StopTag)
 	}
 	if ev.Mode == "summoned" {
 		check(summoned, "summoned with “"+ev.SummonPhrase+"”", "not summoned: no comment has “"+ev.SummonPhrase+"”")

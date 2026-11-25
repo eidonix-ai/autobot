@@ -437,8 +437,14 @@ func (pw *pollWS) see(ctx context.Context, l github.Listed) error {
 	if l.HeadSHA != prev.HeadSHA {
 		it.CIDone = !pw.wants.checks
 	}
-	if err := st.SavePollItem(pw.ws.ID, it); err != nil || !l.Open || !prev.Open || l.Kind != workflow.PR {
+	if err := st.SavePollItem(pw.ws.ID, it); err != nil || !l.Open || !prev.Open {
 		return err
+	}
+	if l.Kind != workflow.PR {
+		if it.EditSig != prev.EditSig {
+			return pw.event(l.Number, "edits", "", "")
+		}
+		return nil
 	}
 	var news []string // kinds of event
 	if prev.Draft && !l.Draft {
@@ -701,9 +707,12 @@ func (pw *pollWS) facts(ctx context.Context, kind string, n workflow.Node, ev wo
 			}
 			f.MaintainerKnown, f.AuthorMaintains = true, writes(role)
 		}
-		if n.Type == "pr_activity" && ev.CaseExists {
+		if n.Type == "pr_activity" && ev.CaseExists || (n.Type != "pr_activity" && ev.Mode != "summoned") {
 			_, err := pw.s.st.CaseByNumber(pw.ws.ID, it.Number)
 			f.HasCase = err == nil
+		}
+		if n.Type != "pr_activity" && ev.Mode != "summoned" && !f.HasCase {
+			f.WasOptedOut = pw.s.st.NodeSkippedForOptOut(pw.ws.ID, it.Number, n.ID)
 		}
 	} else {
 		gi, err := g.Item(ctx, pw.token, name, it.Number)
@@ -711,6 +720,13 @@ func (pw *pollWS) facts(ctx context.Context, kind string, n workflow.Node, ev wo
 			return f, err
 		}
 		f.Open, f.Body, f.Author = gi.State == "open", gi.Body, gi.Author
+		if ev.Mode != "summoned" {
+			_, err := pw.s.st.CaseByNumber(pw.ws.ID, it.Number)
+			f.HasCase = err == nil
+			if !f.HasCase {
+				f.WasOptedOut = pw.s.st.NodeSkippedForOptOut(pw.ws.ID, it.Number, n.ID)
+			}
+		}
 	}
 	comments, err := g.Comments(ctx, pw.token, name, it.Number)
 	if err != nil {

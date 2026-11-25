@@ -71,7 +71,15 @@ func TestDecide(t *testing.T) {
 		{"stop tag from the author stops whatever the block trusts", "pr_ready", func(s *EventSettings) { s.TrustedOnly = false }, func(f *Facts) { f.Comments = []Comment{{"Alice", "Autobot: ignore", false}} }, []Event{ready}, Skip, "a comment by Alice"},
 		{"no opt-out tag, no opt-out", "pr_ready", func(s *EventSettings) { s.StopTag = "" }, func(f *Facts) { f.Body = "Autobot: ignore" }, []Event{ready}, Fire, ""},
 		{"an old tag of the block is ignored", "pr_ready", func(s *EventSettings) { s.StopTag = "Autobot: ignore" }, func(f *Facts) { f.Body = "Old: stop" }, []Event{ready}, Fire, ""},
-		{"stop tag beats a summons", "pr_ready", func(s *EventSettings) { s.Mode = "summoned" }, func(f *Facts) { f.Comments = []Comment{{"carol", "Autobot: ignore", true}} }, []Event{summon(true)}, Skip, "opt-out tag"},
+		{"explicit summons beats an earlier stop tag", "pr_ready", func(s *EventSettings) { s.Mode = "summoned" }, func(f *Facts) { f.Comments = []Comment{{"carol", "Autobot: ignore", true}} }, []Event{summon(true)}, Fire, "summoned by carol"},
+		{"explicit summons beats stop tag in description", "pr_ready", nil, func(f *Facts) { f.Body = "Autobot: ignore"; f.Comments = []Comment{{"carol", "@autobot review", true}} }, []Event{ready}, Fire, "ready"},
+		{"stop tag after an earlier summons stops", "pr_ready", nil, func(f *Facts) { f.Comments = []Comment{{"carol", "@autobot review", true}, {"alice", "Autobot: ignore", false}} }, []Event{ready}, Skip, "a comment by alice"},
+		{"untrusted summons does not beat stop tag", "pr_ready", nil, func(f *Facts) { f.Body = "Autobot: ignore"; f.Comments = []Comment{{"mallory", "@autobot review", false}} }, []Event{ready}, Skip, "its description"},
+		{"always mode fires on explicit summons when unreviewed", "pr_ready", nil, func(f *Facts) { f.Body = "Autobot: ignore" }, []Event{summon(true)}, Fire, "summoned by carol"},
+		{"always mode ignores later summons once case exists", "pr_ready", nil, func(f *Facts) { f.HasCase = true }, []Event{summon(true)}, Idle, ""},
+		{"always mode fires on edit removing stop tag when previously opted out", "pr_ready", nil, func(f *Facts) { f.Body = "cleaned description"; f.WasOptedOut = true }, []Event{ev("edits", "", "", false)}, Fire, "description was edited"},
+		{"always mode ignores edits on old items never opted out", "pr_ready", nil, func(f *Facts) { f.Body = "edited old PR" }, []Event{ev("edits", "", "", false)}, Idle, ""},
+		{"always mode ignores edits once case exists", "pr_ready", nil, func(f *Facts) { f.HasCase = true; f.WasOptedOut = true }, []Event{ev("edits", "", "", false)}, Idle, ""},
 
 		// Filters.
 		{"other branch", "pr_ready", nil, func(f *Facts) { f.Base = "dev" }, []Event{ready}, Skip, "targets dev, not main"},

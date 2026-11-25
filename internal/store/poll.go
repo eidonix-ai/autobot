@@ -253,6 +253,16 @@ func (s *Store) PollCursor(workspaceID int64, kind string, number int, node stri
 	return last, err == nil, err
 }
 
+// NodeSkippedForOptOut reports whether node previously skipped item number because of the
+// workspace's opt-out tag (used so editing the description to remove the tag can re-trigger it
+// without falsely triggering old items that were never opted out).
+func (s *Store) NodeSkippedForOptOut(workspaceID int64, number int, node string) bool {
+	var ok int
+	err := s.db.QueryRow(`SELECT 1 FROM poll_log WHERE workspace_id = ? AND number = ? AND node_id = ? AND text LIKE 'Skipped: the opt-out tag%' LIMIT 1`,
+		workspaceID, number, node).Scan(&ok)
+	return err == nil
+}
+
 // SetPollCursor records that an event node has dealt with an item's events up to one.
 func (s *Store) SetPollCursor(workspaceID int64, number int, node string, last int64) error {
 	_, err := s.db.Exec(`INSERT INTO poll_cursors (workspace_id, number, node_id, last_id) VALUES (?, ?, ?, ?)

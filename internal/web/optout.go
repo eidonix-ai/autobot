@@ -129,3 +129,58 @@ func (s *Server) stopRule(ctx context.Context, ws *store.Workspace, token string
 		return err == nil && writes(role)
 	}
 }
+
+// optedOutBy reports whether the item is currently opted out by the workspace's opt-out tag in its
+// description or in a comment from its author or a collaborator with write access, returning a
+// short reason ("#autobot:ignore in description" or "#autobot:ignore by alice"), or "" if not.
+// Comments are walked chronologically: an explicit summon phrase (from an allowed user) after an
+// opt-out clears it ("explicit call always wins"), while a later opt-out re-engages it.
+func (s *Server) optedOutBy(ctx context.Context, ws *store.Workspace, g workflow.Graph, eventNode string, it *item) string {
+	tag := s.optOut(ws)
+	if tag == "" || it == nil {
+		return ""
+	}
+	// Collect the summon phrase(s) for this workflow's event node (falling back to any event node in
+	// the graph when the run came from a backlog block, which has no summon phrase of its own).
+	type summonRule struct {
+		phrase      string
+		trustedOnly bool
+	}
+	var rules []summonRule
+	for _, n := range g.Nodes {
+		if n.ID == eventNode {
+			if ev, err := workflow.EventSettingsOf(n); err == nil && strings.TrimSpace(ev.SummonPhrase) != "" {
+				rules = append(rules, summonRule{ev.SummonPhrase, ev.TrustedOnly})
+			}
+			break
+		}
+	}
+	if len(rules) == 0 {
+		for _, n := range g.Nodes {
+			if t, _ := workflow.TypeOf(n.Type); t.Event {
+				if ev, err := workflow.EventSettingsOf(n); err == nil && strings.TrimSpace(ev.SummonPhrase) != "" {
+					rules = append(rules, summonRule{ev.SummonPhrase, ev.TrustedOnly})
+				}
+			}
+		}
+	}
+	by := ""
+	if workflow.Stops(it.body, tag) {
+		by = tag + " in description"
+	}
+	token, _ := s.token(ws)
+	counts := s.stopRule(ctx, ws, token, it)
+	for _, c := range it.comments {
+		if workflow.Stops(c.Body, tag) && counts(c.Author) {
+			by = tag + " by " + c.Author
+			continue
+		}
+		for _, r := range rules {
+			if workflow.Summons(c.Body, r.phrase, tag) && (!r.trustedOnly || counts(c.Author)) {
+				by = ""
+				break
+			}
+		}
+	}
+	return by
+}

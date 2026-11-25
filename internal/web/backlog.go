@@ -197,19 +197,7 @@ func (s *Server) tryBacklogNode(ctx context.Context, ws *store.Workspace, kind s
 			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
 			continue
 		}
-		if workflow.Stops(it.body, ev.StopTag) {
-			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
-			continue
-		}
-		stopCounts := s.stopRule(ctx, ws, token, it)
-		optedOut := false
-		for _, cm := range it.comments {
-			if workflow.Stops(cm.Body, ev.StopTag) && stopCounts(cm.Author) {
-				optedOut = true
-				break
-			}
-		}
-		if optedOut {
+		if s.optedOutBy(ctx, ws, g, evNode.ID, it) != "" {
 			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
 			continue
 		}

@@ -55,6 +55,7 @@ type Facts struct {
 	AuthorMaintains bool
 	ReviewRequested bool // a review is requested from Autobot's GitHub user right now
 	HasCase         bool
+	WasOptedOut     bool // this node previously skipped the item because of the opt-out tag
 	CI              string // "pending", "failed", "passed" or "none" (no checks on the head)
 }
 
@@ -100,6 +101,18 @@ func Trigger(ev EventSettings, typ string, events []Event, now time.Time, trust,
 	for _, e := range events {
 		if e.Kind == want {
 			return Result{Fire, "it " + map[string]string{EvReady: "is ready for review", EvDraft: "was opened as a draft", EvOpened: "was opened"}[want]}
+		}
+	}
+	// In "always" mode, an item initially skipped (e.g. due to the opt-out tag) can still be
+	// triggered later by an explicit summons, or by editing its description to remove the opt-out tag.
+	if found, why, _, _ = summons(ev, events, trust); found {
+		return Result{Fire, why}
+	}
+	if ev.StopTag != "" && (typ == "pr_ready" || typ == "issue_opened") {
+		for _, e := range events {
+			if e.Kind == "edits" {
+				return Result{Fire, "its description was edited"}
+			}
 		}
 	}
 	return Result{Idle, ""}
@@ -192,11 +205,33 @@ func Decide(ev EventSettings, typ string, f Facts) Result {
 	if typ == "pr_activity" && ev.CaseExists && !f.HasCase {
 		return Result{Skip, "it has no case file yet"}
 	}
-	if by := f.stoppedBy(ev); by != "" {
+	newSummons, _, _, summonAt := summons(ev, f.Events, true)
+	// In "always" mode, pr_ready / pr_draft / issue_opened only re-fire on a later summons when
+	// the item has no case file yet, and on a description edit only when this node previously
+	// skipped the item for the opt-out tag (so editing an unrelated old PR never triggers a run).
+	if typ != "pr_activity" && ev.Mode != "summoned" {
+		want := map[string]string{"pr_ready": EvReady, "pr_draft": EvDraft, "issue_opened": EvOpened}[typ]
+		hasPrimary := false
+		for _, e := range f.Events {
+			if e.Kind == want {
+				hasPrimary = true
+				break
+			}
+		}
+		if !hasPrimary {
+			if f.HasCase {
+				return Result{Idle, ""}
+			}
+			if !newSummons && !f.WasOptedOut {
+				return Result{Idle, ""}
+			}
+		}
+	}
+	explicitCall := newSummons && !stoppedAfter(ev, f.Author, f.Events, summonAt)
+	if by := f.stoppedBy(ev); by != "" && !explicitCall {
 		return Result{Skip, "the opt-out tag “" + ev.StopTag + "” is in " + by}
 	}
 	if typ != "issue_opened" {
-		newSummons, _, _, _ := summons(ev, f.Events, true)
 		for _, c := range PRFilters(ev, f.prFacts(summonedBefore || newSummons)) {
 			if !c.Pass {
 				return Result{Skip, c.Text}
@@ -225,18 +260,34 @@ func (f Facts) summoned(ev EventSettings) bool {
 
 // stoppedBy names where the opt-out tag (ev.StopTag, the workspace's) is, or "". It counts in the
 // item's description, which is its author's, and in a comment by the item's author or by someone with
-// write access; never in anyone else's, and never in Autobot's own, which are not in the list. It does
-// not depend on the block's "trusted only", which is for summons.
+// write access; never in anyone else's, and never in Autobot's own, which are not in the list.
+// Comments are evaluated chronologically: a later explicit summons clears an earlier opt-out, and a
+// subsequent opt-out re-engages it.
 func (f Facts) stoppedBy(ev EventSettings) string {
+	by := ""
 	if Stops(f.Body, ev.StopTag) {
-		return "its description"
+		by = "its description"
 	}
 	for _, c := range f.Comments {
-		if Stops(c.Body, ev.StopTag) && (c.Trusted || strings.EqualFold(c.Author, f.Author)) {
-			return "a comment by " + c.Author
+		switch {
+		case Stops(c.Body, ev.StopTag) && (c.Trusted || strings.EqualFold(c.Author, f.Author)):
+			by = "a comment by " + c.Author
+		case Summons(c.Body, ev.SummonPhrase, ev.StopTag) && (c.Trusted || !ev.TrustedOnly):
+			by = ""
 		}
 	}
-	return ""
+	return by
+}
+
+// stoppedAfter reports whether an opt-out comment by the author or a trusted collaborator arrived
+// after at in the current poll batch.
+func stoppedAfter(ev EventSettings, itemAuthor string, events []Event, at time.Time) bool {
+	for _, e := range events {
+		if e.Kind == EvComments && e.At.After(at) && Stops(e.Text, ev.StopTag) && (e.Trusted || strings.EqualFold(e.Who, itemAuthor)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f Facts) prFacts(summoned bool) PRFacts {

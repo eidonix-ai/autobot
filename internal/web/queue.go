@@ -253,6 +253,14 @@ func (s *Server) startQueued(id int64) {
 		s.releaseSlot(id)
 		return
 	}
+	if rs.run.StartedByID == 0 && (rs.run.Kind == workflow.PR || rs.run.Kind == workflow.Issue) {
+		if by := s.optedOutBy(ctx, rs.ws, rs.g, rs.run.EventNode, rs.it); by != "" {
+			log.Printf("workflow run %d: stopped before start (%s)", id, by)
+			s.st.StopWorkflowRun(id, by)
+			s.releaseSlot(id)
+			return
+		}
+	}
 	s.launch(rs)
 }
 

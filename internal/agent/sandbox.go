@@ -91,11 +91,11 @@ const bgDir = "/work/.autobot/bg"
 func SandboxTools(s Session) []Tool {
 	var editing sync.Mutex // two edits of one file in one turn must not overwrite each other
 	var jobs atomic.Int32
-	sandbox := "The sandbox has no network and its root is read-only; only /work and /tmp are writable. "
+	sandbox := "The sandbox is an ephemeral container with outbound internet and a writable root. "
 	return []Tool{
 		{Spec: ToolSpec{Name: "bash", Description: "Run a bash command in the sandbox, in the repository's folder (/work/source), and get its output and exit code. " +
 			sandbox + "A command ends at its timeout (default 300 seconds). For something long, such as a build or a test suite, set background to true: " +
-			"it starts at once and returns an id, and you read its output later with bash_output.",
+			"it starts at once and returns an id, and you read its output later with bash_output (using wait_seconds to wait cleanly instead of busy-polling).",
 			Parameters: schema(`{"type":"object","properties":{"command":{"type":"string"},
 				"timeout_sec":{"type":"integer","description":"default 300; at most the time you have left"},
 				"background":{"type":"boolean","description":"start it and return at once with an id for bash_output and bash_kill"}},"required":["command"]}`)},
@@ -139,14 +139,27 @@ func SandboxTools(s Session) []Tool {
 				}
 				return shown(r, limit), nil
 			}},
-		{Spec: ToolSpec{Name: "bash_output", Description: "Read a background job's output so far (its last 20 KB) and say whether it is still running.",
-			Parameters: schema(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)},
+		{Spec: ToolSpec{Name: "bash_output", Description: "Read a background job's output so far (its last 20 KB) and say whether it is still running. Set wait_seconds (1-120) to wait for the job to finish before returning instead of polling repeatedly.",
+			Parameters: schema(`{"type":"object","properties":{"id":{"type":"string"},"wait_seconds":{"type":"integer","description":"optional: seconds to wait for the job to finish (0-120, default 0)"}},"required":["id"]}`)},
 			Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
-				a, err := args[struct{ ID string }](raw)
+				a, err := args[struct {
+					ID          string
+					WaitSeconds int `json:"wait_seconds"`
+				}](raw)
 				if err != nil || !bgIDRE.MatchString(a.ID) {
 					return "", errors.New("id is the one bash returned, such as bg1")
 				}
-				r, err := s.Run(ctx, readBackground(a.ID), quickTimeout)
+				waitSec := min(max(a.WaitSeconds, 0), 120)
+				timeout := quickTimeout + time.Duration(waitSec)*time.Second
+				if waitSec > 0 {
+					if dl, ok := ctx.Deadline(); ok {
+						if rem := int(time.Until(dl).Seconds()) - 10; rem < waitSec {
+							waitSec = max(rem, 0)
+							timeout = quickTimeout + time.Duration(waitSec)*time.Second
+						}
+					}
+				}
+				r, err := s.Run(ctx, readBackground(a.ID, waitSec), timeout)
 				if err != nil {
 					return "", err
 				}
@@ -382,13 +395,18 @@ func startBackground(id string) string {
 for i in $(seq 100); do [ -s %[1]s/%[2]s.pid ] && break; sleep 0.05; done; [ -s %[1]s/%[2]s.pid ]`, bgDir, id)
 }
 
-// readBackground prints a job's state on one line, then the end of its log.
-func readBackground(id string) string {
+// readBackground prints a job's state on one line, then the end of its log. When waitSec > 0 it
+// waits up to waitSec seconds for the job's PID to exit before reading.
+func readBackground(id string, waitSec int) string {
+	wait := ""
+	if waitSec > 0 {
+		wait = fmt.Sprintf("end=$((SECONDS+%d)); while [ \"$SECONDS\" -lt \"$end\" ] && kill -0 \"$(cat %s.pid)\" 2>/dev/null; do sleep 1; done\n", waitSec, id)
+	}
 	return fmt.Sprintf(`cd %[1]s 2>/dev/null && [ -f %[2]s.pid ] || exit 3
-if kill -0 "$(cat %[2]s.pid)" 2>/dev/null; then echo "still running"
+%[3]sif kill -0 "$(cat %[2]s.pid)" 2>/dev/null; then echo "still running"
 elif [ -f %[2]s.exit ]; then echo "finished, exit $(cat %[2]s.exit)"
 else echo "stopped without an exit code (killed)"; fi
-tail -c 20000 %[2]s.log`, bgDir, id)
+tail -c 20000 %[2]s.log`, bgDir, id, wait)
 }
 
 // killBackground stops a job and everything it started, and says what it found.

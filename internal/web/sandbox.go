@@ -118,7 +118,7 @@ func sandboxNote(repo, commit string, v machineView) string {
 		}
 		fmt.Fprintf(&b, "Models are under /models (read-only), such as %s. ", strings.Join(names, ", "))
 	}
-	b.WriteString("Use bash (background for long builds and tests, then bash_output), read_file, write_file, edit_file, grep and glob; " +
+	b.WriteString("Use bash (background for long builds and tests, then bash_output with wait_seconds instead of polling in a loop), read_file, write_file, edit_file, grep and glob; " +
 		"read what a command printed before you draw conclusions from it, and cite its exit code in your report.")
 	return b.String()
 }

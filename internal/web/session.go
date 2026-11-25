@@ -194,6 +194,7 @@ func (s *Server) sessionResult(w http.ResponseWriter, r *http.Request, m *store.
 type Session struct {
 	s      *Server
 	run    int64
+	commit string
 	q      *queue
 	once   sync.Once
 	mu     sync.Mutex
@@ -210,7 +211,7 @@ func (s *Server) OpenSession(m *store.Machine, ref, commit string, private bool,
 	if err != nil {
 		return nil, err
 	}
-	se := &Session{s: s, run: run.ID, q: s.sessions.open(run.ID)}
+	se := &Session{s: s, run: run.ID, commit: commit, q: s.sessions.open(run.ID)}
 	se.mu.Lock()
 	se.idle = time.AfterFunc(s.idleLimit, se.Close)
 	se.mu.Unlock()

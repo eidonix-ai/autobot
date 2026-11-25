@@ -527,20 +527,47 @@ func applySandboxPatch(ctx context.Context, sess *Session, patch string) error {
 	return nil
 }
 
-// captureSandboxPatch reads HEAD and any uncommitted changes (including newly created non-ignored
-// files) from /work/source before a sandbox closes.
+const patchBoundary = "---AUTOBOT-PATCH-BOUNDARY---"
+
+// capturePatchScript builds a shell command that prints the base commit SHA, patchBoundary, and a
+// .gitignore-respecting unified diff of /work/source (including newly created non-ignored files).
+// When /work/source is a git repository it diffs against HEAD directly; when it came from a
+// connector tarball (no .git, unmodified base mounted at /input/source) it indexes /input/source in
+// a temporary git dir and diffs /work/source against it.
+func capturePatchScript(baseCommit string) string {
+	return fmt.Sprintf(`if [ -d .git ]; then
+  git -c safe.directory='*' rev-parse HEAD && echo '%[1]s' && git -c safe.directory='*' add -A -N . >/dev/null 2>&1 && git -c safe.directory='*' diff --no-color HEAD
+elif [ -d /input/source ]; then
+  g=/tmp/autobot-patch-$$
+  trap 'rm -rf "$g"' EXIT
+  mkdir -p "$g" && git -c safe.directory='*' init -q "$g" >/dev/null 2>&1 || exit 1
+  GIT_DIR="$g/.git" GIT_WORK_TREE=/input/source git -c safe.directory='*' add -A >/dev/null 2>&1 || exit 1
+  GIT_DIR="$g/.git" GIT_WORK_TREE=/input/source git -c safe.directory='*' -c user.name=autobot -c user.email=autobot@local commit -q --allow-empty -m base >/dev/null 2>&1 || exit 1
+  printf '%%s\n%[1]s\n' %[2]s
+  GIT_DIR="$g/.git" GIT_WORK_TREE=/work/source git -c safe.directory='*' add -A -N . >/dev/null 2>&1
+  GIT_DIR="$g/.git" GIT_WORK_TREE=/work/source git -c safe.directory='*' diff --no-color HEAD
+else
+  exit 1
+fi`, patchBoundary, shellQuote(baseCommit))
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// captureSandboxPatch reads the base commit SHA and any changes (including newly created
+// non-ignored files) from /work/source before a sandbox closes.
 func captureSandboxPatch(ctx context.Context, sess *Session) (baseCommit, patch string) {
-	const sep = "---AUTOBOT-PATCH-BOUNDARY---"
-	script := fmt.Sprintf("git rev-parse HEAD && echo '%s' && git add -A -N . >/dev/null 2>&1 && git diff --no-color HEAD", sep)
-	r, err := sess.Run(ctx, script, time.Minute)
+	r, err := sess.Run(ctx, capturePatchScript(sess.commit), time.Minute)
 	if err != nil || r.ExitCode != 0 {
+		log.Printf("sandbox patch capture failed (exit %d, err %v)", r.ExitCode, err)
 		return "", ""
 	}
-	head, rest, ok := strings.Cut(r.Output, sep+"\n")
+	head, rest, ok := strings.Cut(r.Output, patchBoundary+"\n")
 	if !ok {
 		return "", ""
 	}
-	baseCommit = strings.TrimSpace(head)
+	baseCommit = cmp.Or(strings.TrimSpace(head), sess.commit)
 	if strings.TrimSpace(rest) == "" {
 		return baseCommit, ""
 	}

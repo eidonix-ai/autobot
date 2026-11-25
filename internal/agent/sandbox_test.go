@@ -202,6 +202,21 @@ func TestBackgroundCommands(t *testing.T) {
 	if out, err := do(t, tool(t, tools, "bash_output"), `{"id":"bg1"}`); err != nil || out != "[bg1: finished, exit 0]\nall tests passed\n" {
 		t.Fatalf("%q %v", out, err)
 	}
+	if strings.Contains(f.scripts[len(f.scripts)-1], "sleep 1") {
+		t.Fatalf("wait_seconds=0 should not sleep: %q", f.scripts[len(f.scripts)-1])
+	}
+	if out, err := do(t, tool(t, tools, "bash_output"), `{"id":"bg1","wait_seconds":45}`); err != nil || out != "[bg1: finished, exit 0]\nall tests passed\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	if got := f.scripts[len(f.scripts)-1]; !strings.Contains(got, "SECONDS+45") || !strings.Contains(got, "sleep 1") {
+		t.Fatalf("expected wait loop in script: %q", got)
+	}
+	if _, err := do(t, tool(t, tools, "bash_output"), `{"id":"bg1","wait_seconds":999}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.scripts[len(f.scripts)-1]; !strings.Contains(got, "SECONDS+120") {
+		t.Fatalf("expected wait_seconds clamped to 120: %q", got)
+	}
 	if out, err := do(t, tool(t, tools, "bash_kill"), `{"id":"bg1"}`); err != nil || out != "[bg1: killed]" {
 		t.Fatalf("%q %v", out, err)
 	}

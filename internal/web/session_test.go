@@ -434,7 +434,7 @@ func TestAgentSessionClosesWhenAgentEnds(t *testing.T) {
 	mu.Lock()
 	system := systems[0]
 	mu.Unlock()
-	if !strings.Contains(system, "a shell on the machine cn7") || !strings.Contains(system, "NVIDIA Test GPU") || !strings.Contains(system, "no internet") ||
+	if !strings.Contains(system, "a shell on the machine cn7") || !strings.Contains(system, "NVIDIA Test GPU") || !strings.Contains(system, "outbound internet") ||
 		!strings.Contains(system, headSHA[:12]) {
 		t.Fatalf("system prompt lacks the sandbox:\n%s", system)
 	}

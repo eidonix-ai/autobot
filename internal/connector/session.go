@@ -19,13 +19,12 @@ import (
 
 // A session is a job container that stays open for an agent. Its commands come from Autobot (a
 // request for them is held open until there are some) and run in the container with Docker's exec:
-// the same container as a script would get, so a command can never reach the donor's machine, its
-// network or its files. Several may run at once.
+// the same ephemeral container as a script would get, isolated from the host machine and its
+// files. Several may run at once.
 //
-// A file the agent writes cannot be sent into the container, which has no network and a read-only
-// root. The connector writes it on the host, in the session's own inbox folder, under the command's
-// id (checked to be plain, never a name the agent chose), and the container sees that folder
-// read-only at /inbox; a command then copies the file to where the agent asked.
+// Files the agent writes via write_file are staged on the host in the session's own inbox folder,
+// under the command's id (checked to be plain, never a name the agent chose), and the container
+// sees that folder read-only at /inbox; a command then copies the file to where the agent asked.
 
 // inboxDir is a session's inbox, inside the run's folder (which is removed when the run ends).
 func inboxDir(runDir string) string { return filepath.Join(runDir, "inbox") }

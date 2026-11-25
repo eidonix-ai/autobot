@@ -1,7 +1,7 @@
 // Package connector is the program on a donated machine. It checks in with Autobot every two
 // seconds, and when Autobot has a test run for it, it downloads the code, runs the run's script in
-// a fresh job container that has no network and cannot change the machine, streams the output
-// back, and removes the container.
+// a fresh ephemeral job container that cannot change the host machine, streams the output back,
+// and removes the container.
 package connector
 
 import (
@@ -358,7 +358,7 @@ if [ -d /deps/crates ]; then
   setenv CARGO_HOME /work/cargo
   mkdir -p "$CARGO_HOME"
   if [ -d "$image_cargo/git" ]; then cp -a "$image_cargo/git" "$CARGO_HOME/"; fi
-  printf '[source.crates-io]\nreplace-with = "autobot-deps"\n\n[source.autobot-deps]\ndirectory = "/deps/crates"\n\n[net]\noffline = true\n' > "$CARGO_HOME/config.toml"
+  printf '[source.crates-io]\nreplace-with = "autobot-deps"\n\n[source.autobot-deps]\ndirectory = "/deps/crates"\n' > "$CARGO_HOME/config.toml"
 fi
 if [ -s /deps/wheels/requirements.txt ]; then
   echo "Installing $(wc -l < /deps/wheels/requirements.txt) Python packages the work image lacks"

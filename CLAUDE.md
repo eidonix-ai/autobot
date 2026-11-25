@@ -37,7 +37,7 @@ Autobot is a fresh start (2026-11-22) after an earlier attempt, the "triage harn
 - **Public address:** Admin setting on the Users page, captured once from the first signed-in request's scheme and Host behind the proxy and changed only by an admin; links are never built from later request Hosts.
 
 ### 2. Resources (Donated Test Machines)
-- Connectors check in over HTTPS with a machine token and run each test (and agent shell sessions) in a fresh job container with no network, read-only root, non-root user, and capped resources. The old runner/link/hub design was replaced, not reused (Derek, 2026-11-22: *"We value simple, robust designs"*).
+- Connectors check in over HTTPS with a machine token and run each test (and agent shell sessions) in a fresh ephemeral job container with bridge networking and a writable root (so tests can install missing packages/headers on the fly via `apt-get`/`uv`/`pip`/`cargo`), minimal Linux capabilities (`Privileged: false`, `no-new-privileges`), read-only `/models`, and capped resources, removed on exit. The old runner/link/hub design was replaced, not reused (Derek, 2026-11-22: *"We value simple, robust designs"*).
 
 ### 3. Providers & Models
 - **Ownership & lending:** Providers are owned by the user who pays for them and lent by the owner to workspaces they are assigned to; admins can view but never modify another user's providers.

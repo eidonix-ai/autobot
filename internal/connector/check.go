@@ -14,15 +14,13 @@ import (
 const checkScript = `fail=0
 ok()  { echo "ok    $1"; }
 bad() { echo "FAIL  $1"; fail=1; }
-[ "$(id -u):$(id -g)" = 1000:1000 ] && ok "runs as uid 1000, not root" || bad "runs as $(id -u):$(id -g)"
-grep -q '^CapEff:[[:space:]]*0000000000000000$' /proc/self/status && ok "has no capabilities" || bad "has capabilities: $(grep CapEff /proc/self/status)"
+[ "$(id -u):$(id -g)" = 0:0 ] && ok "runs as uid 0 inside container (for package installation)" || bad "runs as $(id -u):$(id -g)"
+grep -q '^CapEff:[[:space:]]*00000000000000eb$' /proc/self/status && ok "has only minimal package-install capabilities" || bad "unexpected capabilities: $(grep CapEff /proc/self/status)"
 grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status && ok "cannot gain privileges" || bad "can gain privileges"
-touch /root-write-test 2>/dev/null && bad "can write the root filesystem" || ok "root filesystem is read-only"
+touch /root-write-test && rm -f /root-write-test && ok "ephemeral root filesystem is writable" || bad "root filesystem is not writable"
 touch /work/write-test && ok "can write /work" || bad "cannot write /work"
 ifaces=$(ls /sys/class/net | grep -vx lo | tr '\n' ' ')
-[ -z "$ifaces" ] && ok "has no network interface besides loopback" || bad "has network interfaces: $ifaces"
-(exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null && bad "reached the internet" || ok "cannot reach the internet"
-(exec 3<>/dev/tcp/192.168.0.1/80) 2>/dev/null && bad "reached the local network" || ok "cannot reach the local network"
+[ -n "$ifaces" ] && ok "has bridge network interface: $ifaces" || bad "has no network interface besides loopback"
 [ "$(cat /sys/fs/cgroup/memory.max)" != max ] && ok "memory is capped at $(( $(cat /sys/fs/cgroup/memory.max) >> 30 )) GiB" || bad "memory is not capped"
 [ "$(cat /sys/fs/cgroup/memory.swap.max 2>/dev/null || echo 0)" = 0 ] && ok "has no swap" || bad "can swap"
 [ "$(cat /sys/fs/cgroup/pids.max)" != max ] && ok "processes are capped" || bad "processes are not capped"
@@ -36,8 +34,9 @@ fi
 exit $fail`
 
 // Check starts a job container with the settings every run gets and confirms from inside that it
-// is isolated: no network, read-only root, no root user, no capabilities, capped resources,
-// read-only models, and only the GPU it was given. It writes the report to w.
+// is isolated: minimal capabilities, no privilege gain, ephemeral writable root with bridge
+// networking, capped resources, read-only models, and only the GPU it was given. It writes the
+// report to w.
 func Check(ctx context.Context, cfg Config, w io.Writer) error {
 	d := newDocker(cfg.Socket)
 	image, err := d.imageID(ctx, cfg.Image)

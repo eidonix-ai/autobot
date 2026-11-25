@@ -75,17 +75,19 @@ type spec struct {
 	Binds     []string // host:container:ro
 }
 
-// createBody is the Engine API request for a job container: no network, a read-only root, a
-// non-root user with no capabilities and no privilege gain, capped CPU, memory (no swap) and
-// processes, scratch only in a size-capped in-memory /work, and only the GPUs and read-only
-// folders it is given.
+// createBody is the Engine API request for a job container: an ephemeral container with bridge
+// networking and a writable root (removed on exit) so jobs can install missing packages or system
+// headers, minimal Linux capabilities (no privilege gain, never privileged), capped CPU, memory
+// (no swap) and processes, scratch in a size-capped in-memory /work, and only the GPUs and
+// read-only folders it is given.
 func (s spec) createBody() map[string]any {
 	mem := int64(s.MemoryGiB) << 30
 	binds := append([]string{}, s.Binds...)
 	host := map[string]any{
-		"NetworkMode":    "none",
-		"ReadonlyRootfs": true,
+		"NetworkMode":    "bridge",
+		"ReadonlyRootfs": false,
 		"CapDrop":        []string{"ALL"},
+		"CapAdd":         []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETUID"},
 		"SecurityOpt":    []string{"no-new-privileges"},
 		"Privileged":     false,
 		"NanoCpus":       int64(s.CPUs) * 1e9,
@@ -96,7 +98,7 @@ func (s spec) createBody() map[string]any {
 		"ShmSize":        int64(1) << 30,
 		// exec: a job runs what it builds (build scripts, test binaries). Docker's default is noexec.
 		"Tmpfs": map[string]string{
-			"/work": fmt.Sprintf("rw,exec,nosuid,nodev,size=%dg,mode=0700,uid=1000,gid=1000", s.ScratchGB),
+			"/work": fmt.Sprintf("rw,exec,nosuid,nodev,size=%dg,mode=0700,uid=0,gid=0", s.ScratchGB),
 			"/tmp":  "rw,exec,nosuid,nodev,size=1g,mode=1777",
 		},
 		"Binds": binds,
@@ -108,11 +110,11 @@ func (s spec) createBody() map[string]any {
 		"Image":           s.Image,
 		"Entrypoint":      []string{}, // run Cmd itself, not the image's start-up script
 		"Cmd":             s.Cmd,
-		"User":            "1000:1000",
+		"User":            "0:0",
 		"WorkingDir":      "/work",
 		"Env":             []string{"HOME=/work", "TMPDIR=/work/tmp"},
 		"Labels":          map[string]string{runLabel: strconv.FormatInt(s.Run, 10)},
-		"NetworkDisabled": true,
+		"NetworkDisabled": false,
 		"Tty":             false,
 		"HostConfig":      host,
 	}
@@ -210,8 +212,8 @@ func (d *docker) exec(ctx context.Context, id string, cmd []string, w io.Writer)
 	var created struct{ Id string }
 	err := d.call(ctx, "POST", "/containers/"+id+"/exec", map[string]any{
 		"AttachStdout": true, "AttachStderr": true, "Tty": false, "WorkingDir": "/work", "Cmd": cmd,
-		// Said outright, though Docker would inherit them: the job's own user, and no privileges.
-		"User": "1000:1000", "Privileged": false}, &created)
+		// Said outright, though Docker would inherit them: the job's own user, and never privileged.
+		"User": "0:0", "Privileged": false}, &created)
 	if err != nil {
 		return -1, err
 	}

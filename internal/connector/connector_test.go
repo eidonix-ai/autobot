@@ -17,7 +17,9 @@ func TestJobContainerIsIsolated(t *testing.T) {
 	body := s.createBody()
 	host := body["HostConfig"].(map[string]any)
 	want := map[string]any{
-		"NetworkMode": "none", "ReadonlyRootfs": true, "CapDrop": []string{"ALL"},
+		"NetworkMode": "bridge", "ReadonlyRootfs": false,
+		"CapDrop":     []string{"ALL"},
+		"CapAdd":      []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETUID"},
 		"SecurityOpt": []string{"no-new-privileges"}, "Privileged": false,
 		"Memory": int64(24) << 30, "MemorySwap": int64(24) << 30, "NanoCpus": int64(4e9), "PidsLimit": 4096,
 	}
@@ -26,16 +28,16 @@ func TestJobContainerIsIsolated(t *testing.T) {
 			t.Errorf("HostConfig.%s = %v, want %v", k, host[k], v)
 		}
 	}
-	if body["User"] != "1000:1000" || body["NetworkDisabled"] != true {
+	if body["User"] != "0:0" || body["NetworkDisabled"] != false {
 		t.Errorf("user %v, network disabled %v", body["User"], body["NetworkDisabled"])
 	}
-	for _, k := range []string{"Mounts", "Devices", "CapAdd", "PortBindings", "PidMode", "IpcMode", "UsernsMode", "VolumesFrom"} {
+	for _, k := range []string{"Mounts", "Devices", "PortBindings", "PidMode", "IpcMode", "UsernsMode", "VolumesFrom"} {
 		if _, ok := host[k]; ok {
 			t.Errorf("HostConfig sets %s", k)
 		}
 	}
 	tmpfs := host["Tmpfs"].(map[string]string)
-	if len(tmpfs) != 2 || tmpfs["/work"] != "rw,exec,nosuid,nodev,size=16g,mode=0700,uid=1000,gid=1000" {
+	if len(tmpfs) != 2 || tmpfs["/work"] != "rw,exec,nosuid,nodev,size=16g,mode=0700,uid=0,gid=0" {
 		t.Errorf("tmpfs %v", tmpfs)
 	}
 	for _, b := range host["Binds"].([]string) {

@@ -109,9 +109,8 @@ func sandboxNote(repo, commit string, v machineView) string {
 	fmt.Fprintf(&b, ". Your commands run in a sandbox container with %d CPUs and %d GiB of memory, of which %d GiB is the scratch folder /work. ",
 		st.JobCPUs, st.JobMemoryGiB, st.JobScratchGiB)
 	fmt.Fprintf(&b, "%s at commit %s is in /work/source, the folder your commands start in. ", repo, commit[:min(12, len(commit))])
-	b.WriteString("The sandbox has no internet: nothing can be downloaded, so do not run commands that need the network (git fetch, pip install, cargo update). " +
-		"The dependencies named by Cargo.lock and uv.lock were fetched before it started, so cargo and uv work offline. " +
-		"Its root is read-only; only /work and /tmp can be written, and they are cleared when the run ends. ")
+	b.WriteString("The sandbox is an ephemeral container removed when the run ends. " +
+		"The dependencies named by Cargo.lock and uv.lock were prefetched before it started, and the container has outbound internet and a writable root so you can install any missing packages or system headers (e.g. apt-get, uv pip install, pip install, cargo) needed to build and test. ")
 	if len(st.Models) > 0 {
 		var names []string
 		for _, m := range st.Models[:min(len(st.Models), 12)] {

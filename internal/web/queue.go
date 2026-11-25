@@ -195,10 +195,12 @@ func (s *Server) startQueued(id int64) {
 	s.launch(rs)
 }
 
-// RunQueue starts the queued runs that fit, at start and then every queueEvery.
+// RunQueue starts the queued runs that fit, then runs low-priority backlog catch-up when a
+// workspace is idle, at start and then every queueEvery.
 func (s *Server) RunQueue(ctx context.Context) {
 	for {
 		s.dispatchAll()
+		s.backlogRound(ctx)
 		select {
 		case <-ctx.Done():
 			return

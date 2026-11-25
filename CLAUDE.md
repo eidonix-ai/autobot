@@ -58,7 +58,8 @@ Autobot is a fresh start (2026-11-22) after an earlier attempt, the "triage harn
 - **Stop, Dry runs, Concurrency, Restarts (Derek, 2026-11-24):**
   - **Stop:** Cancels the run's context (`agent.StopError`), ends agents immediately with no report, edits waiting Discord approval cards, and guards all subsequent tag/case/post writes.
   - **Dry runs:** Get an isolated dry-run case (`dry_run_of`, negative `number` in `cases`), never read/write the real case or post externally; deleted 30 days after ending.
-  - **Concurrency:** Per-workspace max runs at once (1–20, default 3) with FIFO queue (`queued`); runs waiting only for approvals release their slot and jump ahead of queued runs once answered.
+  - **Concurrency & Backlog Catch-Up:** Per-workspace max runs at once (1–20, default 3) with FIFO queue (`queued`); runs waiting only for approvals release their slot and jump ahead of queued runs once answered. Optional per-kind (`pr`, `issue`) **Backlog catch-up** (`internal/web/backlog.go`, off by default) reviews open items with no case file and no prior non-dry run strictly when idle (0 queued, 0 slot waiters, active runs < idle slots).
+  - **Block Copy & Paste:** Right-click any block → **Copy**, right-click any canvas (same or different workflow tab of the same workspace) → **Paste** (`POST .../workflows/{kind}/paste`), keeping all settings and automatically adapting `{pr:*}` ↔ `{issue:*}` tags.
   - **Deploy restarts:** `Agent`, `Decision`, `Condition`, and `Junction` steps cut off by a restart re-queue and run again keeping finished steps (`workflow.Restartable`); `Post`, `CaseEntry`, `TestRun`, and `Approval` never run twice; dry runs fail as before.
 
 ### 6. Agent Harness & Presets

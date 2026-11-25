@@ -108,7 +108,11 @@ func (s *Server) runRows(ws *store.Workspace, runs []store.WorkflowRun) []runRow
 		row := runRow{ID: r.ID, Item: r.Item, ItemURL: itemURL(ws, r.Kind, r.Item), Title: titles[r.Item], Author: authors[r.Item], Kind: "pull request",
 			State: r.Status, Status: r.Status, Dry: r.DryRun, Started: r.StartedAt, By: r.StartedBy, StoppedBy: r.StoppedBy}
 		if r.StartedByID == 0 {
-			row.By = "Live" // the poller started it
+			if strings.HasPrefix(r.Note, backlogPrefix) {
+				row.By = "Backlog"
+			} else {
+				row.By = "Live" // the poller or Discord listener started it
+			}
 		}
 		if place, ok := places[r.ID]; ok {
 			row.Status = fmt.Sprintf("queued (%s in line)", ordinal(place))

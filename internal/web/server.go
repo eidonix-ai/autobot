@@ -57,6 +57,7 @@ type Server struct {
 	addressKnown atomic.Bool
 	fails        loginFails // failed sign-ins by account
 	poll         *poller    // what the poller remembers in memory
+	backlog      *backlogState
 	discordHub   *discordHub
 	repos        *repo.Mirrors
 	running      liveRuns // the workflow runs and agent runs going on, to stop them (see stop.go)
@@ -120,6 +121,7 @@ func New(st *store.Store, gh GitHub) (*Server, error) {
 		live:      &live{started: time.Now(), byID: map[int64]liveStatus{}},
 		access:     &repoAccess{byWS: map[int64]repoFacts{}},
 		poll:       newPoller(),
+		backlog:    newBacklogState(),
 		discordHub: newDiscordHub(),
 		pages:      map[string]*template.Template{},
 		// Goldmark escapes raw HTML and drops javascript: links unless told otherwise; keep it that way.
@@ -199,7 +201,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows", s.auth(s.workflowsIndex))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}", s.auth(s.workflowPage))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/layout", s.auth(s.saveLayout))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/paste", s.auth(s.pasteNode))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/live", s.auth(s.setLive))
+	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/backlog", s.auth(s.saveBacklog))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.nodeSettings))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.saveNodeSettings))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.testForm))

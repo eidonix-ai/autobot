@@ -960,6 +960,15 @@ func (s *Server) postStep(ctx context.Context, rs *runState, n workflow.Node, p 
 	if rs.run.Kind == workflow.Discord {
 		return s.discordReplyStep(ctx, rs, p.Trial, text)
 	}
+	if p.Once && !rs.run.DryRun && !(p.GitHub && p.Trial && !p.Discord) {
+		already, err := s.st.PostAlreadySent(rs.ws.ID, rs.run.Kind, rs.run.Item, n.ID, rs.run.ID)
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		if already {
+			return stepOutcome{port: "out", output: text, note: "already posted on this item; skipped"}
+		}
+	}
 	var reports []string
 	failed := false
 	report := func(where string, o stepOutcome) {

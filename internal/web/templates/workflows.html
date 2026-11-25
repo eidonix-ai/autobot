@@ -22,7 +22,30 @@
 <div id="wf-menu" class="wf-menu" hidden></div>
 <div id="wf-ghost" class="wf-ghost" hidden></div>
 <div id="wf-modal" class="modal" popover></div>
-<p class="hint wf-hint">Right-click the canvas to add a node. Click a node to set it up, shift-click to test it; drag to move it; drag from its dot to link it to the next step.</p>
+<p class="hint wf-hint">Right-click the canvas to add or paste a block. Right-click a block to copy or delete it. Click a block to set it up, shift-click to test it; drag from its dot to link it to the next step.</p>
+{{if ne .Kind "discord"}}
+<details class="more"{{if .BacklogProblem}} open{{end}}><summary>Backlog catch-up: {{if .Backlog.Enabled}}<strong>on</strong> ({{if .BacklogEventName}}{{.BacklogEventName}}{{else}}missing block{{end}} · {{.Backlog.Order}} first · up to {{.Backlog.MaxSlots}} idle){{else}}off{{end}} · {{.BacklogRemaining}} unreviewed</summary>
+  {{with .BacklogProblem}}<p class="error">{{.}}</p>{{end}}
+  {{if not .BacklogIndexReady}}<p class="hint">Waiting for the workspace's local copy of pull requests and issues to finish syncing.</p>{{end}}
+  <form method="post" action="{{.Base}}/backlog" class="row spaced">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label class="check"><input type="checkbox" name="enabled"{{if .Backlog.Enabled}} checked{{end}}> Catch up when idle</label>
+    <label>Event block
+      <select name="node_id">
+        {{if not .BacklogEvents}}<option value="">Add an event block first</option>{{end}}
+        {{range .BacklogEvents}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select></label>
+    <label>Order
+      <select name="order">
+        <option value="newest"{{if ne .Backlog.Order "oldest"}} selected{{end}}>Newest first</option>
+        <option value="oldest"{{if eq .Backlog.Order "oldest"}} selected{{end}}>Oldest first</option>
+      </select></label>
+    <label><span class="lbl">Idle slots <span class="info" tabindex="0" data-tip="Low priority: starts a catch-up review on an open item with no case file only when nothing is queued or waiting and fewer than this many runs are active.">ⓘ</span></span>
+      <input type="number" name="max_slots" min="1" max="{{.BacklogMaxSlots}}" value="{{.Backlog.MaxSlots}}"></label>
+    <button>Save</button>
+  </form>
+</details>
+{{end}}
 {{if .Recent}}<details class="more"><summary>Recent ({{len .Recent}})</summary>
 <ul class="wf-recent">{{range .Recent}}<li>{{ts .At}} · #{{.Number}} · {{.Node}}: {{if .Run}}<a href="{{$.WS.Path}}/workflow-runs/{{.Run}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}</li>{{end}}</ul>
 </details>{{end}}

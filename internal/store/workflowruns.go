@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -236,6 +237,36 @@ func (s *Store) WorkflowSteps(run int64) (map[string]WorkflowStep, error) {
 		out[st.NodeID] = st
 	}
 	return out, rows.Err()
+}
+
+// PostAlreadySent reports whether a Post block has already posted on this item in an earlier
+// non-dry run. Only steps that actually posted to GitHub or Discord count; trial runs, dry runs,
+// and skipped posts do not.
+func (s *Store) PostAlreadySent(workspaceID int64, kind string, item int, nodeID string, excludeRunID int64) (bool, error) {
+	if item == 0 {
+		return false, nil
+	}
+	rows, err := s.db.Query(`SELECT ws.error FROM workflow_steps ws
+		JOIN workflow_runs wr ON wr.id = ws.run_id
+		WHERE wr.workspace_id = ? AND wr.kind = ? AND wr.item = ? AND wr.dry_run = 0
+		  AND wr.id != ? AND ws.node_id = ? AND ws.status = 'done'`,
+		workspaceID, kind, item, excludeRunID, nodeID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var note string
+		if err := rows.Scan(&note); err != nil {
+			return false, err
+		}
+		if strings.Contains(note, "GitHub: posted ") ||
+			strings.Contains(note, "Discord: posted on Discord") ||
+			strings.Contains(note, "Discord: summary updated on Discord") {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // StopOrphanWorkflows deals with the runs an earlier Autobot process left running: their steps were

@@ -322,6 +322,40 @@
     return { x: (clientX - r.x) / editor.zoom, y: (clientY - r.y) / editor.zoom };
   }
 
+  // ---- copy & paste blocks across workflows of the same workspace ----
+  var wsBase = base.replace(/\/workflows\/[^/]+$/, '');
+  var currentKind = (base.match(/\/workflows\/([^/]+)$/) || ['', ''])[1];
+  var clipKey = 'autobot:copied-block:' + wsBase;
+
+  function readClip() {
+    try { return JSON.parse(localStorage.getItem(clipKey) || 'null'); } catch (e) { return null; }
+  }
+  function copyBlock(nid, ntype) {
+    var name = (state.names || {})[nid] || (types[ntype] && types[ntype].label) || ntype;
+    try { localStorage.setItem(clipKey, JSON.stringify({ kind: currentKind, node: nid, type: ntype, name: name })); } catch (e) {}
+    show('Copied “' + name + '” — right-click any canvas to paste');
+  }
+  function pasteBlock(clip, pt) {
+    show('Pasting…');
+    post(base + '/paste', { version: state.version, source_kind: clip.kind, source_node: clip.node, x: Math.round(pt.x), y: Math.round(pt.y) })
+      .then(function (resp) { return resp.json().then(function (body) { return { status: resp.status, body: body }; }); })
+      .then(function (r) {
+        if (r.status === 200) {
+          state.version = r.body.version; state.summaries = r.body.summaries; state.names = r.body.names;
+          state.outputs = r.body.outputs; state.continues = r.body.continues; state.problems = r.body.problems || {};
+          loading = true;
+          addNode(r.body.node.id, r.body.node.type, r.body.node.x, r.body.node.y);
+          loading = false;
+          Object.keys(idToDf).forEach(setSummary);
+          showSaved(r.body.note || 'Pasted');
+        } else {
+          show(r.body.error || 'Not pasted.', true);
+          if (r.status === 409) { offerReload(); }
+        }
+      })
+      .catch(function () { show('Not pasted: Autobot could not be reached.', true); });
+  }
+
   root.addEventListener('contextmenu', function (e) {
     e.preventDefault();
     if (placing) { stopPlacing(); return; }
@@ -339,17 +373,26 @@
     var node = e.target.closest('.drawflow-node');
     if (node) {
       var dfid = node.id.replace('node-', '');
-      var nid = dfToID[dfid], items = [{ label: 'Delete', run: function () { editor.removeNodeId('node-' + dfid); } }];
+      var nid = dfToID[dfid], ntype = editor.getNodeFromId(dfid).name;
+      var items = [{ label: 'Copy', run: function () { copyBlock(nid, ntype); } }];
       // An Agent block that starts its own conversations can be referred to: a new block that continues it.
-      if (editor.getNodeFromId(dfid).name === 'agent' && !(state.continues || {})[nid]) {
+      if (ntype === 'agent' && !(state.continues || {})[nid]) {
         items.push({ label: 'New reference', run: function () { startPlacing('agent', e.clientX, e.clientY, nid); } });
       }
+      items.push({ label: 'Delete', run: function () { editor.removeNodeId('node-' + dfid); } });
       openMenu(e.clientX, e.clientY, items);
       return;
     }
-    openMenu(e.clientX, e.clientY, state.types.map(function (t) {
-      return { label: t.label, run: function () { startPlacing(t.type, e.clientX, e.clientY); } };
-    }));
+    var canvasItems = [];
+    var clip = readClip();
+    if (clip && clip.node && types[clip.type]) {
+      var pt = canvasPoint(e.clientX, e.clientY);
+      canvasItems.push({ label: 'Paste “' + (clip.name || types[clip.type].label) + '”', run: function () { pasteBlock(clip, pt); } });
+    }
+    state.types.forEach(function (t) {
+      canvasItems.push({ label: t.label, run: function () { startPlacing(t.type, e.clientX, e.clientY); } });
+    });
+    openMenu(e.clientX, e.clientY, canvasItems);
   }, true);
 
   document.addEventListener('mousemove', function (e) { if (placing) { moveGhost(e.clientX, e.clientY); } });

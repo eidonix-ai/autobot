@@ -2,10 +2,12 @@ package web
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -223,6 +225,7 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 		"WS": ws, "Kind": kind, "Tabs": tabs, "State": string(state), "Wide": true,
 		"Base": ws.Path() + "/workflows/" + kind}
 	s.pollView(data, ws, kind, stored, g)
+	s.backlogView(data, ws, kind, g)
 	s.render(w, r, http.StatusOK, "workflows.html", data)
 }
 
@@ -308,6 +311,278 @@ func (s *Server) saveLayout(w http.ResponseWriter, r *http.Request) {
 		g.Links = []workflow.Link{}
 	}
 	s.storeGraph(w, ws, kind, req.Version, g, me(r))
+}
+
+// pasteNode copies a configured block from any workflow tab of the same workspace onto kind's
+// canvas at (x, y), keeping all of its settings and adapting item tags when crossing PR <-> Issue.
+func (s *Server) pasteNode(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.openWorkspace(w, r)
+	if !ok {
+		return
+	}
+	kind, ok := workflowKind(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Version    int     `json:"version"`
+		SourceKind string  `json:"source_kind"`
+		SourceNode string  `json:"source_node"`
+		X          float64 `json:"x"`
+		Y          float64 `json:"y"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "The canvas sent something unreadable; reload the page.")
+		return
+	}
+	if req.SourceKind != workflow.PR && req.SourceKind != workflow.Issue && req.SourceKind != workflow.Discord {
+		jsonError(w, http.StatusBadRequest, "Unknown source workflow.")
+		return
+	}
+	_, srcGraph, err := s.loadWorkflow(ws, req.SourceKind)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	var src *workflow.Node
+	for i := range srcGraph.Nodes {
+		if srcGraph.Nodes[i].ID == req.SourceNode {
+			src = &srcGraph.Nodes[i]
+			break
+		}
+	}
+	if src == nil {
+		jsonError(w, http.StatusNotFound, "The copied block is no longer on its canvas.")
+		return
+	}
+	t, ok := workflow.TypeOf(src.Type)
+	if !ok || t.Hidden || (t.Kind != "" && t.Kind != kind) || (t.OnlyItems && kind == workflow.Discord) {
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("A %s block cannot be pasted into a %s workflow.", t.Label, workflow.KindLabel(kind)))
+		return
+	}
+	_, dstGraph, err := s.loadWorkflow(ws, kind)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	copied, err := adaptCopiedNode(*src, req.SourceKind, kind)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Could not copy block: "+err.Error()+".")
+		return
+	}
+	copied.ID = freeNodeID(dstGraph)
+	copied.X, copied.Y = math.Round(req.X), math.Round(req.Y)
+	// Pick a unique name on the destination canvas (keeping the original name when free).
+	baseName := strings.TrimSpace(srcGraph.NameOf(*src))
+	if workflow.IsReference(*src) {
+		baseName = strings.TrimSuffix(baseName, " (continued)")
+	}
+	name := freeCopyName(dstGraph, kind, copied.Type, baseName)
+	if name == t.Label {
+		copied.Name = ""
+	} else {
+		copied.Name = name
+	}
+	if workflow.HasOutput(copied.Type) {
+		if withTag, err := workflow.WithOutputTo(copied, kind, workflow.Slug(workflow.DisplayName(copied))); err == nil {
+			copied = withTag
+		}
+	}
+	dstGraph.Nodes = append(dstGraph.Nodes, copied)
+	if dstGraph.Links == nil {
+		dstGraph.Links = []workflow.Link{}
+	}
+	if err := dstGraph.Check(kind); err != nil {
+		jsonError(w, http.StatusBadRequest, "Not pasted: "+err.Error()+".")
+		return
+	}
+	b, err := json.Marshal(dstGraph)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	version, err := s.st.SaveWorkflow(ws.ID, kind, req.Version, string(b), me(r))
+	if errors.Is(err, store.ErrStaleWorkflow) {
+		jsonError(w, http.StatusConflict, "Someone else changed this workflow while you were editing it. Reload to see their changes.")
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	names, outputs := canvasFacts(dstGraph)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"version":   version,
+		"node":      map[string]any{"id": copied.ID, "type": copied.Type, "x": copied.X, "y": copied.Y},
+		"summaries": s.summaries(ws, dstGraph, kind),
+		"names":     names,
+		"outputs":   outputs,
+		"continues": continuesFacts(dstGraph, kind),
+		"problems":  s.templateProblems(dstGraph, kind),
+		"note":      "Pasted " + workflow.DisplayName(copied),
+	})
+}
+
+func freeNodeID(g workflow.Graph) string {
+	const alpha = "abcdefghijklmnopqrstuvwxyz0123456789"
+	used := map[string]bool{}
+	for _, n := range g.Nodes {
+		used[n.ID] = true
+	}
+	var buf [12]byte
+	for {
+		rand.Read(buf[:])
+		for i := range buf {
+			buf[i] = alpha[int(buf[i])%len(alpha)]
+		}
+		id := string(buf[:])
+		if !used[id] {
+			return id
+		}
+	}
+}
+
+func freeCopyName(g workflow.Graph, kind, typ, base string) string {
+	t, _ := workflow.TypeOf(typ)
+	if base == "" {
+		base = t.Label
+	}
+	probe := workflow.Node{ID: "new", Type: typ}
+	if g.CheckName(kind, probe, base) == nil {
+		return base
+	}
+	for n := 2; ; n++ {
+		cand := fmt.Sprintf("%s %d", base, n)
+		if len([]rune(cand)) > 60 {
+			cand = fmt.Sprintf("%s %d", t.Label, n)
+		}
+		if g.CheckName(kind, probe, cand) == nil {
+			return cand
+		}
+	}
+}
+
+// swapItemTags adapts {pr...} <-> {issue...} template tags when copying a block between PR and Issue.
+func swapItemTags(s, fromKind, toKind string) string {
+	if fromKind == toKind || s == "" {
+		return s
+	}
+	var pairs []string
+	if fromKind == workflow.PR && toKind == workflow.Issue {
+		pairs = []string{
+			"{pr}", "{issue}",
+			"{pr:link}", "{issue:link}",
+			"{pr:number}", "{issue:number}",
+			"{pr:title}", "{issue:title}",
+			"{pr:body}", "{issue:body}",
+			"{pr:author}", "{issue:author}",
+			"{pr:packet}", "{issue:packet}",
+			"{pr:case_file}", "{issue:case_file}",
+		}
+	} else if fromKind == workflow.Issue && toKind == workflow.PR {
+		pairs = []string{
+			"{issue}", "{pr}",
+			"{issue:link}", "{pr:link}",
+			"{issue:number}", "{pr:number}",
+			"{issue:title}", "{pr:title}",
+			"{issue:body}", "{pr:body}",
+			"{issue:author}", "{pr:author}",
+			"{issue:packet}", "{pr:packet}",
+			"{issue:case_file}", "{pr:case_file}",
+		}
+	}
+	if len(pairs) == 0 {
+		return s
+	}
+	return strings.NewReplacer(pairs...).Replace(s)
+}
+
+func adaptCopiedNode(src workflow.Node, fromKind, toKind string) (workflow.Node, error) {
+	out := workflow.Node{Type: src.Type, Name: src.Name, Settings: append(json.RawMessage(nil), src.Settings...)}
+	swap := func(s string) string { return swapItemTags(s, fromKind, toKind) }
+	switch src.Type {
+	case workflow.Agent:
+		a, err := workflow.AgentSettingsOf(src, fromKind)
+		if err != nil {
+			return out, err
+		}
+		a.ContinueOf, a.NoConversation = "", "" // a copied block is independent, not a reference
+		a.Instruction = swap(a.Instruction)
+		a.Additional = swap(a.Additional)
+		a.Goal = swap(a.Goal)
+		a.SummaryFormat = swap(a.SummaryFormat)
+		a.FollowUp = swap(a.FollowUp)
+		if toKind == workflow.Discord {
+			a.Machines = nil
+			a.Rerun = "fresh"
+			a.NoCaseEntry = true
+		}
+		out.Settings, err = json.Marshal(a)
+		return out, err
+	case workflow.Decision:
+		d, err := workflow.DecisionSettingsOf(src, fromKind)
+		if err != nil {
+			return out, err
+		}
+		d.Context = swap(d.Context)
+		d.Question = swap(d.Question)
+		if toKind == workflow.Discord {
+			d.NoCaseEntry = true
+		}
+		out.Settings, err = json.Marshal(d)
+		return out, err
+	case workflow.Post:
+		p, err := workflow.SettingsOf(src, workflow.DefaultPostFor(fromKind))
+		if err != nil {
+			return out, err
+		}
+		p.Message = swap(p.Message)
+		if toKind == workflow.Discord {
+			p.GitHub, p.Summary, p.Once, p.Discord = false, false, false, true
+		}
+		out.Settings, err = json.Marshal(p)
+		return out, err
+	case workflow.Condition:
+		c, err := workflow.SettingsOf(src, workflow.DefaultCondition())
+		if err != nil {
+			return out, err
+		}
+		if toKind != workflow.PR {
+			c.Files, c.MoreLines = "", 0
+		}
+		if toKind == workflow.Discord {
+			c.Author, c.Label = "", ""
+		}
+		out.Settings, err = json.Marshal(c)
+		return out, err
+	case workflow.CaseEntry:
+		c, err := workflow.CaseEntrySettingsOf(src)
+		if err != nil {
+			return out, err
+		}
+		c.Entry = swap(c.Entry)
+		out.Settings, err = json.Marshal(c)
+		return out, err
+	case workflow.Approval:
+		a, err := workflow.SettingsOf(src, workflow.DefaultApproval(fromKind))
+		if err != nil {
+			return out, err
+		}
+		a.Question = swap(a.Question)
+		a.Request = swap(a.Request)
+		out.Settings, err = json.Marshal(a)
+		return out, err
+	case workflow.TestRun:
+		t, err := workflow.SettingsOf(src, workflow.DefaultTestRun())
+		if err != nil {
+			return out, err
+		}
+		t.Script = swap(t.Script)
+		out.Settings, err = json.Marshal(t)
+		return out, err
+	}
+	return out, nil
 }
 
 // modelOption is one entry of a step's model dropdown.

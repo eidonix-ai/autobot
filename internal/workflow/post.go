@@ -28,6 +28,8 @@ type PostSettings struct {
 	Discord bool `json:"discord"` // a message in the case's forum post
 	// Summary: replace the forum post's first message (its summary) instead of adding a message.
 	Summary bool `json:"summary"`
+	// Once: post at most once per pull request or issue; later runs skip if this block already posted.
+	Once bool `json:"once,omitempty"`
 }
 
 // DefaultPost is a new Post node's settings: a comment on GitHub, as a trial until someone decides,
@@ -58,7 +60,7 @@ func (s PostSettings) Check() error {
 // PostFromForm reads a Post node's settings from its form.
 func PostFromForm(get func(string) string) PostSettings {
 	return PostSettings{Message: strings.TrimSpace(get("message")), GitHub: get("github") == "on", Trial: get("trial") == "on",
-		Discord: get("discord") == "on", Summary: get("summary") == "on"}
+		Discord: get("discord") == "on", Summary: get("summary") == "on", Once: get("once") == "on"}
 }
 
 // PostFromFormFor reads a Post node's settings from its form for a workflow of kind.
@@ -99,6 +101,9 @@ func (s PostSettings) Where() string {
 	}
 	if len(parts) == 0 {
 		return "Tick where to post"
+	}
+	if s.Once {
+		parts = append(parts, "once")
 	}
 	return strings.Join(parts, " · ")
 }

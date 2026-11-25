@@ -213,3 +213,53 @@ func TestPostFormPaletteAndOldBlocks(t *testing.T) {
 		}
 	}
 }
+
+// Post once per item: a trial run does not consume the shot, the first real run posts, later real
+// runs skip without posting while still continuing down "out", and dry runs still run.
+func TestPostOncePerItem(t *testing.T) {
+	p := newPostEnv(t, "o/r")
+
+	// Trial-only run does not count as posted.
+	step := p.run(t, workflow.PostSettings{Message: "Intake", GitHub: true, Trial: true, Once: true})
+	if step.Status != "done" || len(fakeComments) != 0 {
+		t.Fatalf("trial run: %+v, comments=%v", step, fakeComments)
+	}
+
+	// First real run posts to both GitHub and Discord.
+	fakeComments, discordSent = nil, nil
+	step = p.run(t, workflow.PostSettings{Message: "Intake", GitHub: true, Discord: true, Once: true})
+	if step.Status != "done" || step.Port != "out" || len(fakeComments) != 1 || len(discordSent) == 0 {
+		t.Fatalf("first real run: %+v, gh=%v, dc=%v", step, fakeComments, discordSent)
+	}
+
+	// Second real run with Once=true skips posting and still passes "out".
+	fakeComments, discordSent = nil, nil
+	step = p.run(t, workflow.PostSettings{Message: "Intake", GitHub: true, Discord: true, Once: true})
+	if step.Status != "done" || step.Port != "out" || !strings.Contains(step.Error, "already posted on this item") ||
+		len(fakeComments) != 0 || len(discordSent) != 0 {
+		t.Fatalf("second real run should skip: %+v, gh=%v, dc=%v", step, fakeComments, discordSent)
+	}
+
+	// Dry run still runs even after a real post.
+	fakeComments, discordSent = nil, nil
+	dryStep := runOnce(t, p.env, p.ws, p.admin, true)["po"]
+	if dryStep.Status != "done" || !strings.Contains(dryStep.Error, "dry run") || len(fakeComments) != 0 {
+		t.Fatalf("dry run: %+v, gh=%v", dryStep, fakeComments)
+	}
+
+	// Form saves and re-renders the "once" checkbox, and card summary shows "once".
+	b := p.signIn("derek")
+	w, _ := p.st.Workflow(p.ws.ID, workflow.PR)
+	if code, _, out := b.post("/w/o/r/workflows/pr/nodes/po", url.Values{
+		"csrf": {b.csrf()}, "version": {itoa(int64(w.Version))}, "name": {"Intake"},
+		"message": {"Opened"}, "github": {"on"}, "once": {"on"},
+	}); code != 200 {
+		t.Fatalf("save once: %d %s", code, out)
+	}
+	if _, form := b.get("/w/o/r/workflows/pr/nodes/po"); !strings.Contains(form, `name="once" checked`) {
+		t.Fatalf("form missing once checked:\n%s", form)
+	}
+	if got := (workflow.PostSettings{GitHub: true, Once: true}).Where(); got != "GitHub · once" {
+		t.Fatalf("Where() = %q, want %q", got, "GitHub · once")
+	}
+}

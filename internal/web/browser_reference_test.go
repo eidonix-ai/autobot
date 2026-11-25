@@ -82,7 +82,7 @@ func TestBrowserReferenceBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(menu, ",") != "Delete,New reference" {
+	if strings.Join(menu, ",") != "Copy,New reference,Delete" {
 		t.Fatalf("the block's menu: %v", menu)
 	}
 	if shownName != "Reviewer (continued)" {

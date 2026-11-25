@@ -269,9 +269,32 @@ func (rs *runState) errStopped() error {
 	return agent.ErrStopped
 }
 
-// startWorkflow starts a run of a kind's workflow on an item from an event node, and returns its id.
-// A workspace that already has as many runs going as its settings allow gets a queued run instead.
+// startWorkflow starts a run of a kind's workflow on an item from an event node's "out" port.
 func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, eventNode string, number int, dry bool, by *store.User) (int64, error) {
+	return s.startWorkflowOnPort(ctx, ws, kind, eventNode, "out", number, dry, by)
+}
+
+// eventPort returns the output port the run's event node fired on ("out" unless TriggerData names another).
+func eventPort(run *store.WorkflowRun) string {
+	if run == nil || strings.TrimSpace(run.TriggerData) == "" {
+		return "out"
+	}
+	var m struct {
+		EventPort string `json:"event_port"`
+	}
+	if json.Unmarshal([]byte(run.TriggerData), &m) == nil && m.EventPort != "" {
+		return m.EventPort
+	}
+	return "out"
+}
+
+// startWorkflowOnPort starts a run of a kind's workflow on an item from a specific output port of
+// an event node (such as "out" or "code_not_changed"), and returns its id.
+// A workspace that already has as many runs going as its settings allow gets a queued run instead.
+func (s *Server) startWorkflowOnPort(ctx context.Context, ws *store.Workspace, kind, eventNode, port string, number int, dry bool, by *store.User) (int64, error) {
+	if port == "" {
+		port = "out"
+	}
 	_, g, err := s.loadWorkflow(ws, kind)
 	if err != nil {
 		return 0, err
@@ -322,7 +345,14 @@ func (s *Server) startWorkflow(ctx context.Context, ws *store.Workspace, kind, e
 	for _, n := range g.Nodes {
 		ids = append(ids, n.ID)
 	}
-	r := store.WorkflowRun{WorkspaceID: ws.ID, Kind: kind, EventNode: eventNode, Item: number, DryRun: dry, Graph: string(graph),
+	trigData := ""
+	if port != "out" {
+		tb, _ := json.Marshal(struct {
+			EventPort string `json:"event_port"`
+		}{EventPort: port})
+		trigData = string(tb)
+	}
+	r := store.WorkflowRun{WorkspaceID: ws.ID, Kind: kind, EventNode: eventNode, Item: number, TriggerData: trigData, DryRun: dry, Graph: string(graph),
 		Note: head + "\n" + strings.Join(lines, "\n")}
 	id, queued, err := s.admit(r, ids, by)
 	if err != nil {
@@ -437,7 +467,7 @@ func (s *Server) drive(rs *runState) {
 			st := steps[n.ID]
 			st.Status, st.StartedAt, st.FinishedAt = "skipped", now, now
 			if n.ID == rs.run.EventNode {
-				st.Status, st.Port = "done", "out"
+				st.Status, st.Port = "done", eventPort(rs.run)
 				if rs.run.Kind == workflow.Discord && rs.discord != nil {
 					ch := rs.builtIn["discord:channel"]
 					st.Output = fmt.Sprintf("%s in %s by %s: %s", workflow.DisplayName(n), ch, rs.discord.Author, oneLineOf(rs.discord.Content, 120))

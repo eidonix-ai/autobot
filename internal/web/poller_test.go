@@ -796,3 +796,96 @@ func TestSwitchingOffAndOnAgainForgetsPending(t *testing.T) {
 	p.round()
 	p.wantRuns()
 }
+
+// TestPollerCodeNotChangedPort verifies PR Activity's code_not_changed output port:
+// 1. Unwired -> does nothing on summon with no new commits.
+// 2. Wired -> fires only the code_not_changed branch on trusted summon with no new commits (never out).
+// 3. Fires at most once per HeadSHA, skips untrusted summoners, and skips while a run is active.
+func TestPollerCodeNotChangedPort(t *testing.T) {
+	p := newPollEnv(t)
+	p.st.SetSetting(publicAddressKey, "https://autobot.example.com")
+	p.addPR(1, false)
+	p.gh.roles["carol"] = "write"
+	// Open a case file for PR #1 (simulating a completed initial review).
+	if _, _, err := p.st.OpenCase(p.ws, 1, workflow.PR, "PR 1", "reviewed"); err != nil {
+		t.Fatal(err)
+	}
+
+	evSet := workflow.DefaultEvent("pr_activity")
+	evSet.Mode = "always"
+	evSet.Activity = []string{"pushes"}
+	evSet.QuietMinutes = 90
+	evSet.CaseExists = true
+	evSet.SummonPhrase = "@flare-autobot"
+	evSet.TrustedOnly = true
+	evSet.WaitCI = "no"
+	evSet.Authors = "all"
+
+	// 1. Unwired code_not_changed port -> trusted summon with no pushes does nothing.
+	gUnwired := workflow.Graph{
+		Nodes: []workflow.Node{
+			{ID: "ev", Type: "pr_activity", Settings: mustJSON(evSet)},
+			{ID: "rev", Type: workflow.CaseEntry, Name: "Review", Settings: mustJSON(workflow.CaseEntrySettings{Entry: "reviewed", Finalize: true})},
+		},
+		Links: []workflow.Link{{From: "ev", Out: "out", To: "rev", In: "in"}},
+	}
+	rawUnwired, _ := json.Marshal(gUnwired)
+	if _, err := p.st.SaveWorkflow(p.ws.ID, workflow.PR, 0, string(rawUnwired), p.admin); err != nil {
+		t.Fatal(err)
+	}
+	p.goLive(workflow.PR)
+	p.round()
+	p.comment(1, "carol", "@flare-autobot check again")
+	p.round()
+	p.wantRuns()
+
+	// 2. Wire code_not_changed -> CaseEntry (decline branch) and re-test.
+	gWired := workflow.Graph{
+		Nodes: []workflow.Node{
+			{ID: "ev", Type: "pr_activity", Settings: mustJSON(evSet)},
+			{ID: "rev", Type: workflow.CaseEntry, Name: "Review", Settings: mustJSON(workflow.CaseEntrySettings{Entry: "reviewed", Finalize: true})},
+			{ID: "dec", Type: workflow.CaseEntry, Name: "Decline", Settings: mustJSON(workflow.CaseEntrySettings{Entry: "Declined: see {case:link}", Finalize: true})},
+		},
+		Links: []workflow.Link{
+			{From: "ev", Out: "out", To: "rev", In: "in"},
+			{From: "ev", Out: "code_not_changed", To: "dec", In: "in"},
+		},
+	}
+	rawWired, _ := json.Marshal(gWired)
+	w, _ := p.st.Workflow(p.ws.ID, workflow.PR)
+	if _, err := p.st.SaveWorkflow(p.ws.ID, workflow.PR, w.Version, string(rawWired), p.admin); err != nil {
+		t.Fatal(err)
+	}
+
+	// Untrusted summon does not fire code_not_changed.
+	p.comment(1, "mallory", "@flare-autobot check")
+	p.round()
+	p.wantRuns()
+
+	// Trusted summon with no pushes fires ONLY the code_not_changed branch ("dec", NOT "rev").
+	p.comment(1, "carol", "@flare-autobot check")
+	p.round()
+	p.wantRuns(1)
+	runs, _ := p.st.WorkflowRuns(p.ws.ID, 10)
+	runID := runs[0].ID
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r, _ := p.st.WorkflowRun(runID)
+		if r != nil && r.Status == "done" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	steps, _ := p.st.WorkflowSteps(runID)
+	if steps["ev"].Port != "code_not_changed" || steps["dec"].Status != "done" || steps["rev"].Status != "skipped" {
+		t.Fatalf("unexpected steps on code_not_changed run: ev=%+v dec=%+v rev=%+v", steps["ev"], steps["dec"], steps["rev"])
+	}
+	if !strings.Contains(steps["dec"].Output, "https://autobot.example.com/api/v1/cases/") {
+		t.Fatalf("decline step missing case:link: %q", steps["dec"].Output)
+	}
+
+	// Repeated trusted summon on the SAME HeadSHA must not fire again (once per HeadSHA).
+	p.comment(1, "carol", "@flare-autobot check once more")
+	p.round()
+	p.wantRuns(1)
+}

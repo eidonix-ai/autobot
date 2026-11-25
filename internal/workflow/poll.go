@@ -69,10 +69,12 @@ const (
 	Fire                // start the run
 )
 
-// Result is an outcome and, for everything but Idle, the reason.
+// Result is an outcome and, for everything but Idle, the reason. Port is the output port to fire
+// on when Outcome is Fire ("" means "out", e.g. "code_not_changed" on pr_activity).
 type Result struct {
 	Outcome Outcome
 	Why     string
+	Port    string
 }
 
 // Trigger says whether the events call for a run at all, before any filter is looked at. It is
@@ -86,36 +88,36 @@ func Trigger(ev EventSettings, typ string, events []Event, now time.Time, trust,
 		found, why, refused, summonAt = summons(ev, events, trust)
 	}
 	if refused != "" && ev.Mode == "summoned" {
-		return Result{Skip, refused}
+		return Result{Outcome: Skip, Why: refused}
 	}
 	if typ == "pr_activity" {
 		return activityTrigger(ev, events, now, found, why, summonAt, summonedBefore)
 	}
 	if ev.Mode == "summoned" {
 		if found {
-			return Result{Fire, why}
+			return Result{Outcome: Fire, Why: why}
 		}
-		return Result{Idle, ""}
+		return Result{Outcome: Idle}
 	}
 	want := map[string]string{"pr_ready": EvReady, "pr_draft": EvDraft, "issue_opened": EvOpened}[typ]
 	for _, e := range events {
 		if e.Kind == want {
-			return Result{Fire, "it " + map[string]string{EvReady: "is ready for review", EvDraft: "was opened as a draft", EvOpened: "was opened"}[want]}
+			return Result{Outcome: Fire, Why: "it " + map[string]string{EvReady: "is ready for review", EvDraft: "was opened as a draft", EvOpened: "was opened"}[want]}
 		}
 	}
 	// In "always" mode, an item initially skipped (e.g. due to the opt-out tag) can still be
 	// triggered later by an explicit summons, or by editing its description to remove the opt-out tag.
 	if found, why, _, _ = summons(ev, events, trust); found {
-		return Result{Fire, why}
+		return Result{Outcome: Fire, Why: why}
 	}
 	if ev.StopTag != "" && (typ == "pr_ready" || typ == "issue_opened") {
 		for _, e := range events {
 			if e.Kind == "edits" {
-				return Result{Fire, "its description was edited"}
+				return Result{Outcome: Fire, Why: "its description was edited"}
 			}
 		}
 	}
-	return Result{Idle, ""}
+	return Result{Outcome: Idle}
 }
 
 // summons looks for a summons among the events: a new comment with the summon phrase, or a review
@@ -155,21 +157,24 @@ func activityTrigger(ev EventSettings, events []Event, now time.Time, newSummons
 		}
 	}
 	if len(kinds) == 0 {
-		return Result{Idle, ""}
+		if ev.Mode == "always" && newSummons {
+			return Result{Outcome: Fire, Why: why + " (code not changed)", Port: "code_not_changed"}
+		}
+		return Result{Outcome: Idle}
 	}
 	if ev.Mode == "summoned" && !newSummons && !summonedBefore {
-		return Result{Idle, ""}
+		return Result{Outcome: Idle}
 	}
 	if ev.Mode == "always" && newSummons && !summonAt.Before(last) {
-		return Result{Fire, why}
+		return Result{Outcome: Fire, Why: why}
 	}
 	if wait := time.Duration(ev.QuietMinutes)*time.Minute - now.Sub(last); wait > 0 {
-		return Result{Wait, fmt.Sprintf("waiting for %d quiet minutes after the last activity", ev.QuietMinutes)}
+		return Result{Outcome: Wait, Why: fmt.Sprintf("waiting for %d quiet minutes after the last activity", ev.QuietMinutes)}
 	}
 	if newSummons {
-		return Result{Fire, why}
+		return Result{Outcome: Fire, Why: why}
 	}
-	return Result{Fire, "new activity: " + strings.Join(unique(kinds), ", ")}
+	return Result{Outcome: Fire, Why: "new activity: " + strings.Join(unique(kinds), ", ")}
 }
 
 func laterOf(a, b time.Time) time.Time {
@@ -192,10 +197,10 @@ func unique(list []string) []string {
 // Decide says what an event node of type typ does about an item.
 func Decide(ev EventSettings, typ string, f Facts) Result {
 	if !f.Open {
-		return Result{Idle, ""}
+		return Result{Outcome: Idle}
 	}
 	if (typ == "pr_ready" && f.Draft) || (typ == "pr_draft" && !f.Draft) {
-		return Result{Idle, ""}
+		return Result{Outcome: Idle}
 	}
 	summonedBefore := f.summoned(ev)
 	t := Trigger(ev, typ, f.Events, f.Now, true, summonedBefore)
@@ -203,7 +208,7 @@ func Decide(ev EventSettings, typ string, f Facts) Result {
 		return t
 	}
 	if typ == "pr_activity" && ev.CaseExists && !f.HasCase {
-		return Result{Skip, "it has no case file yet"}
+		return Result{Outcome: Skip, Why: "it has no case file yet"}
 	}
 	newSummons, _, _, summonAt := summons(ev, f.Events, true)
 	// In "always" mode, pr_ready / pr_draft / issue_opened only re-fire on a later summons when
@@ -220,28 +225,30 @@ func Decide(ev EventSettings, typ string, f Facts) Result {
 		}
 		if !hasPrimary {
 			if f.HasCase {
-				return Result{Idle, ""}
+				return Result{Outcome: Idle}
 			}
 			if !newSummons && !f.WasOptedOut {
-				return Result{Idle, ""}
+				return Result{Outcome: Idle}
 			}
 		}
 	}
 	explicitCall := newSummons && !stoppedAfter(ev, f.Author, f.Events, summonAt)
 	if by := f.stoppedBy(ev); by != "" && !explicitCall {
-		return Result{Skip, "the opt-out tag “" + ev.StopTag + "” is in " + by}
+		return Result{Outcome: Skip, Why: "the opt-out tag “" + ev.StopTag + "” is in " + by}
 	}
 	if typ != "issue_opened" {
 		for _, c := range PRFilters(ev, f.prFacts(summonedBefore || newSummons)) {
 			if !c.Pass {
-				return Result{Skip, c.Text}
+				return Result{Outcome: Skip, Why: c.Text}
 			}
 		}
-		if r := f.waitForCI(ev); r.Outcome == Wait {
-			return r
+		if t.Port != "code_not_changed" {
+			if r := f.waitForCI(ev); r.Outcome == Wait {
+				return r
+			}
 		}
 	}
-	return Result{Fire, t.Why}
+	return Result{Outcome: Fire, Why: t.Why, Port: t.Port}
 }
 
 // summoned reports whether the item has been summoned: a trusted comment with the summon phrase,
@@ -300,11 +307,11 @@ func (f Facts) waitForCI(ev EventSettings) Result {
 	switch {
 	case ev.WaitCI == "no" || f.CI == "passed" || f.CI == "none" || f.CI == "":
 	case f.CI == "pending":
-		return Result{Wait, "waiting for CI to finish"}
+		return Result{Outcome: Wait, Why: "waiting for CI to finish"}
 	case f.CI == "failed" && ev.WaitCI == "passed":
-		return Result{Wait, "CI failed; waiting for it to pass"}
+		return Result{Outcome: Wait, Why: "CI failed; waiting for it to pass"}
 	}
-	return Result{Fire, ""}
+	return Result{Outcome: Fire}
 }
 
 // Check is one condition and how it stood, in words.

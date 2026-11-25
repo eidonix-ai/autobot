@@ -404,3 +404,20 @@ func (s *Store) WorkflowRunning(workspaceID int64, kind, node string, item int) 
 		AND status IN ('running', 'queued')`, workspaceID, kind, node, item).Scan(&n)
 	return n > 0, err
 }
+
+// ItemHasActiveRun reports whether any workflow run of kind is currently running or queued on item.
+func (s *Store) ItemHasActiveRun(workspaceID int64, kind string, item int) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM workflow_runs WHERE workspace_id = ? AND kind = ? AND item = ?
+		AND status IN ('running', 'queued')`, workspaceID, kind, item).Scan(&n)
+	return n > 0, err
+}
+
+// NodeLoggedMarker reports whether poll_log already has an entry for (workspace, item, node)
+// containing marker (used to fire code_not_changed at most once per HeadSHA).
+func (s *Store) NodeLoggedMarker(workspaceID int64, number int, node, marker string) bool {
+	var ok int
+	err := s.db.QueryRow(`SELECT 1 FROM poll_log WHERE workspace_id = ? AND number = ? AND node_id = ? AND instr(text, ?) > 0 LIMIT 1`,
+		workspaceID, number, node, marker).Scan(&ok)
+	return err == nil
+}

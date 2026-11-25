@@ -188,6 +188,16 @@ type pollWS struct {
 	branch string // the repository's default branch, once asked
 	wants  struct{ reviews, checks bool }
 	nodes  map[string][]workflow.Node // each live kind's event nodes
+	graphs map[string]workflow.Graph  // each live kind's graph (to check wired output ports)
+}
+
+func (pw *pollWS) hasPortLink(kind, nodeID, port string) bool {
+	for _, l := range pw.graphs[kind].Links {
+		if l.From == nodeID && l.Out == port {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) pollWorkspace(ctx context.Context, ws *store.Workspace, wfs []store.LiveWorkflow) error {
@@ -195,7 +205,7 @@ func (s *Server) pollWorkspace(ctx context.Context, ws *store.Workspace, wfs []s
 	if err != nil {
 		return err
 	}
-	pw := &pollWS{s: s, ws: ws, token: token, now: s.poll.now(), nodes: map[string][]workflow.Node{}, optOut: s.optOut(ws)}
+	pw := &pollWS{s: s, ws: ws, token: token, now: s.poll.now(), nodes: map[string][]workflow.Node{}, graphs: map[string]workflow.Graph{}, optOut: s.optOut(ws)}
 	if id, _ := s.identity(ws); id != nil {
 		pw.login = id.Login
 	}
@@ -204,6 +214,7 @@ func (s *Server) pollWorkspace(ctx context.Context, ws *store.Workspace, wfs []s
 		if err := json.Unmarshal([]byte(w.Graph), &g); err != nil {
 			return err
 		}
+		pw.graphs[w.Kind] = g
 		for _, n := range g.Nodes {
 			t, _ := workflow.TypeOf(n.Type)
 			if !t.Event || workflow.IsBacklogEvent(n.Type) {
@@ -617,11 +628,16 @@ func (pw *pollWS) decideItem(ctx context.Context, kind string, n workflow.Node, 
 		events[i] = workflow.Event{ID: e.ID, Kind: e.Kind, Who: e.Who, Text: e.Text, At: e.At}
 	}
 	// The cheap look first: most events call for nothing, and a quiet period only waits.
-	switch workflow.Trigger(ev, n.Type, events, pw.now, false, true).Outcome {
+	trig := workflow.Trigger(ev, n.Type, events, pw.now, false, true)
+	switch trig.Outcome {
 	case workflow.Idle:
 		return done()
 	case workflow.Wait:
 		return nil
+	case workflow.Fire:
+		if trig.Port == "code_not_changed" && !pw.hasPortLink(kind, n.ID, "code_not_changed") {
+			return done()
+		}
 	}
 	f, err := pw.facts(ctx, kind, n, ev, it, events)
 	if errors.Is(err, github.ErrNoRepo) {
@@ -639,19 +655,45 @@ func (pw *pollWS) decideItem(ctx context.Context, kind string, n workflow.Node, 
 		pw.log(kind, number, n.ID, "Skipped: "+res.Why, 0)
 		return done()
 	case workflow.Fire:
-		return pw.start(ctx, kind, n, number, res.Why, done)
+		port := res.Port
+		if port == "" {
+			port = "out"
+		}
+		if port == "code_not_changed" {
+			if !pw.hasPortLink(kind, n.ID, "code_not_changed") {
+				return done()
+			}
+			active, aerr := st.ItemHasActiveRun(pw.ws.ID, kind, number)
+			if aerr != nil {
+				return aerr
+			}
+			if active {
+				return done()
+			}
+			shortSHA := it.HeadSHA[:min(12, len(it.HeadSHA))]
+			marker := "code_not_changed@" + shortSHA
+			if shortSHA != "" && st.NodeLoggedMarker(pw.ws.ID, number, n.ID, marker) {
+				return done()
+			}
+			why := res.Why
+			if shortSHA != "" {
+				why += " [" + marker + "]"
+			}
+			return pw.startPort(ctx, kind, n, number, port, why, done)
+		}
+		return pw.startPort(ctx, kind, n, number, port, res.Why, done)
 	}
 	return nil
 }
 
-// start starts a run, unless this node is still running on the item or the round's limit is used up;
-// those wait for the next round with nothing lost.
-func (pw *pollWS) start(ctx context.Context, kind string, n workflow.Node, number int, why string, done func() error) error {
+// startPort starts a run on a specific output port of an event node, unless this node is still
+// running on the item or the round's limit is used up; those wait for the next round with nothing lost.
+func (pw *pollWS) startPort(ctx context.Context, kind string, n workflow.Node, number int, port, why string, done func() error) error {
 	running, err := pw.s.st.WorkflowRunning(pw.ws.ID, kind, n.ID, number)
 	if err != nil || running || pw.starts >= maxStarts {
 		return err
 	}
-	id, err := pw.s.startWorkflow(ctx, pw.ws, kind, n.ID, number, false, nil)
+	id, err := pw.s.startWorkflowOnPort(ctx, pw.ws, kind, n.ID, port, number, false, nil)
 	if err != nil {
 		key := fmt.Sprint(pw.ws.ID, n.ID, number)
 		pw.s.poll.mu.Lock()

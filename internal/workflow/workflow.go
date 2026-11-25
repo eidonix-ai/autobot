@@ -189,6 +189,8 @@ func Outputs(n Node) []string {
 		}
 	}
 	switch n.Type {
+	case "pr_activity":
+		return []string{"out", "code_not_changed"}
 	case Condition:
 		return []string{"yes", "no"}
 	case TestRun:

@@ -93,7 +93,8 @@ type AgentSettings struct {
 	// TimeWarnPercent is how much of the time limit is left when every session of the run still working
 	// is told so, once; 0 for no warning. A block saved before it was set (nil) uses DefaultTimeWarn (20).
 	TimeWarnPercent *int     `json:"time_warn_percent,omitempty"`
-	Machines        []int64  `json:"machines"`               // the workspace machines it may use
+	Machines        []int64  `json:"machines"`                    // the workspace machines it may use
+	NoPatchCapture  bool     `json:"no_patch_capture,omitempty"`  // verify-only sandbox: apply {run:patch} for testing, never overwrite it on exit
 	Verify          ModelRef `json:"verify"`                 // a decision model that checks a finish claiming the goal is met; unset for none
 	MaxTurns        int      `json:"max_turns"`              // model calls before it must have finished
 	Closing         string   `json:"closing,omitempty"`      // Custom only: "" (finish delivers the output) or "report" (written from the scratchpad)
@@ -463,8 +464,9 @@ func AgentFromForm(get func(string) string, all func(string) []string) AgentSett
 		Rerun:         get("rerun"),
 		Closing:       get("closing"),
 		FollowUp:      strings.TrimSpace(get("follow_up")),
-		NoCaseEntry:   get("case_entry") != "on",
-		Machines:      []int64{},
+		NoCaseEntry:    get("case_entry") != "on",
+		NoPatchCapture: get("no_patch_capture") == "on",
+		Machines:       []int64{},
 	}
 	if s.ContinueOf = get("continue_of"); s.ContinueOf != "" {
 		s.NoConversation = get("no_conversation")

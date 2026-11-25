@@ -63,6 +63,7 @@
   <fieldset>
     <legend>Machines it may use</legend>
     {{range .Machines}}<label class="check"><input type="checkbox" name="machine" value="{{.ID}}"{{if $.S.UsesMachine .ID}} checked{{end}}> {{.Name}}</label>{{end}}
+    <label class="check"><input type="checkbox" name="no_patch_capture"{{if .S.NoPatchCapture}} checked{{end}}> Verify only (do not overwrite {run:patch}) <span class="info" tabindex="0" data-tip="Still applies any earlier {run:patch} into /work/source for testing, but does not capture or overwrite {run:patch} when this step finishes.">ⓘ</span></label>
   </fieldset>
   {{end}}
   <div class="row">

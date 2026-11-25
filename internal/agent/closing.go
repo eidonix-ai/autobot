@@ -62,6 +62,10 @@ type Writer struct {
 	// Time is its own time, and WarnPercent how much of it is left when it is warned (0: not).
 	Time        time.Duration
 	WarnPercent int
+	// AfterResearch, if set, runs once right after the research session finishes and before the
+	// save turn and closing writer session begin (used to capture sandbox patches and release the
+	// machine before report writing starts).
+	AfterResearch func(*Transcript)
 }
 
 // WriterTask is the writing session's first message: the original task framed as background context,
@@ -118,6 +122,9 @@ func SaveTurn(ctx context.Context, cfg Config, conv *Conversation, tr *Transcrip
 // writing session.
 func RunClosing(ctx context.Context, research Config, conv *Conversation, w Writer) *Transcript {
 	tr := Run(ctx, research, conv)
+	if w.AfterResearch != nil {
+		w.AfterResearch(tr)
+	}
 	if research.Pad == nil {
 		return tr
 	}

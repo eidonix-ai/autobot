@@ -223,3 +223,87 @@ func diffOf(diff, contains string) string {
 	}
 	return keep.String()
 }
+
+// RunDiffTool lets read-only agents (and their sub-agents) inspect the cumulative {run:patch}
+// captured by earlier sandboxed steps without embedding a massive diff inline in the prompt.
+func RunDiffTool(patch string) Tool {
+	return Tool{
+		Spec: ToolSpec{
+			Name: "run_diff",
+			Description: "Inspect the cumulative unified diff produced so far in this workflow run ({run:patch}). " +
+				"Pass stat=true for a list of changed files and added/removed line counts, or path to read the diff for matching files (paginated with start).",
+			Parameters: schema(`{"type":"object","properties":{"stat":{"type":"boolean","description":"list changed files with +/- line counts"},"path":{"type":"string","description":"only files whose path contains this"},"start":{"type":"integer"}}}`),
+		},
+		Run: func(_ context.Context, raw json.RawMessage) (string, error) {
+			a, err := args[struct {
+				Stat  bool
+				Path  string
+				Start int
+			}](raw)
+			if err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(patch) == "" {
+				return "No patch has been captured in this workflow run yet.", nil
+			}
+			if a.Stat {
+				return page(patchStat(patch, a.Path), a.Start, 20_000), nil
+			}
+			diff := diffOf(patch, a.Path)
+			if diff == "" {
+				return "", fmt.Errorf("the current run patch changes no file matching %q", a.Path)
+			}
+			return page(diff, a.Start, 20_000), nil
+		},
+	}
+}
+
+func patchStat(patch, contains string) string {
+	type entry struct {
+		path      string
+		add, del  int
+	}
+	var entries []entry
+	cur := -1
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			fields := strings.Fields(line)
+			p := line
+			if len(fields) >= 4 {
+				p = strings.TrimPrefix(fields[3], "b/")
+			}
+			if contains == "" || strings.Contains(p, contains) {
+				entries = append(entries, entry{path: p})
+				cur = len(entries) - 1
+			} else {
+				cur = -1
+			}
+			continue
+		}
+		if cur < 0 {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "--- "):
+		case strings.HasPrefix(line, "+"):
+			entries[cur].add++
+		case strings.HasPrefix(line, "-"):
+			entries[cur].del++
+		}
+	}
+	if len(entries) == 0 {
+		if contains != "" {
+			return fmt.Sprintf("No changed files matching %q.", contains)
+		}
+		return "No changed files."
+	}
+	var b strings.Builder
+	totalAdd, totalDel := 0, 0
+	for _, e := range entries {
+		totalAdd += e.add
+		totalDel += e.del
+		fmt.Fprintf(&b, "%s (+%d / -%d)\n", e.path, e.add, e.del)
+	}
+	fmt.Fprintf(&b, "\nTotal: %d files, +%d / -%d lines", len(entries), totalAdd, totalDel)
+	return b.String()
+}

@@ -91,3 +91,24 @@ func TestCapturePatchScriptWithoutGit(t *testing.T) {
 		t.Fatalf("applied files mismatch: hello=%q new=%q", gotHello, gotNew)
 	}
 }
+
+func TestRestoreRunPatch(t *testing.T) {
+	rs := &runState{
+		builtIn: map[string]string{"lfa:title": "Model X"},
+		tags: map[string]string{
+			"master_plan":     "plan text",
+			"run:patch":       "diff --git a/a b/a\n",
+			"run:base_commit": "abc123",
+		},
+	}
+	restoreRunPatch(rs)
+	if rs.builtIn["run:patch"] != "diff --git a/a b/a\n" || rs.builtIn["run:base_commit"] != "abc123" {
+		t.Fatalf("builtIn not restored: %+v", rs.builtIn)
+	}
+	if _, ok := rs.tags["run:patch"]; ok {
+		t.Fatalf("run:patch still in tags")
+	}
+	if rs.tags["master_plan"] != "plan text" {
+		t.Fatalf("unrelated tag altered: %+v", rs.tags)
+	}
+}

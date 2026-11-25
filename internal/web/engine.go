@@ -633,6 +633,7 @@ func (s *Server) drive(rs *runState) {
 				if f.o.baseCommit != "" {
 					rs.builtIn["run:base_commit"] = f.o.baseCommit
 				}
+				s.keepRunPatch(rs, f.id, f.o.patch, f.o.baseCommit)
 			}
 			s.keepTag(rs, nodes[f.id], st.Output, f.o.tags)
 			s.writeResult(rs, nodes[f.id], f.o)
@@ -751,6 +752,32 @@ func (s *Server) stepParts(rs *runState, src source) map[string]string {
 // has parts (parts, by suffix: "" is the tag itself, ".summary" and so on), each kept under the
 // tag's name and the suffix; any other step has just its output. Every one replaces the value the
 // last write left.
+// keepRunPatch persists {run:patch} and {run:base_commit} on the run's case so a server restart or
+// Human Approval resume never loses the captured diff before Open PR runs.
+func (s *Server) keepRunPatch(rs *runState, nodeID, patch, baseCommit string) {
+	if rs.stopped() || rs.run.DryRun || rs.run.Kind == workflow.Discord {
+		return
+	}
+	c, err := s.runCase(rs)
+	if errors.Is(err, store.ErrNotFound) {
+		if c, err = s.caseForRun(rs); err != nil {
+			log.Printf("workflow run %d: %v", rs.run.ID, err)
+			return
+		}
+	}
+	if err != nil {
+		return
+	}
+	if err := s.st.SetCaseValue(c.UUID, "run:patch", patch, nodeID); err != nil {
+		log.Printf("workflow run %d: saving run:patch: %v", rs.run.ID, err)
+	}
+	if baseCommit != "" {
+		if err := s.st.SetCaseValue(c.UUID, "run:base_commit", baseCommit, nodeID); err != nil {
+			log.Printf("workflow run %d: saving run:base_commit: %v", rs.run.ID, err)
+		}
+	}
+}
+
 func (s *Server) keepTag(rs *runState, n workflow.Node, output string, parts map[string]string) {
 	name := rs.g.OutputNames(rs.run.Kind)[n.ID]
 	if name == "" || rs.stopped() {

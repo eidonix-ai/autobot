@@ -16,6 +16,7 @@ import (
 
 	"github.com/eidonix-ai/autobot/internal/agent"
 	"github.com/eidonix-ai/autobot/internal/github"
+	"github.com/eidonix-ai/autobot/internal/protocol"
 	"github.com/eidonix-ai/autobot/internal/store"
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
@@ -89,7 +90,7 @@ var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)
 
 // readOnlyTools are the tools of a research session that the session writing its report keeps: the
 // code, pull request and item readers. No shell, no write tools, no web.
-var readOnlyTools = []string{"pr_files", "pr_diff", "pr_comments", "list_files", "read_file", "search_code", "search_history",
+var readOnlyTools = []string{"pr_files", "pr_diff", "pr_comments", "run_diff", "list_files", "read_file", "search_code", "search_history",
 	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob", "read_charter",
 	"autobot_status", "list_cases", "read_case"}
 
@@ -262,6 +263,9 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 			}
 		}
 		cfg.Tools = s.withLocalCode(ctx, ws, token, pull, sess != nil, cfg.Tools) // the code from Autobot's own copy, when it has one
+		if sess == nil && strings.TrimSpace(values["run:patch"]) != "" {
+			cfg.Tools = append(cfg.Tools, agent.RunDiffTool(values["run:patch"]))
+		}
 		if a.Internet {
 			searcher, err := s.searcher(ws)
 			if err != nil {
@@ -400,8 +404,29 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 			tr.Error = strings.TrimSpace(tr.Error + " " + msg)
 			finish(&tr)
 		})
+		sessClosed := false
+		closeSess := func() {
+			if sess != nil && !sessClosed {
+				sessClosed = true
+				sess.Close()
+			}
+		}
+		captureAndClose := func(tr *agent.Transcript) {
+			if sess == nil || sessClosed {
+				return
+			}
+			if !test && !a.NoPatchCapture && tr.Outcome != agent.Stopped && tr.Outcome != agent.Failed {
+				cctx, ccancel := context.WithTimeout(rctx, time.Minute)
+				baseCommit, patch := captureSandboxPatch(cctx, sess)
+				ccancel()
+				if patch != "" {
+					tr.BaseCommit, tr.Patch = baseCommit, patch
+				}
+			}
+			closeSess()
+		}
 		if sess != nil {
-			defer sess.Close()
+			defer closeSess()
 			// The agent's time starts once its sandbox has the code and takes commands.
 			sctx, cancel := context.WithTimeout(rctx, sandboxSetup)
 			err := sess.Ready(sctx)
@@ -436,17 +461,11 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		}
 		var tr *agent.Transcript
 		if closing {
+			writer.AfterResearch = captureAndClose
 			tr = agent.RunClosing(ctx, cfg, conv, writer)
 		} else {
 			tr = agent.Run(ctx, cfg, conv)
-		}
-		if sess != nil && !test && tr.Outcome != agent.Stopped && tr.Outcome != agent.Failed {
-			cctx, ccancel := context.WithTimeout(rctx, time.Minute)
-			baseCommit, patch := captureSandboxPatch(cctx, sess)
-			ccancel()
-			if patch != "" {
-				tr.BaseCommit, tr.Patch = baseCommit, patch
-			}
+			captureAndClose(tr)
 		}
 		finish(tr)
 	}()
@@ -585,6 +604,10 @@ func captureSandboxPatch(ctx context.Context, sess *Session) (baseCommit, patch 
 	if err != nil || r.ExitCode != 0 {
 		log.Printf("sandbox patch capture failed (exit %d, err %v)", r.ExitCode, err)
 		return "", ""
+	}
+	if len(r.Output) >= protocol.MaxCommandOutput {
+		log.Printf("sandbox patch hit connector output cap (%d bytes); skipping truncated capture", len(r.Output))
+		return sess.commit, ""
 	}
 	head, rest, ok := strings.Cut(r.Output, patchBoundary+"\n")
 	if !ok {

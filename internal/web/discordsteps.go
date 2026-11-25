@@ -295,6 +295,7 @@ func (s *Server) runState(ctx context.Context, id int64) (*runState, error) {
 			if c, err := s.st.CaseByLFARun(ws.ID, run.ID); err == nil {
 				if vals, err := s.st.CaseValues(c.UUID); err == nil {
 					rs.tags = vals
+					restoreRunPatch(rs)
 				}
 			}
 		}
@@ -332,12 +333,24 @@ func (s *Server) runState(ctx context.Context, id int64) (*runState, error) {
 		if rs.tags, err = s.st.CaseValues(c.UUID); err != nil {
 			return nil, err
 		}
+		restoreRunPatch(rs)
 	}
 	if c, err := s.st.Charter(ws.ID, 0); err == nil {
 		rs.builtIn["charter"] = c.Body
 	}
 	rs.builtIn["machines"] = s.machinesSummary(ws)
 	return rs, nil
+}
+
+// restoreRunPatch moves persisted run:patch and run:base_commit values back into rs.builtIn when
+// reconstructing a run after a restart or Human Approval pause.
+func restoreRunPatch(rs *runState) {
+	for _, k := range []string{"run:patch", "run:base_commit"} {
+		if v, ok := rs.tags[k]; ok {
+			rs.builtIn[k] = v
+			delete(rs.tags, k)
+		}
+	}
 }
 
 // approvalClick takes a click on an approval's button. Anyone who can see the forum may answer

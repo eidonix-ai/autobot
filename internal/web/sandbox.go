@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,13 @@ import (
 	"github.com/eidonix-ai/autobot/internal/workflow"
 )
 
+// errMachineBusy signals that at least one configured machine is online and enabled but currently
+// running another job; workflow steps wait for it instead of failing.
+var errMachineBusy = errors.New("all configured machines are busy")
+
+// machinePoll is how often a workflow step waiting for a busy machine re-checks.
+var machinePoll = 5 * time.Second
+
 // sandboxSetup is the time a session gets, beyond the agent's own, to download the code and its
 // dependencies before the agent starts.
 const sandboxSetup = 15 * time.Minute
@@ -19,12 +27,13 @@ const sandboxSetup = 15 * time.Minute
 // enabled, online and idle, for the repository at commit (or, with none, the default branch's head).
 // It returns the session and a note for the agent's system prompt saying where it is. With no
 // machines listed it returns nil. When none is free it says so, and why.
-func (s *Server) openSandbox(ctx context.Context, ws *store.Workspace, a workflow.AgentSettings, token, commit string, by *store.User) (*Session, string, error) {
+func (s *Server) openSandbox(ctx context.Context, ws *store.Workspace, a workflow.AgentSettings, token, commit string, by *store.User, waitBusy bool) (*Session, string, error) {
 	if len(a.Machines) == 0 {
 		return nil, "", nil
 	}
 	var chosen *machineView
 	var why []string
+	anyBusy := false
 	for _, id := range a.Machines {
 		m, err := s.st.Machine(id)
 		if err != nil || m.WorkspaceID != ws.ID || m.Revoked {
@@ -38,11 +47,17 @@ func (s *Server) openSandbox(ctx context.Context, ws *store.Workspace, a workflo
 			chosen = &v
 			break
 		}
+		if v.Enabled && v.Online && v.Live.Problem == "" && v.Run != nil {
+			anyBusy = true
+		}
 		why = append(why, m.Name+" ("+strings.ToLower(v.State()[:1])+v.State()[1:]+")")
 	}
 	if chosen == nil {
 		if len(why) == 0 {
 			return nil, "", fmt.Errorf("the machines this agent may use no longer exist in %s; choose them again in its settings", ws.Name)
+		}
+		if waitBusy && anyBusy {
+			return nil, "", errMachineBusy
 		}
 		return nil, "", fmt.Errorf("no machine is free for this agent: %s. Try again when one is ready.", strings.Join(why, ", "))
 	}
@@ -62,6 +77,10 @@ func (s *Server) openSandbox(ctx context.Context, ws *store.Workspace, a workflo
 	limit := min(time.Duration(a.MaxMinutes)*time.Minute+sandboxSetup, protocol.MaxRun)
 	se, err := s.OpenSession(&chosen.Machine, commit, commit, private, len(chosen.Live.GPUs), limit, by)
 	if err != nil {
+		var ie *store.InputError
+		if waitBusy && errors.As(err, &ie) && strings.Contains(ie.Msg, "already running a test") {
+			return nil, "", errMachineBusy
+		}
 		return nil, "", err
 	}
 	return se, sandboxNote(ws.Name, commit, *chosen), nil

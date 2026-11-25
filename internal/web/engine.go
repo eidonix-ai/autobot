@@ -484,15 +484,26 @@ func (s *Server) drive(rs *runState) {
 	}
 	results := make(chan finished)
 	running := 0
-	// A run counts against its workspace's limit (see queue.go) except while everything that goes on
-	// is steps waiting for a person's answer. It gives its slot up then, and waits for one again
-	// before it starts the step that the answer lets go on.
-	holding, approvals := s.holdsSlot(rs.run.ID), 0
+	// A run counts against its workspace's PR/Issue limit (see queue.go) except while everything
+	// going on is steps waiting for a person's answer or machine-bound test steps (which have their
+	// own 1-per-machine queue so hardware tests never wait behind or occupy PR/Issue review slots).
+	holding, slotFree := s.holdsSlot(rs.run.ID), 0
+	isSlotFree := func(n workflow.Node) bool {
+		switch n.Type {
+		case workflow.Approval, workflow.TestRun, workflow.Post:
+			return true
+		case workflow.Agent:
+			if a, err := workflow.AgentSettingsOf(n, rs.run.Kind); err == nil && len(a.Machines) > 0 {
+				return true
+			}
+		}
+		return false
+	}
 	// A resumed run picks up its steps that were waiting for a person.
 	for _, n := range rs.g.Nodes {
 		if steps[n.ID].Status == "waiting" && n.Type == workflow.Approval {
 			running++
-			approvals++
+			slotFree++
 			go func(n workflow.Node) {
 				o := stepOutcome{err: errors.New("the step crashed")}
 				defer func() { results <- finished{n.ID, o} }()
@@ -529,7 +540,7 @@ func (s *Server) drive(rs *runState) {
 				if !ready {
 					continue
 				}
-				if len(fired) > 0 && !holding {
+				if len(fired) > 0 && !holding && !isSlotFree(n) {
 					if !s.acquireSlot(rs.context(), rs.ws.ID, rs.run.Kind, rs.run.ID) { // stopped while it waited
 						progressed = false
 						break
@@ -546,8 +557,8 @@ func (s *Server) drive(rs *runState) {
 				st.Status = "running"
 				save(st)
 				running++
-				if n.Type == workflow.Approval {
-					approvals++
+				if isSlotFree(n) {
+					slotFree++
 				}
 				sources := inputsFrom(n.ID) // copied here: the steps change while this one runs
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
@@ -562,7 +573,7 @@ func (s *Server) drive(rs *runState) {
 				}(nodes[n.ID], sources) // the block as the canvas names it
 			}
 		}
-		if holding && running > 0 && running == approvals {
+		if holding && running > 0 && running == slotFree {
 			s.releaseSlot(rs.run.ID)
 			holding = false
 		}
@@ -571,8 +582,8 @@ func (s *Server) drive(rs *runState) {
 		}
 		f := <-results
 		running--
-		if nodes[f.id].Type == workflow.Approval {
-			approvals--
+		if isSlotFree(nodes[f.id]) {
+			slotFree--
 		}
 		st := steps[f.id]
 		if rs.stopped() { // whatever it came to, it ended after the stop: it writes nothing
@@ -1187,7 +1198,22 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 			return stepOutcome{err: err}
 		}
 	}
-	run, err := s.st.QueueRun(m, script, ref, commit, private, t.GPUs, time.Duration(t.Minutes)*time.Minute, rs.by)
+	var run *store.TestRun
+	for {
+		run, err = s.st.QueueRun(m, script, ref, commit, private, t.GPUs, time.Duration(t.Minutes)*time.Minute, rs.by)
+		var ie *store.InputError
+		if !errors.As(err, &ie) || !strings.Contains(ie.Msg, "already running a test") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			if rs.stopped() {
+				return stepOutcome{err: rs.errStopped()}
+			}
+			return stepOutcome{err: fmt.Errorf("stopped waiting for %s to become free", m.Name)}
+		case <-time.After(machinePoll):
+		}
+	}
 	if err != nil {
 		return stepOutcome{err: err}
 	}
@@ -1287,6 +1313,17 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 	var id int64
 	for {
 		id, err = s.startAgent(rs.context(), rs.ws, rs.run.Kind, n, a, values, rs.by, false, rs.it.number)
+		if errors.Is(err, errMachineBusy) {
+			select {
+			case <-ctx.Done():
+				if rs.stopped() {
+					return stepOutcome{err: rs.errStopped()}
+				}
+				return stepOutcome{err: errors.New("stopped waiting for a test machine to become free")}
+			case <-time.After(machinePoll):
+				continue
+			}
+		}
 		if !errors.Is(err, store.ErrThreadBusy) {
 			break
 		}

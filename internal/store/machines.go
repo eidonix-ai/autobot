@@ -258,8 +258,12 @@ func (s *Store) queue(m *Machine, script, ref, commit string, private, session b
 	if busy {
 		return nil, invalid("%s is already running a test. Wait for it to finish, or stop it.", m.Name)
 	}
+	var actorID any
+	if actor != nil {
+		actorID = actor.ID
+	}
 	res, err := tx.Exec(`INSERT INTO test_runs (workspace_id, machine_id, started_by, script, ref, commit_sha, private, session, gpus, timeout_sec, state, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`, m.WorkspaceID, m.ID, actor.ID, strings.ReplaceAll(script, "\r\n", "\n"), ref, commit, private, session, gpus,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`, m.WorkspaceID, m.ID, actorID, strings.ReplaceAll(script, "\r\n", "\n"), ref, commit, private, session, gpus,
 		int64(timeout/time.Second), now())
 	if err != nil {
 		return nil, err

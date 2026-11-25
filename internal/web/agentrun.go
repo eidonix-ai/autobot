@@ -236,7 +236,7 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 				sandboxCommit = strings.TrimSpace(values["run:base_commit"])
 			}
 			var note string
-			sess, note, err = s.openSandbox(ctx, ws, a, token, sandboxCommit, by)
+			sess, note, err = s.openSandbox(ctx, ws, a, token, sandboxCommit, by, !test)
 			if err != nil {
 				return 0, err
 			}

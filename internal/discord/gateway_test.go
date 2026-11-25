@@ -109,28 +109,35 @@ func TestRunGatewayMentionsAndFiltering(t *testing.T) {
 		json.Unmarshal(raw, &id)
 		gotToken, gotIntents = id.D.Token, id.D.Intents
 
-		// 3. READY
+		// 3. READY + GUILD_CREATE (with bot's managed role r_bot)
 		send(map[string]any{"op": 0, "s": 1, "t": "READY", "d": map[string]any{
 			"session_id": "s1",
 			"user":       map[string]any{"id": "bot1", "username": "flare-autobot"},
 		}})
+		send(map[string]any{"op": 0, "s": 2, "t": "GUILD_CREATE", "d": map[string]any{
+			"id": "g1", "name": "Test Server",
+			"roles": []map[string]any{
+				{"id": "r_other", "name": "members"},
+				{"id": "r_bot", "name": "flare-autobot", "tags": map[string]any{"bot_id": "bot1"}},
+			},
+		}})
 		// 4. Bot-authored message mentioning the bot (must be ignored)
-		send(map[string]any{"op": 0, "s": 2, "t": "MESSAGE_CREATE", "d": map[string]any{
+		send(map[string]any{"op": 0, "s": 3, "t": "MESSAGE_CREATE", "d": map[string]any{
 			"id": "m_bot", "guild_id": "g1", "channel_id": "c1", "content": "<@bot1> loop",
 			"author": map[string]any{"id": "otherbot", "username": "other", "bot": true},
 		}})
 		// 5. DM mentioning the bot (no guild_id: must be ignored)
-		send(map[string]any{"op": 0, "s": 3, "t": "MESSAGE_CREATE", "d": map[string]any{
+		send(map[string]any{"op": 0, "s": 4, "t": "MESSAGE_CREATE", "d": map[string]any{
 			"id": "m_dm", "channel_id": "c_dm", "content": "<@bot1> dm",
 			"author": map[string]any{"id": "u1", "username": "alice"},
 		}})
 		// 6. Regular guild message without mention (must be ignored)
-		send(map[string]any{"op": 0, "s": 4, "t": "MESSAGE_CREATE", "d": map[string]any{
+		send(map[string]any{"op": 0, "s": 5, "t": "MESSAGE_CREATE", "d": map[string]any{
 			"id": "m_chat", "guild_id": "g1", "channel_id": "c1", "content": "hello everyone",
 			"author": map[string]any{"id": "u1", "username": "alice"},
 		}})
 		// 7. Human guild mention with reply context (must fire!)
-		send(map[string]any{"op": 0, "s": 5, "t": "MESSAGE_CREATE", "d": map[string]any{
+		send(map[string]any{"op": 0, "s": 6, "t": "MESSAGE_CREATE", "d": map[string]any{
 			"id": "m_ok", "guild_id": "g1", "channel_id": "c1", "content": "<@!bot1> status of PR #498?",
 			"author":   map[string]any{"id": "u1", "username": "alice", "global_name": "Alice"},
 			"mentions": []map[string]any{{"id": "bot1"}},
@@ -138,6 +145,12 @@ func TestRunGatewayMentionsAndFiltering(t *testing.T) {
 				"content": "Is #498 still running?",
 				"author":  map[string]any{"username": "bob"},
 			},
+		}})
+		// 8. Human guild mention via the bot's managed role (must fire!)
+		send(map[string]any{"op": 0, "s": 7, "t": "MESSAGE_CREATE", "d": map[string]any{
+			"id": "m_role", "guild_id": "g1", "channel_id": "c1", "content": "<@&r_bot> test 1-2-3",
+			"author":        map[string]any{"id": "u1", "username": "alice", "global_name": "Alice"},
+			"mention_roles": []string{"r_bot"},
 		}})
 		// Keep open until client disconnects.
 		wsutil.ReadClientData(conn)
@@ -182,6 +195,14 @@ func TestRunGatewayMentionsAndFiltering(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for mention")
+	}
+	select {
+	case ev := <-mentions:
+		if ev.MessageID != "m_role" || ev.CleanContent != "test 1-2-3" {
+			t.Fatalf("unexpected managed-role mention: %+v", ev)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for managed-role mention")
 	}
 	cancel()
 	<-done

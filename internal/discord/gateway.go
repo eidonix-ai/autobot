@@ -43,6 +43,7 @@ type GatewayConfig struct {
 	GatewayURL string // optional override for tests; when empty, Bot.GatewayURL is called
 	OnMention  func(MentionEvent)
 	OnStatus   func(connected bool, botName, problem string)
+	OnLog      func(msg string)
 }
 
 // GatewayFatalError is returned when Discord closes the connection with a non-retryable code
@@ -80,6 +81,7 @@ type gatewaySession struct {
 	resumeURL   string
 	botID       string
 	botUsername string
+	botRoles    map[string]bool // managed role IDs owned by this bot (tags.bot_id == botID)
 	seq         atomic.Int64
 }
 
@@ -297,13 +299,53 @@ func runGatewayOnce(ctx context.Context, url string, cfg GatewayConfig, sess *ga
 						sess.resumeURL = strings.TrimRight(r.ResumeGatewayURL, "/") + "/?v=10&encoding=json"
 					}
 					sess.botID, sess.botUsername = r.User.ID, r.User.Username
+					if sess.botRoles == nil {
+						sess.botRoles = map[string]bool{}
+					}
 					report(true, sess.botUsername, "")
+					if cfg.OnLog != nil {
+						cfg.OnLog(fmt.Sprintf("READY as %s (id=%s)", sess.botUsername, sess.botID))
+					}
 				}
 			case "RESUMED":
 				report(true, sess.botUsername, "")
+				if cfg.OnLog != nil {
+					cfg.OnLog(fmt.Sprintf("RESUMED as %s", sess.botUsername))
+				}
+			case "GUILD_CREATE":
+				var g struct {
+					ID    string `json:"id"`
+					Name  string `json:"name"`
+					Roles []struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+						Tags *struct {
+							BotID string `json:"bot_id"`
+						} `json:"tags"`
+					} `json:"roles"`
+				}
+				if json.Unmarshal(p.D, &g) == nil && sess.botID != "" {
+					if sess.botRoles == nil {
+						sess.botRoles = map[string]bool{}
+					}
+					var added []string
+					for _, role := range g.Roles {
+						if role.Tags != nil && role.Tags.BotID == sess.botID {
+							sess.botRoles[role.ID] = true
+							added = append(added, role.ID)
+						}
+					}
+					if cfg.OnLog != nil {
+						cfg.OnLog(fmt.Sprintf("GUILD_CREATE %q (id=%s, bot_roles=%v)", g.Name, g.ID, added))
+					}
+				}
 			case "MESSAGE_CREATE":
-				if ev, ok := parseMention(p.D, sess.botID, sess.botUsername); ok && cfg.OnMention != nil {
+				if ev, ok := parseMention(p.D, sess.botID, sess.botUsername, sess.botRoles); ok && cfg.OnMention != nil {
 					cfg.OnMention(ev)
+				} else if cfg.OnLog != nil {
+					if note := missedMentionNote(p.D, sess.botID); note != "" {
+						cfg.OnLog(note)
+					}
 				}
 			}
 		}
@@ -337,8 +379,8 @@ func readClientData(rw interface {
 }
 
 // parseMention checks whether a MESSAGE_CREATE payload is a guild message from a human mentioning
-// the bot, returning the parsed MentionEvent.
-func parseMention(raw json.RawMessage, botID, botUsername string) (MentionEvent, bool) {
+// the bot (either its user ID or its managed bot role), returning the parsed MentionEvent.
+func parseMention(raw json.RawMessage, botID, botUsername string, botRoles map[string]bool) (MentionEvent, bool) {
 	if botID == "" {
 		return MentionEvent{}, false
 	}
@@ -356,7 +398,8 @@ func parseMention(raw json.RawMessage, botID, botUsername string) (MentionEvent,
 		Mentions []struct {
 			ID string `json:"id"`
 		} `json:"mentions"`
-		Referenced *struct {
+		MentionRoles []string `json:"mention_roles"`
+		Referenced   *struct {
 			Content string `json:"content"`
 			Author  struct {
 				Username   string `json:"username"`
@@ -378,11 +421,28 @@ func parseMention(raw json.RawMessage, botID, botUsername string) (MentionEvent,
 			break
 		}
 	}
+	var strip []string
 	tag1, tag2 := "<@"+botID+">", "<@!"+botID+">"
-	if !mentioned && !strings.Contains(m.Content, tag1) && !strings.Contains(m.Content, tag2) {
+	strip = append(strip, tag1, "", tag2, "")
+	if strings.Contains(m.Content, tag1) || strings.Contains(m.Content, tag2) {
+		mentioned = true
+	}
+	for _, rid := range m.MentionRoles {
+		if botRoles[rid] {
+			mentioned = true
+		}
+	}
+	for rid := range botRoles {
+		rtag := "<@&" + rid + ">"
+		strip = append(strip, rtag, "")
+		if strings.Contains(m.Content, rtag) {
+			mentioned = true
+		}
+	}
+	if !mentioned {
 		return MentionEvent{}, false
 	}
-	clean := strings.TrimSpace(strings.NewReplacer(tag1, "", tag2, "").Replace(m.Content))
+	clean := strings.TrimSpace(strings.NewReplacer(strip...).Replace(m.Content))
 	author := m.Author.GlobalName
 	if author == "" {
 		author = m.Author.Username
@@ -409,6 +469,32 @@ func parseMention(raw json.RawMessage, botID, botUsername string) (MentionEvent,
 		ev.ReplyToText = strings.TrimSpace(m.Referenced.Content)
 	}
 	return ev, true
+}
+
+// missedMentionNote logs IDs only (no message text) when a non-bot guild message has user/role
+// mentions that didn't match the bot, to make permission/role debugging immediate.
+func missedMentionNote(raw json.RawMessage, botID string) string {
+	var m struct {
+		ChannelID string `json:"channel_id"`
+		GuildID   string `json:"guild_id"`
+		Author    struct {
+			ID  string `json:"id"`
+			Bot bool   `json:"bot"`
+		} `json:"author"`
+		Mentions     []struct{ ID string `json:"id"` } `json:"mentions"`
+		MentionRoles []string                           `json:"mention_roles"`
+	}
+	if json.Unmarshal(raw, &m) != nil || m.Author.Bot || m.Author.ID == botID || m.GuildID == "" {
+		return ""
+	}
+	if len(m.Mentions) == 0 && len(m.MentionRoles) == 0 {
+		return ""
+	}
+	var uids []string
+	for _, u := range m.Mentions {
+		uids = append(uids, u.ID)
+	}
+	return fmt.Sprintf("MESSAGE_CREATE ch=%s had other mentions (users=%v roles=%v)", m.ChannelID, uids, m.MentionRoles)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

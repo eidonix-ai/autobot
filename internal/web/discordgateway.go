@@ -256,6 +256,9 @@ func (s *Server) runWorkspaceGateway(ctx context.Context, wsID int64, token stri
 		OnStatus: func(connected bool, botName, problem string) {
 			s.discordHub.setStatus(wsID, discordGatewayStatus{Connected: connected, BotName: botName, Problem: problem})
 		},
+		OnLog: func(msg string) {
+			log.Printf("discord gateway (workspace %d): %s", wsID, msg)
+		},
 		OnMention: func(ev discord.MentionEvent) {
 			go s.handleDiscordMention(ctx, wsID, ev)
 		},
@@ -324,8 +327,10 @@ func (s *Server) handleDiscordMention(ctx context.Context, wsID int64, ev discor
 		URL:       ev.URL,
 	}
 	for _, n := range matched {
-		if _, err := s.startDiscordWorkflow(ctx, ws, n.ID, trig, false, nil); err != nil {
-			log.Printf("discord mention (%s): starting %s: %v", ws.Name, n.ID, err)
+		if id, err := s.startDiscordWorkflow(ctx, ws, n.ID, trig, false, nil); err != nil {
+			log.Printf("discord mention (%s #%s by %s): starting %s: %v", ws.Name, channelName, author, n.ID, err)
+		} else {
+			log.Printf("discord mention (%s #%s by %s): started run %d", ws.Name, channelName, author, id)
 		}
 	}
 }

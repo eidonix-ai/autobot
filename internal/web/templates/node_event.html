@@ -59,7 +59,7 @@
     <legend>Activity that runs it</legend>
     {{range .Activities}}<label class="check"><input type="checkbox" name="activity" value="{{.Key}}"{{if $.S.HasActivity .Key}} checked{{end}}> {{.Label}}</label>{{end}}
   </fieldset>
-  <label>Quiet period (minutes) <input type="number" name="quiet_minutes" min="0" max="1440" value="{{.S.QuietMinutes}}"></label>
+  <label><span class="lbl">Quiet period (minutes) <span class="info" tabindex="0" data-tip="Wait this long after the last activity before running. In Always run mode, a trusted summons (or review request) after pending activity skips the remaining wait; a summons with no pending activity does nothing.">ⓘ</span></span> <input type="number" name="quiet_minutes" min="0" max="1440" value="{{.S.QuietMinutes}}"></label>
   {{end}}
   <fieldset>
     <legend>When it runs</legend>

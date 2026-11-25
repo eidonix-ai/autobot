@@ -80,14 +80,15 @@ type Result struct {
 func Trigger(ev EventSettings, typ string, events []Event, now time.Time, trust, summonedBefore bool) Result {
 	var found bool
 	var why, refused string
-	if ev.Mode == "summoned" {
-		found, why, refused = summons(ev, events, trust)
+	var summonAt time.Time
+	if ev.Mode == "summoned" || (typ == "pr_activity" && ev.QuietMinutes > 0) {
+		found, why, refused, summonAt = summons(ev, events, trust)
 	}
-	if refused != "" {
+	if refused != "" && ev.Mode == "summoned" {
 		return Result{Skip, refused}
 	}
 	if typ == "pr_activity" {
-		return activityTrigger(ev, events, now, found, why, summonedBefore)
+		return activityTrigger(ev, events, now, found, why, summonAt, summonedBefore)
 	}
 	if ev.Mode == "summoned" {
 		if found {
@@ -107,33 +108,35 @@ func Trigger(ev EventSettings, typ string, events []Event, now time.Time, trust,
 // summons looks for a summons among the events: a new comment with the summon phrase, or a review
 // request. A summons from someone who is not trusted is refused (when trust is checked and the
 // event says so) with the reason; it does not count.
-func summons(ev EventSettings, events []Event, trust bool) (found bool, why, refused string) {
+func summons(ev EventSettings, events []Event, trust bool) (found bool, why, refused string, at time.Time) {
 	for _, e := range events {
 		switch {
 		case e.Kind == EvReviewRequested && ev.ReviewRequest:
-			found, why = true, "a review was requested from Autobot"
+			found, why, at = true, "a review was requested from Autobot", laterOf(at, e.At)
 		case e.Kind == EvComments && Summons(e.Text, ev.SummonPhrase, ev.StopTag):
 			if trust && ev.TrustedOnly && !e.Trusted {
 				refused = fmt.Sprintf("%s summoned it, but is neither the author nor a collaborator with write access", e.Who)
 				continue
 			}
-			found, why = true, "summoned by "+e.Who
+			found, why, at = true, "summoned by "+e.Who, laterOf(at, e.At)
 		}
 	}
 	if found {
 		refused = ""
 	}
-	return found, why, refused
+	return found, why, refused, at
 }
 
 // activityTrigger is the PR Activity event: activity of the ticked kinds, once it has been quiet
 // long enough. In summoned mode the pull request must have been summoned (now, or earlier), and a
-// new summons counts as activity.
-func activityTrigger(ev EventSettings, events []Event, now time.Time, newSummons bool, why string, summonedBefore bool) Result {
+// new summons counts as activity. In always mode, a fresh trusted summons at or after pending
+// activity skips the remaining quiet period, while a summons with no pending activity does nothing.
+func activityTrigger(ev EventSettings, events []Event, now time.Time, newSummons bool, why string, summonAt time.Time, summonedBefore bool) Result {
 	var last time.Time
 	var kinds []string
 	for _, e := range events {
-		if slices.Contains(ev.Activity, e.Kind) || (newSummons && e.Kind == EvComments) {
+		isSummonEv := ev.Mode == "summoned" && newSummons && (e.Kind == EvComments || e.Kind == EvReviewRequested)
+		if slices.Contains(ev.Activity, e.Kind) || isSummonEv {
 			kinds = append(kinds, e.Kind)
 			last = laterOf(last, e.At)
 		}
@@ -143,6 +146,9 @@ func activityTrigger(ev EventSettings, events []Event, now time.Time, newSummons
 	}
 	if ev.Mode == "summoned" && !newSummons && !summonedBefore {
 		return Result{Idle, ""}
+	}
+	if ev.Mode == "always" && newSummons && !summonAt.Before(last) {
+		return Result{Fire, why}
 	}
 	if wait := time.Duration(ev.QuietMinutes)*time.Minute - now.Sub(last); wait > 0 {
 		return Result{Wait, fmt.Sprintf("waiting for %d quiet minutes after the last activity", ev.QuietMinutes)}
@@ -190,7 +196,7 @@ func Decide(ev EventSettings, typ string, f Facts) Result {
 		return Result{Skip, "the opt-out tag “" + ev.StopTag + "” is in " + by}
 	}
 	if typ != "issue_opened" {
-		newSummons, _, _ := summons(ev, f.Events, true)
+		newSummons, _, _, _ := summons(ev, f.Events, true)
 		for _, c := range PRFilters(ev, f.prFacts(summonedBefore || newSummons)) {
 			if !c.Pass {
 				return Result{Skip, c.Text}

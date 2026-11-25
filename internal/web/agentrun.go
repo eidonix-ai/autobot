@@ -208,6 +208,15 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 	if th != nil {
 		cfg.Task += s.opening(th, fresh)
 	}
+	// When a Loop block jumped back here with feedback and the prompt didn't explicitly place
+	// {loop:feedback}, append it clearly so the agent sees what to fix on this attempt.
+	if fb := strings.TrimSpace(values["loop:feedback"]); fb != "" && !strings.Contains(instruction+"\n"+a.Additional, "{loop:feedback}") {
+		att := values["loop:attempt"]
+		if att == "" {
+			att = "2"
+		}
+		cfg.Task += "\n\n---\n\nRevision feedback (attempt " + att + "):\n" + fb
+	}
 	var sess *Session
 	started := false
 	var subs *agent.SubAgents
@@ -222,8 +231,12 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		// With machines to use (PR/Issue workflows only — Discord mentions stay read-only),
 		// the agent gets a shell on one, and reads the code there instead of through GitHub.
 		if kind != workflow.Discord {
+			sandboxCommit := commit
+			if sandboxCommit == "" && strings.TrimSpace(values["run:base_commit"]) != "" {
+				sandboxCommit = strings.TrimSpace(values["run:base_commit"])
+			}
 			var note string
-			sess, note, err = s.openSandbox(ctx, ws, a, token, commit, by)
+			sess, note, err = s.openSandbox(ctx, ws, a, token, sandboxCommit, by)
 			if err != nil {
 				return 0, err
 			}
@@ -233,6 +246,9 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 						sess.Close()
 					}
 				}()
+				if strings.TrimSpace(values["run:patch"]) != "" {
+					note += " The working tree in /work/source already has the current patch from the earlier development step applied."
+				}
 				cfg.System += "\n\n" + note
 				if prTools {
 					cfg.Tools = slices.DeleteFunc(cfg.Tools, func(t agent.Tool) bool { return t.Spec.Name == "read_file" || t.Spec.Name == "list_files" })
@@ -393,6 +409,15 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 				save(&agent.Transcript{Outcome: agent.Failed, Error: "the sandbox did not start: " + err.Error()}, agent.Failed)
 				return
 			}
+			if patch := values["run:patch"]; strings.TrimSpace(patch) != "" {
+				pctx, pcancel := context.WithTimeout(rctx, 2*time.Minute)
+				perr := applySandboxPatch(pctx, sess, patch)
+				pcancel()
+				if perr != nil {
+					save(&agent.Transcript{Outcome: agent.Failed, Error: "applying earlier patch in sandbox: " + perr.Error()}, agent.Failed)
+					return
+				}
+			}
 		}
 		limit := time.Duration(a.MaxMinutes) * time.Minute
 		ctx, cancel := context.WithTimeout(rctx, limit)
@@ -409,6 +434,14 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 			tr = agent.RunClosing(ctx, cfg, conv, writer)
 		} else {
 			tr = agent.Run(ctx, cfg, conv)
+		}
+		if sess != nil && !test && tr.Outcome != agent.Stopped && tr.Outcome != agent.Failed {
+			cctx, ccancel := context.WithTimeout(rctx, time.Minute)
+			baseCommit, patch := captureSandboxPatch(cctx, sess)
+			ccancel()
+			if patch != "" {
+				tr.BaseCommit, tr.Patch = baseCommit, patch
+			}
 		}
 		finish(tr)
 	}()
@@ -475,4 +508,45 @@ func (s *Server) opening(th *store.Thread, fresh string) string {
 		b.WriteString("\n\nNew since that report:\n" + fresh)
 	}
 	return b.String()
+}
+
+const maxCapturedPatch = 2 << 20 // 2 MB
+
+// applySandboxPatch puts a unified diff into the sandbox and applies it onto /work/source.
+func applySandboxPatch(ctx context.Context, sess *Session, patch string) error {
+	if err := sess.Put(ctx, "/tmp/autobot.patch", []byte(patch)); err != nil {
+		return err
+	}
+	r, err := sess.Run(ctx, "git apply --whitespace=nowarn /tmp/autobot.patch && rm -f /tmp/autobot.patch", time.Minute)
+	if err != nil {
+		return err
+	}
+	if r.ExitCode != 0 {
+		return fmt.Errorf("git apply exited %d: %s", r.ExitCode, strings.TrimSpace(r.Output))
+	}
+	return nil
+}
+
+// captureSandboxPatch reads HEAD and any uncommitted changes (including newly created non-ignored
+// files) from /work/source before a sandbox closes.
+func captureSandboxPatch(ctx context.Context, sess *Session) (baseCommit, patch string) {
+	const sep = "---AUTOBOT-PATCH-BOUNDARY---"
+	script := fmt.Sprintf("git rev-parse HEAD && echo '%s' && git add -A -N . >/dev/null 2>&1 && git diff --no-color HEAD", sep)
+	r, err := sess.Run(ctx, script, time.Minute)
+	if err != nil || r.ExitCode != 0 {
+		return "", ""
+	}
+	head, rest, ok := strings.Cut(r.Output, sep+"\n")
+	if !ok {
+		return "", ""
+	}
+	baseCommit = strings.TrimSpace(head)
+	if strings.TrimSpace(rest) == "" {
+		return baseCommit, ""
+	}
+	if len(rest) > maxCapturedPatch {
+		log.Printf("sandbox patch too large (%d bytes); skipping capture", len(rest))
+		return baseCommit, ""
+	}
+	return baseCommit, rest
 }

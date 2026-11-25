@@ -1,0 +1,23 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+  <p class="hint">Jumps back to an earlier block in this workflow up to the retry limit, passing feedback into <code>{loop:feedback}</code> and incrementing <code>{loop:attempt}</code>. Once max retries are reached, continues out its <strong>limit</strong> output.</p>
+  <div class="row">
+    <label>GOTO block
+      <select name="target" required>
+        {{if not .LoopTargets}}<option value="">Link this block after an upstream step first</option>{{end}}
+        {{range .LoopTargets}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select></label>
+    <label><span class="lbl">Max retries <span class="info" tabindex="0" data-tip="How many times to jump back (1 to 10). Max retries = 2 gives 3 total attempts (initial try + 2 revisions).">ⓘ</span></span>
+      <input type="number" name="max_tries" min="1" max="10" value="{{if .S.MaxTries}}{{.S.MaxTries}}{{else}}2{{end}}"></label>
+  </div>
+  <label><span class="lbl">Feedback sent to target <span class="info" tabindex="0" data-tip="Rendered into {loop:feedback} and automatically appended to the target Agent's prompt if not referenced explicitly.">ⓘ</span></span>
+    <textarea name="feedback" rows="4" class="code" spellcheck="false">{{.S.Feedback}}</textarea></label>
+  {{template "tags" .}}
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

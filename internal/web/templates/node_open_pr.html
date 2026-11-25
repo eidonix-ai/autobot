@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="modal-head"><h2>{{.Type.Label}}</h2><button class="close" type="button" data-close aria-label="Close">✕</button></div>
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" class="stack wide node-form step-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="">
+  <label>Name <input name="name" value="{{.Name}}" maxlength="60" required autocomplete="off"></label>
+  {{template "tagline" .}}
+  <p class="hint">Applies the patch captured from the latest sandboxed Agent step (<code>{run:patch}</code>) onto a branch, pushes it with the workspace's GitHub token, and opens a pull request. Its output tag holds the new PR URL.</p>
+  <label>PR title <input name="title" value="{{.S.Title}}" maxlength="256" required autocomplete="off"></label>
+  <div class="row">
+    <label>Branch name <input name="branch" value="{{.S.Branch}}" maxlength="120" required autocomplete="off"></label>
+    <label>Base branch <input name="base" value="{{.S.Base}}" placeholder="repository default branch" maxlength="120" autocomplete="off"></label>
+  </div>
+  <label>PR description <textarea name="body" rows="6" class="code" spellcheck="false" required>{{.S.Body}}</textarea></label>
+  {{template "tags" .}}
+  <fieldset>
+    <legend>Options</legend>
+    <label class="check"><input type="checkbox" name="draft"{{if .S.Draft}} checked{{end}}> Open as a draft pull request</label>
+    <label class="check"><input type="checkbox" name="trial"{{if .S.Trial}} checked{{end}}> Trial run <span class="info" tabindex="0" data-tip="Writes a preview of the branch, changed files, and PR description into the case file without pushing or opening a PR on GitHub.">ⓘ</span></label>
+  </fieldset>
+  <div class="row"><button>Save</button><button type="button" class="secondary" data-close>Cancel</button></div>
+</form>
+{{end}}

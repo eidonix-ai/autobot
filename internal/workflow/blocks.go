@@ -311,7 +311,7 @@ func Restartable(graph, node string) bool {
 	for _, n := range g.Nodes {
 		if n.ID == node {
 			switch n.Type {
-			case Agent, Decision, Condition, Junction:
+			case Agent, Decision, Condition, Junction, Loop:
 				return true
 			}
 			return false

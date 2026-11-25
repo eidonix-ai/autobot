@@ -123,6 +123,18 @@ func (s *Server) summaries(ws *store.Workspace, g workflow.Graph, kind string) m
 	optOut := s.optOut(ws)
 	for _, n := range g.Nodes {
 		out[n.ID] = workflow.Summary(n, kind, tags[n.ID], optOut, func(m workflow.ModelRef) string { return m.Model })
+		if n.Type == workflow.Loop {
+			if ls, err := workflow.SettingsOf(n, workflow.DefaultLoop()); err == nil && ls.Target != "" {
+				targetName := "(deleted)"
+				for _, o := range g.Nodes {
+					if o.ID == ls.Target {
+						targetName = g.NameOf(o)
+						break
+					}
+				}
+				out[n.ID] = fmt.Sprintf("GOTO %s · max %d retries", targetName, ls.MaxTries)
+			}
+		}
 		if p, bad := problems[n.ID]; bad {
 			out[n.ID] = "⚠ " + p
 		}
@@ -156,6 +168,14 @@ func (s *Server) nodeTemplates(n workflow.Node, kind string) []string {
 	case workflow.TestRun:
 		if t, err := workflow.SettingsOf(n, workflow.DefaultTestRun()); err == nil {
 			return []string{t.Script}
+		}
+	case workflow.Loop:
+		if l, err := workflow.SettingsOf(n, workflow.DefaultLoop()); err == nil && l.Feedback != "" {
+			return []string{l.Feedback}
+		}
+	case workflow.OpenPR:
+		if op, err := workflow.SettingsOf(n, workflow.DefaultOpenPR(kind)); err == nil {
+			return []string{op.Title, op.Body, op.Branch}
 		}
 	}
 	return nil
@@ -225,7 +245,6 @@ func (s *Server) workflowPage(w http.ResponseWriter, r *http.Request) {
 		"WS": ws, "Kind": kind, "Tabs": tabs, "State": string(state), "Wide": true,
 		"Base": ws.Path() + "/workflows/" + kind}
 	s.pollView(data, ws, kind, stored, g)
-	s.backlogView(data, ws, kind, g)
 	s.render(w, r, http.StatusOK, "workflows.html", data)
 }
 
@@ -581,6 +600,25 @@ func adaptCopiedNode(src workflow.Node, fromKind, toKind string) (workflow.Node,
 		t.Script = swap(t.Script)
 		out.Settings, err = json.Marshal(t)
 		return out, err
+	case workflow.Loop:
+		l, err := workflow.SettingsOf(src, workflow.DefaultLoop())
+		if err != nil {
+			return out, err
+		}
+		l.Target = "" // target IDs belong to the source canvas
+		l.Feedback = swap(l.Feedback)
+		out.Settings, err = json.Marshal(l)
+		return out, err
+	case workflow.OpenPR:
+		op, err := workflow.SettingsOf(src, workflow.DefaultOpenPR(fromKind))
+		if err != nil {
+			return out, err
+		}
+		op.Title = swap(op.Title)
+		op.Body = swap(op.Body)
+		op.Branch = swap(op.Branch)
+		out.Settings, err = json.Marshal(op)
+		return out, err
 	}
 	return out, nil
 }
@@ -718,6 +756,7 @@ func (s *Server) storeGraphWith(w http.ResponseWriter, ws *store.Workspace, kind
 		s.fail(w, err)
 		return
 	}
+	s.backlog.clearWorkspace(ws.ID, kind)
 	names, outputs := canvasFacts(g)
 	w.Header().Set("Content-Type", "application/json")
 	problems := s.templateProblems(g, kind)
@@ -779,6 +818,10 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		settings, err = workflow.SettingsOf(n, workflow.DefaultTestRun())
 	case workflow.Approval:
 		settings, err = workflow.SettingsOf(n, workflow.DefaultApproval(kind))
+	case workflow.Loop:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultLoop())
+	case workflow.OpenPR:
+		settings, err = workflow.SettingsOf(n, workflow.DefaultOpenPR(kind))
 	case workflow.Junction:
 		settings = workflow.JunctionSettings{}
 	default:
@@ -856,6 +899,19 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 		page = "node_condition.html"
 	case workflow.ApprovalSettings:
 		page = "node_approval.html"
+	case workflow.LoopSettings:
+		page = "node_loop.html"
+		type loopOpt struct {
+			ID, Name string
+			Selected bool
+		}
+		var opts []loopOpt
+		for _, o := range g.LoopTargets(n.ID) {
+			opts = append(opts, loopOpt{ID: o.ID, Name: g.NameOf(o), Selected: o.ID == st.Target})
+		}
+		data["LoopTargets"] = opts
+	case workflow.OpenPRSettings:
+		page = "node_open_pr.html"
 	case workflow.JunctionSettings:
 		page = "node_junction.html"
 	case workflow.TestRunSettings:
@@ -869,6 +925,17 @@ func (s *Server) nodeForm(w http.ResponseWriter, r *http.Request, status int, ws
 	default:
 		data["Activities"] = workflow.Activities
 		data["OptOut"] = s.optOut(ws)
+		if workflow.IsBacklogEvent(n.Type) {
+			draftFilter := -1
+			if n.Type == workflow.PRBacklog {
+				if ev, ok := settings.(workflow.EventSettings); ok && !ev.IncludeDrafts {
+					draftFilter = 0
+				}
+			}
+			if rem, err := s.st.BacklogCount(ws.ID, kind, draftFilter); err == nil {
+				data["BacklogRemaining"] = rem
+			}
+		}
 	}
 	if page != "node_event.html" {
 		if n.Type == workflow.Agent || n.Type == workflow.Decision {
@@ -988,6 +1055,22 @@ func (s *Server) saveNodeSettings(w http.ResponseWriter, r *http.Request) {
 			err = g.CheckNodeTemplates(kind, n.ID, a.Question, a.Request)
 		}
 		settings = a
+	case workflow.Loop:
+		l := workflow.LoopFromForm(f.Get)
+		if err = l.Check(); err == nil {
+			if !g.Ancestors(n.ID)[l.Target] {
+				err = errors.New("choose an upstream block linked before this Loop")
+			} else if l.Feedback != "" {
+				err = g.CheckNodeTemplates(kind, n.ID, l.Feedback)
+			}
+		}
+		settings = l
+	case workflow.OpenPR:
+		op := workflow.OpenPRFromForm(f.Get)
+		if err = op.Check(); err == nil {
+			err = g.CheckNodeTemplates(kind, n.ID, op.Title, op.Body, op.Branch)
+		}
+		settings = op
 	case workflow.Junction:
 		settings = workflow.JunctionSettings{}
 	default:

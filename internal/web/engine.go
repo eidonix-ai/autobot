@@ -184,6 +184,13 @@ func verdict(n workflow.Node, it *item, caseExists bool, optOut string, counts f
 		if ev.CaseExists {
 			check(caseExists, "it has a case file", "it has no case file yet")
 		}
+	case workflow.PRBacklog:
+		if !ev.IncludeDrafts {
+			check(!it.pr.Draft, "it is ready for review", "it is a draft")
+		}
+		check(!caseExists, "it has no case file yet", "it already has a case file")
+	case workflow.IssueBacklog:
+		check(!caseExists, "it has no case file yet", "it already has a case file")
 	}
 	stopped, by := workflow.Stops(it.body, ev.StopTag), "its description"
 	for _, c := range it.comments {
@@ -234,7 +241,8 @@ type runState struct {
 	by      *store.User
 	// ctx is the run's: a person's stop cancels it (see stop.go), and every step's context derives from it.
 	// It is nil for a state built by hand in a test.
-	ctx context.Context
+	ctx       context.Context
+	loopCount map[string]int // jumps taken per Loop node id during this run
 }
 
 // context is the run's context.
@@ -413,6 +421,12 @@ func (s *Server) drive(rs *runState) {
 		}
 	}
 	now := time.Now()
+	if rs.builtIn == nil {
+		rs.builtIn = map[string]string{}
+	}
+	if rs.builtIn["loop:attempt"] == "" {
+		rs.builtIn["loop:attempt"] = "1"
+	}
 	nodes := map[string]workflow.Node{}
 	incoming := map[string][]workflow.Link{}
 	for _, n := range rs.g.Nodes {
@@ -539,11 +553,12 @@ func (s *Server) drive(rs *runState) {
 				// The tags every step that has finished has kept, so far: this step sees them all, whether
 				// they came down its own branch or another, and the run goes on adding to the map.
 				tags := maps.Clone(rs.tags)
+				builtIn := maps.Clone(rs.builtIn)
 				go func(n workflow.Node, sources []source) {
 					o := stepOutcome{err: errors.New("the step crashed")}
 					defer func() { results <- finished{n.ID, o} }()
 					defer survive(fmt.Sprintf("workflow run %d step %s", rs.run.ID, n.ID), nil)
-					o = s.runStep(rs, n, sources, tags)
+					o = s.runStep(rs, n, sources, tags, builtIn)
 				}(nodes[n.ID], sources) // the block as the canvas names it
 			}
 		}
@@ -575,8 +590,36 @@ func (s *Server) drive(rs *runState) {
 		} else if f.o.note != "" {
 			st.Error = f.o.note
 		}
+		// Loop jump: if the Loop node still has retries left, reset every step reachable from its
+		// GOTO target back to pending (along with the Loop itself) and pass feedback into the next pass.
+		if st.Status == "done" && f.o.jumpTo != "" {
+			if rs.loopCount == nil {
+				rs.loopCount = map[string]int{}
+			}
+			if rs.loopCount[f.id] < f.o.jumpMax {
+				rs.loopCount[f.id]++
+				rs.builtIn["loop:attempt"] = strconv.Itoa(rs.loopCount[f.id] + 1)
+				rs.builtIn["loop:feedback"] = f.o.jumpFeedback
+				for id := range rs.g.ReachableFrom(f.o.jumpTo) {
+					cur := steps[id]
+					if id != f.id && cur.Status == "running" {
+						continue
+					}
+					save(store.WorkflowStep{NodeID: id, Status: "pending"})
+				}
+				continue
+			}
+			st.Port = "limit"
+			st.Error = fmt.Sprintf("max retries reached (%d/%d)", rs.loopCount[f.id], f.o.jumpMax)
+		}
 		save(st)
 		if st.Status == "done" {
+			if f.o.patch != "" {
+				rs.builtIn["run:patch"] = f.o.patch
+				if f.o.baseCommit != "" {
+					rs.builtIn["run:base_commit"] = f.o.baseCommit
+				}
+			}
 			s.keepTag(rs, nodes[f.id], st.Output, f.o.tags)
 			s.writeResult(rs, nodes[f.id], f.o)
 		}
@@ -805,11 +848,17 @@ type stepOutcome struct {
 	// tags are the values an Agent's or a Decision's output tag takes, by suffix (see agentParts); nil
 	// for a step whose output is the tag's value.
 	tags map[string]string
+	// patch & baseCommit are captured from a sandboxed Agent step (when files were modified).
+	patch, baseCommit string
+	// jumpTo, jumpMax & jumpFeedback are returned by a Loop step.
+	jumpTo       string
+	jumpMax      int
+	jumpFeedback string
 }
 
 // runStep runs one step with the tags kept so far (those of the case and of the steps of this run
 // that have finished) and the output of the steps linked into it.
-func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags map[string]string) stepOutcome {
+func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags, builtIn map[string]string) stepOutcome {
 	if n.Type == workflow.Junction { // a Node does no work: its output is what came into it
 		return stepOutcome{port: "out", output: s.inputValues(rs, firedOnly(sources))["input"]}
 	}
@@ -817,7 +866,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 	for k, v := range tags {
 		values[k] = v
 	}
-	for k, v := range rs.builtIn {
+	for k, v := range builtIn {
 		values[k] = v
 	}
 	maps.Copy(values, s.inputValues(rs, sources))
@@ -942,6 +991,28 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags m
 			return stepOutcome{err: err}
 		}
 		return s.approvalStep(ctx, rs, n, a, strings.TrimSpace(workflow.Render(a.Request, values)), strings.TrimSpace(workflow.Render(a.Question, values)))
+	case workflow.Loop:
+		l, err := workflow.SettingsOf(n, workflow.DefaultLoop())
+		if err == nil {
+			err = l.Check()
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		if !rs.g.Ancestors(n.ID)[l.Target] {
+			return stepOutcome{err: errors.New("the Loop target is not an upstream block of this Loop")}
+		}
+		fb := strings.TrimSpace(workflow.Render(l.Feedback, values))
+		return stepOutcome{port: "limit", output: fb, jumpTo: l.Target, jumpMax: l.MaxTries, jumpFeedback: fb}
+	case workflow.OpenPR:
+		op, err := workflow.SettingsOf(n, workflow.DefaultOpenPR(kind))
+		if err == nil {
+			err = op.Check()
+		}
+		if err != nil {
+			return stepOutcome{err: err}
+		}
+		return s.openPRStep(ctx, rs, n, op, values)
 	}
 	return stepOutcome{err: fmt.Errorf("a %s block cannot run yet", n.Type)}
 }
@@ -1025,6 +1096,70 @@ func (s *Server) commentStep(ctx context.Context, rs *runState, n workflow.Node,
 		return stepOutcome{err: err}
 	}
 	return stepOutcome{port: "out", output: text, note: "posted " + url}
+}
+
+// openPRStep pushes the patch captured from an earlier sandboxed Agent step to a branch and opens a
+// GitHub pull request (ready or draft). In trial mode or dry runs it writes a preview to the case file.
+func (s *Server) openPRStep(ctx context.Context, rs *runState, n workflow.Node, op workflow.OpenPRSettings, values map[string]string) stepOutcome {
+	if rs.stopped() {
+		return stepOutcome{err: rs.errStopped()}
+	}
+	patch := values["run:patch"]
+	baseCommit := strings.TrimSpace(values["run:base_commit"])
+	if strings.TrimSpace(patch) == "" {
+		return stepOutcome{err: errors.New("no code patch was produced by an earlier sandboxed Agent step")}
+	}
+	title := strings.TrimSpace(workflow.Render(op.Title, values))
+	body := strings.TrimSpace(workflow.Render(op.Body, values))
+	branch := workflow.SanitizeBranch(workflow.Render(op.Branch, values))
+	base := strings.TrimSpace(op.Base)
+	kindWord := "Ready PR"
+	if op.Draft {
+		kindWord = "Draft PR"
+	}
+	if op.Trial || rs.run.DryRun {
+		var files []string
+		for _, line := range strings.Split(patch, "\n") {
+			if strings.HasPrefix(line, "diff --git ") {
+				if parts := strings.Fields(line); len(parts) >= 4 {
+					files = append(files, "- `"+strings.TrimPrefix(parts[3], "b/")+"`")
+				}
+			}
+		}
+		preview := fmt.Sprintf("**Would open %s**\n\n- **Title:** %s\n- **Branch:** `%s` → `%s`\n- **Changed files (%d):**\n%s\n\n---\n\n%s",
+			kindWord, title, branch, cmp.Or(base, "(default branch)"), len(files), strings.Join(files, "\n"), body)
+		if err := s.writeEntry(rs, n, preview, true); err != nil {
+			return stepOutcome{err: err}
+		}
+		if rs.run.DryRun {
+			return stepOutcome{port: "out", output: title, note: "dry run: written to the dry run's case file, not pushed"}
+		}
+		return stepOutcome{port: "out", output: title, note: "trial run: written to the case file, no branch pushed or PR opened"}
+	}
+	if s.repos == nil {
+		return stepOutcome{err: errors.New("git mirror support is not available on this server")}
+	}
+	token, err := s.token(rs.ws)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	if token == "" {
+		return stepOutcome{err: errors.New("opening a pull request needs the workspace's GitHub identity: set it in the workspace's Settings")}
+	}
+	if base == "" {
+		if base, err = s.gh.DefaultBranch(ctx, token, rs.ws.Name); err != nil {
+			return stepOutcome{err: fmt.Errorf("finding the default branch: %w", err)}
+		}
+	}
+	if err := s.repos.PushPatch(ctx, rs.ws.ID, rs.ws.Name, token, baseCommit, branch, patch, title); err != nil {
+		return stepOutcome{err: err}
+	}
+	num, prURL, err := s.gh.CreatePullRequest(ctx, token, rs.ws.Name, title, body, branch, base, op.Draft)
+	if err != nil {
+		return stepOutcome{err: err}
+	}
+	_ = s.writeEntry(rs, n, fmt.Sprintf("Opened %s [#%d](%s) from branch `%s` → `%s`.", kindWord, num, prURL, branch, base), true)
+	return stepOutcome{port: "out", output: prURL, note: fmt.Sprintf("opened %s #%d: %s", kindWord, num, prURL)}
 }
 
 // testStep runs a script on one of the workspace's machines, with the item's code, and waits.
@@ -1209,7 +1344,7 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		}
 		// The step's own output is the report; the output tag, and {input} for the next step, have
 		// more: see agentParts.
-		o := stepOutcome{port: "out", output: parts[".report"], agentRun: id, tags: parts}
+		o := stepOutcome{port: "out", output: parts[".report"], agentRun: id, tags: parts, patch: tr.Patch, baseCommit: tr.BaseCommit}
 		if run.Status != agent.Met {
 			o.note = "the agent ended " + run.Status + ": " + tr.Error
 		}

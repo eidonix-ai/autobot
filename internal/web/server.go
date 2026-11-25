@@ -75,6 +75,7 @@ type GitHub interface {
 	PullRequest(ctx context.Context, token, name string, number int) (*github.PullRequest, error)
 	Item(ctx context.Context, token, name string, number int) (*github.Item, error)
 	Comment(ctx context.Context, token, name string, number int, body string) (int64, string, error)
+	CreatePullRequest(ctx context.Context, token, name, title, body, head, base string, draft bool) (int, string, error)
 	PullRequestFiles(ctx context.Context, token, name string, number int) ([]github.ChangedFile, error)
 	Compare(ctx context.Context, token, name, base, head string) ([]github.Commit, []github.ChangedFile, error)
 	// What the poller reads to see what changed.
@@ -203,7 +204,6 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/layout", s.auth(s.saveLayout))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/paste", s.auth(s.pasteNode))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/live", s.auth(s.setLive))
-	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/backlog", s.auth(s.saveBacklog))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.nodeSettings))
 	s.mux.Handle("POST /w/{owner}/{repo}/workflows/{kind}/nodes/{node}", s.auth(s.saveNodeSettings))
 	s.mux.Handle("GET /w/{owner}/{repo}/workflows/{kind}/nodes/{node}/test", s.auth(s.testForm))

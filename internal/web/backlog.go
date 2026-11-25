@@ -3,11 +3,8 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
-	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,39 +76,65 @@ func (b *backlogState) clearWorkspace(wsID int64, kind string) {
 	}
 }
 
-// backlogRound inspects workspaces with backlog catch-up enabled and starts at most one catch-up
-// run per idle workspace (strictly lower priority than queued runs and approval slot waiters).
+// backlogRound inspects live PR and Issue workflows that have a linked PR Backlog or Issue Backlog
+// event block on their canvas and starts at most one catch-up run per idle workspace (strictly lower
+// priority than queued runs and approval slot waiters).
 func (s *Server) backlogRound(ctx context.Context) {
-	entries, err := s.st.EnabledBacklogs()
+	live, err := s.st.LiveWorkflows()
 	if err != nil {
 		log.Printf("backlog: %v", err)
 		return
 	}
 	startedWS := map[int64]bool{}
-	for _, e := range entries {
-		if ctx.Err() != nil || startedWS[e.WorkspaceID] {
+	for _, w := range live {
+		if ctx.Err() != nil || startedWS[w.WorkspaceID] {
 			continue
 		}
-		if s.poll.backedOff(e.WorkspaceID) {
+		if w.Kind != workflow.PR && w.Kind != workflow.Issue {
 			continue
 		}
-		if !s.backlogIdleFor(e.WorkspaceID, e.Config.MaxSlots) {
+		if s.poll.backedOff(w.WorkspaceID) {
 			continue
 		}
-		ws, err := s.st.WorkspaceByID(e.WorkspaceID)
-		if err != nil {
+		var g workflow.Graph
+		if err := json.Unmarshal([]byte(w.Graph), &g); err != nil {
 			continue
 		}
-		if !index.Ready(s.st, ws.ID) {
-			continue
+		linked := map[string]bool{}
+		for _, l := range g.Links {
+			linked[l.From] = true
 		}
-		started, err := s.tryBacklogOne(ctx, ws, e.Kind, e.Config)
-		if err != nil {
-			log.Printf("backlog (%s %s): %v", ws.Name, e.Kind, err)
-			continue
-		}
-		if started {
-			startedWS[e.WorkspaceID] = true
+		for _, n := range g.Nodes {
+			if !workflow.IsBacklogEvent(n.Type) || !linked[n.ID] {
+				continue
+			}
+			ev, err := workflow.EventSettingsOf(n)
+			if err != nil {
+				continue
+			}
+			maxSlots := ev.IdleSlots
+			if maxSlots < 1 {
+				maxSlots = 1
+			}
+			if !s.backlogIdleFor(w.WorkspaceID, maxSlots) {
+				continue
+			}
+			ws, err := s.st.WorkspaceByID(w.WorkspaceID)
+			if err != nil {
+				break
+			}
+			if !index.Ready(s.st, ws.ID) {
+				break
+			}
+			started, err := s.tryBacklogNode(ctx, ws, w.Kind, g, n, ev, maxSlots)
+			if err != nil {
+				log.Printf("backlog (%s %s): %v", ws.Name, w.Kind, err)
+				continue
+			}
+			if started {
+				startedWS[w.WorkspaceID] = true
+				break
+			}
 		}
 	}
 }
@@ -135,36 +158,14 @@ func (s *Server) backlogIdleFor(wsID int64, maxSlots int) bool {
 	return s.slots.used(p) < limit
 }
 
-// tryBacklogOne picks the next eligible open PR or issue with no case file and starts it.
-func (s *Server) tryBacklogOne(ctx context.Context, ws *store.Workspace, kind string, cfg store.BacklogConfig) (bool, error) {
-	_, g, err := s.loadWorkflow(ws, kind)
-	if err != nil {
-		return false, err
+// tryBacklogNode picks the next eligible open PR or issue with no case file and starts it via evNode.
+func (s *Server) tryBacklogNode(ctx context.Context, ws *store.Workspace, kind string, g workflow.Graph, evNode workflow.Node, ev workflow.EventSettings, maxSlots int) (bool, error) {
+	ev = ev.WithOptOut(s.optOut(ws))
+	order := ev.BacklogOrder
+	if order != "oldest" {
+		order = "newest"
 	}
-	var evNode *workflow.Node
-	for i, n := range g.Nodes {
-		if n.ID == cfg.NodeID {
-			evNode = &g.Nodes[i]
-			break
-		}
-	}
-	if evNode == nil {
-		return false, nil // block removed from canvas
-	}
-	if t, _ := workflow.TypeOf(evNode.Type); !t.Event {
-		return false, nil
-	}
-	ev, err := workflow.EventSettingsOf(*evNode)
-	if err != nil {
-		return false, err
-	}
-	optOut := s.optOut(ws)
-	ev = ev.WithOptOut(optOut)
-	if evNode.Type == "pr_activity" && ev.CaseExists {
-		return false, nil
-	}
-
-	cands, err := s.st.BacklogCandidates(ws.ID, kind, cfg.Order, 50)
+	cands, err := s.st.BacklogCandidates(ws.ID, kind, order, 50)
 	if err != nil {
 		return false, err
 	}
@@ -178,12 +179,10 @@ func (s *Server) tryBacklogOne(ctx context.Context, ws *store.Workspace, kind st
 		if s.backlog.isSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt) {
 			continue
 		}
-		// Cheap local filters before calling GitHub.
 		if !backlogLocalMatch(evNode.Type, ev, c) {
 			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
 			continue
 		}
-		// Verify live item state, comments (opt-out), branches, maintainer, and CI on GitHub.
 		lctx, cancel := context.WithTimeout(ctx, time.Minute)
 		it, err := s.loadItem(lctx, ws, kind, c.Number)
 		cancel()
@@ -194,15 +193,10 @@ func (s *Server) tryBacklogOne(ctx context.Context, ws *store.Workspace, kind st
 			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 30*time.Minute)
 			continue
 		}
-		if evNode.Type == "pr_ready" && (it.pr == nil || it.pr.Draft) {
+		if evNode.Type == workflow.PRBacklog && !ev.IncludeDrafts && (it.pr == nil || it.pr.Draft) {
 			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
 			continue
 		}
-		if evNode.Type == "pr_draft" && (it.pr == nil || !it.pr.Draft) {
-			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
-			continue
-		}
-		// Check opt-out tag in description and trusted comments.
 		if workflow.Stops(it.body, ev.StopTag) {
 			s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 0)
 			continue
@@ -262,21 +256,19 @@ func (s *Server) tryBacklogOne(ctx context.Context, ws *store.Workspace, kind st
 					return false, cerr
 				}
 				if ci == "pending" || (ev.WaitCI == "passed" && ci != "passed" && ci != "none") {
-					// CI may finish soon: re-check after 10 minutes.
 					s.backlog.markSkipped(ws.ID, kind, evNode.ID, c.Number, c.UpdatedAt, 10*time.Minute)
 					continue
 				}
 			}
 		}
-		// Final re-check that the workspace is still idle right before admitting.
-		if !s.backlogIdleFor(ws.ID, cfg.MaxSlots) {
+		if !s.backlogIdleFor(ws.ID, maxSlots) {
 			return false, nil
 		}
-		id, err := s.startBacklogWorkflow(ctx, ws, kind, g, *evNode, it)
+		id, err := s.startBacklogWorkflow(ctx, ws, kind, g, evNode, it)
 		if err != nil {
 			return false, err
 		}
-		log.Printf("backlog (%s %s #%d): started run %d via %s", ws.Name, kind, c.Number, id, workflow.DisplayName(*evNode))
+		log.Printf("backlog (%s %s #%d): started run %d via %s", ws.Name, kind, c.Number, id, workflow.DisplayName(evNode))
 		return true, nil
 	}
 	return false, nil
@@ -284,16 +276,13 @@ func (s *Server) tryBacklogOne(ctx context.Context, ws *store.Workspace, kind st
 
 // backlogLocalMatch applies cheap local checks from the item index before touching GitHub.
 func backlogLocalMatch(nodeType string, ev workflow.EventSettings, c store.BacklogCandidate) bool {
-	if nodeType == "pr_ready" && c.Draft {
-		return false
-	}
-	if nodeType == "pr_draft" && !c.Draft {
+	if nodeType == workflow.PRBacklog && !ev.IncludeDrafts && c.Draft {
 		return false
 	}
 	if workflow.Stops(c.Body, ev.StopTag) {
 		return false
 	}
-	if nodeType == "issue_opened" {
+	if nodeType == workflow.IssueBacklog {
 		return true
 	}
 	facts := workflow.PRFacts{
@@ -301,7 +290,6 @@ func backlogLocalMatch(nodeType string, ev workflow.EventSettings, c store.Backl
 		Base:   c.BaseRef,
 		Lines:  c.Additions + c.Deletions,
 	}
-	// Only enforce Branches locally if explicit branches were configured (default branch requires GitHub).
 	checkEv := ev
 	if strings.TrimSpace(ev.Branches) == "" {
 		facts.DefaultBranch = c.BaseRef
@@ -354,117 +342,4 @@ func (s *Server) startBacklogWorkflow(ctx context.Context, ws *store.Workspace, 
 	rs.run = run
 	s.launch(rs)
 	return id, nil
-}
-
-// backlogView populates the Backlog catch-up controls on the PR and Issue workflow pages.
-func (s *Server) backlogView(data map[string]any, ws *store.Workspace, kind string, g workflow.Graph) {
-	if kind != workflow.PR && kind != workflow.Issue {
-		return
-	}
-	cfg := s.st.BacklogConfig(ws.ID, kind)
-	type eventOpt struct {
-		ID, Name string
-		Selected bool
-	}
-	var opts []eventOpt
-	selectedName := ""
-	selectedType := ""
-	for _, n := range g.Nodes {
-		t, _ := workflow.TypeOf(n.Type)
-		if !t.Event {
-			continue
-		}
-		if n.Type == "pr_activity" {
-			if ev, err := workflow.EventSettingsOf(n); err == nil && ev.CaseExists {
-				continue
-			}
-		}
-		sel := n.ID == cfg.NodeID
-		if sel {
-			selectedName, selectedType = g.NameOf(n), n.Type
-		}
-		opts = append(opts, eventOpt{ID: n.ID, Name: g.NameOf(n), Selected: sel})
-	}
-	if cfg.NodeID == "" && len(opts) > 0 {
-		opts[0].Selected = true
-		selectedType = ""
-		for _, n := range g.Nodes {
-			if n.ID == opts[0].ID {
-				selectedType = n.Type
-			}
-		}
-	}
-	draftFilter := -1
-	switch selectedType {
-	case "pr_ready":
-		draftFilter = 0
-	case "pr_draft":
-		draftFilter = 1
-	}
-	remaining, _ := s.st.BacklogCount(ws.ID, kind, draftFilter)
-	data["Backlog"] = cfg
-	data["BacklogEvents"] = opts
-	data["BacklogEventName"] = selectedName
-	data["BacklogRemaining"] = remaining
-	data["BacklogMaxSlots"] = s.st.MaxRuns(ws.ID)
-	data["BacklogIndexReady"] = index.Ready(s.st, ws.ID)
-	if cfg.Enabled && selectedName == "" {
-		data["BacklogProblem"] = "The selected event block is no longer on this canvas; choose another and save."
-	}
-}
-
-// saveBacklog saves a workspace's backlog catch-up settings for kind (pr or issue).
-func (s *Server) saveBacklog(w http.ResponseWriter, r *http.Request) {
-	ws, ok := s.openWorkspace(w, r)
-	if !ok {
-		return
-	}
-	kind, ok := itemKind(w, r)
-	if !ok {
-		return
-	}
-	back := ws.Path() + "/workflows/" + kind
-	f := r.PostForm
-	slots, _ := strconv.Atoi(strings.TrimSpace(f.Get("max_slots")))
-	if slots == 0 {
-		slots = 1
-	}
-	cfg := store.BacklogConfig{
-		Enabled:  f.Get("enabled") == "on",
-		NodeID:   strings.TrimSpace(f.Get("node_id")),
-		Order:    strings.TrimSpace(f.Get("order")),
-		MaxSlots: slots,
-	}
-	if cfg.Enabled {
-		_, g, err := s.loadWorkflow(ws, kind)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		found := false
-		for _, n := range g.Nodes {
-			if t, _ := workflow.TypeOf(n.Type); t.Event && n.ID == cfg.NodeID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			s.poll.note(ws.ID, kind, "Backlog catch-up: choose an event block on this canvas.")
-			http.Redirect(w, r, back, http.StatusSeeOther)
-			return
-		}
-	}
-	if err := s.st.SetBacklogConfig(ws, kind, cfg, me(r)); err != nil {
-		var ie *store.InputError
-		if errors.As(err, &ie) {
-			s.poll.note(ws.ID, kind, "Backlog catch-up: "+ie.Msg)
-			http.Redirect(w, r, back, http.StatusSeeOther)
-			return
-		}
-		s.fail(w, err)
-		return
-	}
-	s.poll.note(ws.ID, kind, "")
-	s.backlog.clearWorkspace(ws.ID, kind)
-	http.Redirect(w, r, back, http.StatusSeeOther)
 }

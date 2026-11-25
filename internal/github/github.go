@@ -637,3 +637,20 @@ func (c *Client) Comment(ctx context.Context, token, name string, number int, bo
 	err := c.send(ctx, http.MethodPost, token, fmt.Sprintf("/repos/%s/issues/%d/comments", name, number), map[string]string{"body": body}, &out)
 	return out.ID, out.HTMLURL, err
 }
+
+// CreatePullRequest opens a pull request on owner/repo (ready or draft) and returns its number and URL.
+func (c *Client) CreatePullRequest(ctx context.Context, token, name, title, body, head, base string, draft bool) (int, string, error) {
+	var out struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	payload := map[string]any{
+		"title": title,
+		"body":  body,
+		"head":  head,
+		"base":  base,
+		"draft": draft,
+	}
+	err := c.send(ctx, http.MethodPost, token, "/repos/"+name+"/pulls", payload, &out)
+	return out.Number, out.HTMLURL, err
+}

@@ -26,6 +26,16 @@ const (
 // DiscordMention is the event node that triggers when someone @mentions the bot in Discord.
 const DiscordMention = "discord_mention"
 
+// PRBacklog and IssueBacklog are idle catch-up event blocks: while the workflow is Live and the
+// workspace is idle, they pick open items with no case file yet.
+const (
+	PRBacklog    = "pr_backlog"
+	IssueBacklog = "issue_backlog"
+)
+
+// IsBacklogEvent reports whether typ is an idle backlog catch-up event block.
+func IsBacklogEvent(typ string) bool { return typ == PRBacklog || typ == IssueBacklog }
+
 // Kinds lists the workflow kinds in tab order.
 var Kinds = []string{PR, Issue, Discord}
 
@@ -57,7 +67,9 @@ var Types = []NodeType{
 	{Type: "pr_ready", Kind: PR, Label: "PR First Ready", Event: true},
 	{Type: "pr_draft", Kind: PR, Label: "PR Draft", Event: true},
 	{Type: "pr_activity", Kind: PR, Label: "PR Activity", Event: true},
+	{Type: PRBacklog, Kind: PR, Label: "PR Backlog", Event: true},
 	{Type: "issue_opened", Kind: Issue, Label: "Issue Opened", Event: true},
+	{Type: IssueBacklog, Kind: Issue, Label: "Issue Backlog", Event: true},
 	{Type: DiscordMention, Kind: Discord, Label: "Discord Mention", Event: true},
 	{Type: Agent, Label: "Agent"},
 	{Type: Decision, Label: "Decision"},
@@ -66,6 +78,8 @@ var Types = []NodeType{
 	{Type: Condition, Label: "Condition"},
 	{Type: TestRun, Label: "Test Run", OnlyItems: true},
 	{Type: Approval, Label: "Human Approval", OnlyItems: true},
+	{Type: Loop, Label: "Loop"},
+	{Type: OpenPR, Label: "Open PR", OnlyItems: true},
 	{Type: Junction, Label: "Node"},
 	// The two blocks Post replaced: graphs saved with them load as Post nodes, but a run from before
 	// that kept one in its snapshot still names it, and the palette does not offer them.
@@ -150,6 +164,8 @@ func Outputs(n Node) []string {
 		return []string{"passed", "failed"}
 	case Approval:
 		return []string{"approved", "denied", "timed_out"}
+	case Loop:
+		return []string{"limit"}
 	}
 	return []string{"out"}
 }
@@ -238,6 +254,10 @@ func (g Graph) Check(kind string) error {
 			_, err = SettingsOf(n, DefaultTestRun())
 		case Approval:
 			_, err = SettingsOf(n, DefaultApproval(kind))
+		case Loop:
+			_, err = SettingsOf(n, DefaultLoop())
+		case OpenPR:
+			_, err = SettingsOf(n, DefaultOpenPR(kind))
 		}
 		if err != nil {
 			return err
@@ -332,6 +352,11 @@ type EventSettings struct {
 	Channels        string `json:"channels,omitempty"`         // comma-separated channel names or IDs; "" is any channel the bot can see
 	IgnoreChannels  string `json:"ignore_channels,omitempty"`  // comma-separated channel names or IDs to skip
 	CooldownSeconds int    `json:"cooldown_seconds,omitempty"` // per-channel cooldown in seconds; 0 is none
+
+	// PR Backlog / Issue Backlog only: idle catch-up on open items with no case file yet.
+	BacklogOrder  string `json:"backlog_order,omitempty"`  // "newest" or "oldest"
+	IdleSlots     int    `json:"idle_slots,omitempty"`     // max concurrent runs when idle (1..20)
+	IncludeDrafts bool   `json:"include_drafts,omitempty"` // PR Backlog only: also catch up draft PRs
 }
 
 // Activities are the kinds of activity on an open pull request that can run PR Activity, in the
@@ -350,6 +375,13 @@ func DefaultEvent(typ string) EventSettings {
 	t, _ := TypeOf(typ)
 	if t.Kind == Discord {
 		return EventSettings{CooldownSeconds: 10}
+	}
+	if IsBacklogEvent(typ) {
+		s := EventSettings{BacklogOrder: "newest", IdleSlots: 1}
+		if typ == PRBacklog {
+			s.Authors, s.OverLimit, s.WaitCI = "skip_bots", "skip", "finished"
+		}
+		return s
 	}
 	s := EventSettings{Mode: "always", SummonPhrase: "@autobot review", TrustedOnly: true}
 	if t.Kind == Issue {
@@ -388,6 +420,33 @@ func (s EventSettings) Check(typ string) error {
 		}
 		if len(s.Channels) > 500 || len(s.IgnoreChannels) > 500 {
 			return errors.New("channel lists are limited to 500 characters")
+		}
+		return nil
+	}
+	if IsBacklogEvent(typ) {
+		if s.BacklogOrder != "" && s.BacklogOrder != "newest" && s.BacklogOrder != "oldest" {
+			return errors.New("choose newest or oldest first")
+		}
+		if s.IdleSlots < 1 || s.IdleSlots > 20 {
+			return errors.New("idle slots must be from 1 to 20")
+		}
+		if typ == IssueBacklog {
+			return nil
+		}
+		switch {
+		case s.Authors != "all" && s.Authors != "skip_bots" && s.Authors != "only_bots":
+			return errors.New("choose which authors' pull requests it handles")
+		case s.MaxLines < 0 || s.MaxLines > 10_000_000:
+			return errors.New("the size limit must be a number of changed lines, or 0 for none")
+		case s.OverLimit != "skip" && s.OverLimit != "summoned":
+			return errors.New("choose what happens to pull requests over the size limit")
+		case s.WaitCI != "no" && s.WaitCI != "finished" && s.WaitCI != "passed":
+			return errors.New("choose whether to wait for CI")
+		}
+		for _, b := range strings.Split(s.Branches, ",") {
+			if b = strings.TrimSpace(b); b != "" && !branchRE.MatchString(b) {
+				return fmt.Errorf("%q is not a branch name", b)
+			}
 		}
 		return nil
 	}
@@ -489,6 +548,28 @@ func (s EventSettings) SummaryFor(typ string) string {
 		}
 		return strings.Join(parts, " · ")
 	}
+	if IsBacklogEvent(typ) {
+		order := "newest first"
+		if s.BacklogOrder == "oldest" {
+			order = "oldest first"
+		}
+		slots := s.IdleSlots
+		if slots < 1 {
+			slots = 1
+		}
+		unit := "slots"
+		if slots == 1 {
+			unit = "slot"
+		}
+		parts := []string{"Idle catch-up", order, fmt.Sprintf("%d %s", slots, unit)}
+		if typ == PRBacklog && s.IncludeDrafts {
+			parts = append(parts, "includes drafts")
+		}
+		if s.StopTag != "" {
+			parts = append(parts, "stops on “"+s.StopTag+"”")
+		}
+		return strings.Join(parts, " · ")
+	}
 	return s.Summary()
 }
 
@@ -529,6 +610,23 @@ func EventFromForm(typ string, get func(string) string, all func(string) []strin
 			IgnoreChannels:  strings.TrimSpace(get("ignore_channels")),
 			CooldownSeconds: cd,
 		}
+	}
+	if IsBacklogEvent(typ) {
+		slots, _ := strconv.Atoi(strings.TrimSpace(get("idle_slots")))
+		order := strings.TrimSpace(get("backlog_order"))
+		if order != "oldest" {
+			order = "newest"
+		}
+		s := EventSettings{BacklogOrder: order, IdleSlots: slots, IncludeDrafts: get("include_drafts") == "on"}
+		if typ == PRBacklog {
+			s.Branches = strings.TrimSpace(get("branches"))
+			s.Authors = get("authors")
+			s.SkipMaintain = get("skip_maintainers") == "on"
+			s.MaxLines, _ = strconv.Atoi(strings.TrimSpace(get("max_lines")))
+			s.OverLimit = get("over_limit")
+			s.WaitCI = get("wait_ci")
+		}
+		return s
 	}
 	s := EventSettings{
 		Mode:         get("mode"),

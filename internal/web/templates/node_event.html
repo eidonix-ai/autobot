@@ -12,6 +12,47 @@
   <label><span class="lbl">Ignore channels <span class="info" tabindex="0" data-tip="Comma-separated channel names or IDs to skip even when listening everywhere.">ⓘ</span></span>
     <input name="ignore_channels" value="{{.S.IgnoreChannels}}" placeholder="Optional" autocomplete="off"></label>
   <label>Per-channel cooldown (seconds, 0 for none) <input type="number" name="cooldown_seconds" min="0" max="3600" value="{{.S.CooldownSeconds}}"></label>
+  {{else if or (eq .Node.Type "pr_backlog") (eq .Node.Type "issue_backlog")}}
+  <p class="hint">Low-priority catch-up: while this workflow is Live and the workspace is idle (nothing queued or waiting on approvals), picks open {{if eq .Kind "pr"}}pull requests{{else}}issues{{end}} that have no case file yet.{{with .BacklogRemaining}} ({{.}} unreviewed right now.){{end}}</p>
+  <div class="row">
+    <label>Order
+      <select name="backlog_order">
+        <option value="newest"{{if ne .S.BacklogOrder "oldest"}} selected{{end}}>Newest first</option>
+        <option value="oldest"{{if eq .S.BacklogOrder "oldest"}} selected{{end}}>Oldest first</option>
+      </select></label>
+    <label><span class="lbl">Idle slots <span class="info" tabindex="0" data-tip="Starts at most 1 catch-up run per 30s tick while active PR/Issue runs are below this cap (and below workspace Runs at once).">ⓘ</span></span>
+      <input type="number" name="idle_slots" min="1" max="20" value="{{if .S.IdleSlots}}{{.S.IdleSlots}}{{else}}1{{end}}"></label>
+  </div>
+  {{if eq .Node.Type "pr_backlog"}}<label class="check"><input type="checkbox" name="include_drafts"{{if .S.IncludeDrafts}} checked{{end}}> Include draft pull requests</label>{{end}}
+  <p class="optout">Stops on {{if .OptOut}}<code>{{.OptOut}}</code>{{else}}<span class="muted">no tag</span>{{end}} <a href="{{.WS.Path}}/settings#opt-out">(workspace setting)</a></p>
+  {{if eq .Kind "pr"}}
+  <details class="more" open><summary>Filters</summary>
+    <div class="stack wide">
+      <label>Target branches <input name="branches" value="{{.S.Branches}}" placeholder="the default branch" autocomplete="off"></label>
+      <label>Authors
+        <select name="authors">
+          <option value="skip_bots"{{if eq .S.Authors "skip_bots"}} selected{{end}}>Everyone but bots</option>
+          <option value="all"{{if eq .S.Authors "all"}} selected{{end}}>Everyone</option>
+          <option value="only_bots"{{if eq .S.Authors "only_bots"}} selected{{end}}>Only bots (Dependabot, Renovate)</option>
+        </select></label>
+      <label class="check"><input type="checkbox" name="skip_maintainers"{{if .S.SkipMaintain}} checked{{end}}> Skip pull requests by maintainers</label>
+      <div class="row">
+        <label>Size limit (changed lines, 0 for none) <input type="number" name="max_lines" min="0" value="{{.S.MaxLines}}"></label>
+        <label>Over the limit
+          <select name="over_limit">
+            <option value="skip"{{if ne .S.OverLimit "summoned"}} selected{{end}}>Skip</option>
+            <option value="summoned"{{if eq .S.OverLimit "summoned"}} selected{{end}}>Only if summoned</option>
+          </select></label>
+      </div>
+      <label>Wait for CI
+        <select name="wait_ci">
+          <option value="finished"{{if eq .S.WaitCI "finished"}} selected{{end}}>Until its checks finish</option>
+          <option value="passed"{{if eq .S.WaitCI "passed"}} selected{{end}}>Until its checks pass</option>
+          <option value="no"{{if eq .S.WaitCI "no"}} selected{{end}}>No</option>
+        </select></label>
+    </div>
+  </details>
+  {{end}}
   {{else}}
   {{if eq .Node.Type "pr_activity"}}
   <fieldset>

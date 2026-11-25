@@ -15,7 +15,7 @@ import (
 // post (GitHub Comment, Post to Discord) are endpoints: they keep nothing under a tag.
 func HasOutput(typ string) bool {
 	switch typ {
-	case Agent, Decision, CaseEntry, Condition, TestRun, Approval:
+	case Agent, Decision, CaseEntry, Condition, TestRun, Approval, OpenPR:
 		return true
 	}
 	return false
@@ -206,6 +206,8 @@ func defaultSettings(typ, kind string) any {
 		return DefaultTestRun()
 	case Approval:
 		return DefaultApproval(kind)
+	case OpenPR:
+		return DefaultOpenPR(kind)
 	}
 	return nil
 }

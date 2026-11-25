@@ -109,6 +109,10 @@ func (fakeGitHub) Comment(_ context.Context, token, name string, n int, body str
 	return int64(100 + len(fakeComments)), fmt.Sprintf("https://github.com/%s/pull/%d#issuecomment-%d", name, n, 100+len(fakeComments)), nil
 }
 
+func (fakeGitHub) CreatePullRequest(_ context.Context, _, name, _, _, _, _ string, _ bool) (int, string, error) {
+	return 777, fmt.Sprintf("https://github.com/%s/pull/777", name), nil
+}
+
 func (fakeGitHub) Tree(context.Context, string, string, string) ([]string, error) {
 	return []string{"go.mod", "upload.go"}, nil
 }

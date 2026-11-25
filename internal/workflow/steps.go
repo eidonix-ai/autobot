@@ -546,6 +546,10 @@ var commonTags = []Tag{
 	{"machines", "the workspace's test machines as they are now: state, GPUs, models, notes", true},
 	{"case", "the item's case file so far", true},
 	{"case:link", "the link to the case file as a page (a private repository's needs its secret)", true},
+	{"run:patch", "unified diff captured from the latest sandboxed Agent step in this run", true},
+	{"run:base_commit", "base commit SHA that {run:patch} applies to", true},
+	{"loop:attempt", "current attempt number inside a Loop (1 on first pass, 2 on first retry, ...)", true},
+	{"loop:feedback", "feedback passed by a Loop block when jumping back to its target", true},
 }
 
 // inputTags are {input} and its parts: what the steps linked into a block produced.
@@ -609,6 +613,8 @@ var discordCommonTags = []Tag{
 	{"repo", "the repository, owner/name", true},
 	{"charter", "the project charter (kept in Autobot)", true},
 	{"machines", "the workspace's test machines as they are now: state, GPUs, models, notes", true},
+	{"loop:attempt", "current attempt number inside a Loop (1 on first pass, 2 on first retry, ...)", true},
+	{"loop:feedback", "feedback passed by a Loop block when jumping back to its target", true},
 }
 
 // Tags lists the built-in tags of a workflow kind, as the Tags list shows them.
@@ -1071,6 +1077,18 @@ func stepWhat(n Node, kind string, models func(ModelRef) string) string {
 		return first
 	case Junction:
 		return "connects links"
+	case Loop:
+		s, err := SettingsOf(n, DefaultLoop())
+		if err != nil || s.Target == "" {
+			return "Choose a target block"
+		}
+		return fmt.Sprintf("Max %d retries", s.MaxTries)
+	case OpenPR:
+		s, err := SettingsOf(n, DefaultOpenPR(kind))
+		if err != nil {
+			return ""
+		}
+		return s.Summary()
 	case CaseEntry:
 		s, err := CaseEntrySettingsOf(n)
 		if err != nil {

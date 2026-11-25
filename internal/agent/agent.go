@@ -89,8 +89,10 @@ type Transcript struct {
 	Read    []string   `json:"read,omitempty"` // the files its tools have read
 	Outcome string     `json:"outcome,omitempty"`
 	Summary string     `json:"summary,omitempty"` // about 300 words: what a continuation opens with and a step's output tag holds
-	Report  string     `json:"report,omitempty"`
-	Error   string     `json:"error,omitempty"`
+	Report     string `json:"report,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Patch      string `json:"patch,omitempty"`       // unified diff captured from sandbox /work/source when an agent finishes
+	BaseCommit string `json:"base_commit,omitempty"` // base commit SHA that Patch applies to
 
 	Writing *Transcript `json:"writing,omitempty"`
 }

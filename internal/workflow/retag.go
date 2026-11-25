@@ -112,6 +112,20 @@ func Retag(n Node, kind, old, new string) (Node, bool) {
 			s.Tag, changed = new, true
 		}
 		settings = s
+	case Loop:
+		s, err := SettingsOf(n, DefaultLoop())
+		if err != nil {
+			return n, false
+		}
+		fix(&s.Feedback)
+		settings = s
+	case OpenPR:
+		s, err := SettingsOf(n, DefaultOpenPR(kind))
+		if err != nil {
+			return n, false
+		}
+		fix(&s.Title, &s.Body, &s.Branch)
+		settings = s
 	default:
 		return n, false
 	}

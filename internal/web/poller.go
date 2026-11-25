@@ -206,7 +206,7 @@ func (s *Server) pollWorkspace(ctx context.Context, ws *store.Workspace, wfs []s
 		}
 		for _, n := range g.Nodes {
 			t, _ := workflow.TypeOf(n.Type)
-			if !t.Event {
+			if !t.Event || workflow.IsBacklogEvent(n.Type) {
 				continue
 			}
 			pw.nodes[w.Kind] = append(pw.nodes[w.Kind], n)

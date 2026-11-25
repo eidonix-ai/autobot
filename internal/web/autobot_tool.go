@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/eidonix-ai/autobot/internal/agent"
@@ -131,5 +133,170 @@ func (s *Server) autobotStatusTool(ws *store.Workspace) agent.Tool {
 			}
 			return b.String(), nil
 		},
+	}
+}
+
+const maxCaseToolChars = 24_000
+
+// caseTools returns read-only tools for listing, searching, and reading Autobot's case files
+// (findings, reviews, decisions, approvals, and saved step outputs) for a workspace.
+func (s *Server) caseTools(ws *store.Workspace) []agent.Tool {
+	return []agent.Tool{
+		{
+			Spec: agent.ToolSpec{
+				Name:        "list_cases",
+				Description: "List or search Autobot's case files for " + ws.Name + " (PR and issue investigations, reviews, decisions, and approvals). Optionally filter by keyword across title or contents.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"query": {"type": "string", "description": "Optional keyword or PR/issue number to search in case titles and contents."},
+						"limit": {"type": "integer", "description": "Maximum cases to return (default 20, max 50)."}
+					}
+				}`),
+			},
+			Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var in struct {
+					Query string `json:"query"`
+					Limit int    `json:"limit"`
+				}
+				if len(raw) > 0 {
+					json.Unmarshal(raw, &in)
+				}
+				limit := in.Limit
+				if limit <= 0 {
+					limit = 20
+				}
+				if limit > 50 {
+					limit = 50
+				}
+				cases, err := s.st.SearchCases(ws.ID, in.Query, limit)
+				if err != nil {
+					return "", err
+				}
+				if len(cases) == 0 {
+					if strings.TrimSpace(in.Query) != "" {
+						return fmt.Sprintf("No case files in %s matched %q.", ws.Name, in.Query), nil
+					}
+					return fmt.Sprintf("There are no case files in %s yet.", ws.Name), nil
+				}
+				public := !s.facts(ctx, ws).private
+				var b strings.Builder
+				fmt.Fprintf(&b, "Case files in %s (%d shown, most recently updated first):\n", ws.Name, len(cases))
+				for _, c := range cases {
+					fmt.Fprintf(&b, "- %s: %s · updated %s · %s",
+						c.Label(), c.Title, c.UpdatedAt.In(eastern).Format("Jan 2 3:04 PM ET"), itemURL(ws, c.Kind, c.Number))
+					if public {
+						if link := s.caseLink(&c); link != "" {
+							fmt.Fprintf(&b, " · case: %s", link)
+						}
+					}
+					b.WriteByte('\n')
+				}
+				return b.String(), nil
+			},
+		},
+		{
+			Spec: agent.ToolSpec{
+				Name:        "read_case",
+				Description: "Read Autobot's case file for a specific PR or issue number in " + ws.Name + " (including all finalized research summaries, code review findings, decisions, approvals, and links). Optionally read a line range or a specific saved step output tag.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"item": {"type": "integer", "description": "The PR or issue number."},
+						"start_line": {"type": "integer", "description": "Optional 1-based start line when paging through a long case file."},
+						"end_line": {"type": "integer", "description": "Optional 1-based end line (inclusive)."},
+						"part": {"type": "string", "description": "Optional saved output tag name on the case (e.g. gather_information.report or lens_team.report) to read in full instead of the case log."}
+					},
+					"required": ["item"]
+				}`),
+			},
+			Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var in struct {
+					Item      int    `json:"item"`
+					StartLine int    `json:"start_line"`
+					EndLine   int    `json:"end_line"`
+					Part      string `json:"part"`
+				}
+				if err := json.Unmarshal(raw, &in); err != nil || in.Item <= 0 {
+					return "Provide a positive PR or issue number in item.", nil
+				}
+				c, err := s.st.CaseByNumber(ws.ID, in.Item)
+				if errors.Is(err, store.ErrNotFound) {
+					return fmt.Sprintf("There is no case file for #%d in %s yet.", in.Item, ws.Name), nil
+				}
+				if err != nil {
+					return "", err
+				}
+				vals, _ := s.st.CaseValues(c.UUID)
+				var b strings.Builder
+				fmt.Fprintf(&b, "%s: %s\n", c.Label(), c.Title)
+				fmt.Fprintf(&b, "GitHub: %s\n", itemURL(ws, c.Kind, c.Number))
+				if !s.facts(ctx, ws).private {
+					if link := s.caseLink(c); link != "" {
+						fmt.Fprintf(&b, "Case page: %s\n", link)
+					}
+				}
+				fmt.Fprintf(&b, "Updated: %s\n", c.UpdatedAt.In(eastern).Format("Jan 2, 2006 3:04 PM ET"))
+
+				if part := strings.TrimSpace(in.Part); part != "" {
+					v, ok := vals[part]
+					if !ok {
+						return fmt.Sprintf("%s\nNo saved output part %q on this case. Available parts: %s", b.String(), part, sortedCaseKeys(vals)), nil
+					}
+					fmt.Fprintf(&b, "\n--- %s ---\n", part)
+					writePagedLines(&b, v, in.StartLine, in.EndLine, maxCaseToolChars)
+					return b.String(), nil
+				}
+
+				if len(vals) > 0 {
+					fmt.Fprintf(&b, "Saved step outputs (readable via read_case with part=...): %s\n", sortedCaseKeys(vals))
+				}
+				b.WriteString("\n--- Case file ---\n")
+				writePagedLines(&b, c.Contents, in.StartLine, in.EndLine, maxCaseToolChars)
+				return b.String(), nil
+			},
+		},
+	}
+}
+
+func sortedCaseKeys(vals map[string]string) string {
+	keys := make([]string, 0, len(vals))
+	for k, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	if len(keys) == 0 {
+		return "(none)"
+	}
+	return strings.Join(keys, ", ")
+}
+
+func writePagedLines(b *strings.Builder, text string, startLine, endLine, maxChars int) {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	total := len(lines)
+	start := max(startLine, 1)
+	if start > total {
+		fmt.Fprintf(b, "(end of text; %d lines total)\n", total)
+		return
+	}
+	end := total
+	if endLine >= start && endLine < end {
+		end = endLine
+	}
+	written := 0
+	lastLine := start - 1
+	for i := start; i <= end; i++ {
+		line := fmt.Sprintf("%d: %s\n", i, lines[i-1])
+		if written > 0 && written+len(line) > maxChars {
+			break
+		}
+		b.WriteString(line)
+		written += len(line)
+		lastLine = i
+	}
+	if lastLine < total {
+		fmt.Fprintf(b, "\n[showing lines %d-%d of %d; call read_case with start_line=%d to read more]\n", start, lastLine, total, lastLine+1)
 	}
 }

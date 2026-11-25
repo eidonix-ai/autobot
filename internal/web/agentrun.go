@@ -90,7 +90,8 @@ var prLinkRE = regexp.MustCompile(`github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)
 // readOnlyTools are the tools of a research session that the session writing its report keeps: the
 // code, pull request and item readers. No shell, no write tools, no web.
 var readOnlyTools = []string{"pr_files", "pr_diff", "pr_comments", "list_files", "read_file", "search_code", "search_history",
-	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob", "read_charter"}
+	"repo_overview", "search_items", "read_item", "related_items", "items_touching", "grep", "glob", "read_charter",
+	"autobot_status", "list_cases", "read_case"}
 
 // charterTool reads the workspace's project charter, as it is now: the orientation packet quotes only
 // the lines that mention the change's areas.
@@ -216,6 +217,7 @@ func (s *Server) startAgent(parent context.Context, ws *store.Workspace, kind st
 		cfg.Tools = append(cfg.Tools, s.charterTool(ws))
 		if kind == workflow.Discord {
 			cfg.Tools = append(cfg.Tools, s.autobotStatusTool(ws))
+			cfg.Tools = append(cfg.Tools, s.caseTools(ws)...)
 		}
 		// With machines to use (PR/Issue workflows only — Discord mentions stay read-only),
 		// the agent gets a shell on one, and reads the code there instead of through GitHub.

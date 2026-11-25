@@ -314,3 +314,71 @@ func TestDiscordMentionWorkflow(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// Discord case tools list, search and read real case files for the workspace, expose saved step
+// output parts, never leak dry-run or other-workspace cases, and omit case links on private repos.
+func TestDiscordCaseTools(t *testing.T) {
+	e := newEnv(t)
+	derek := e.user("derek", true)
+	ws, _ := e.st.CreateWorkspace("o/r", derek, "", "")
+	other, _ := e.st.CreateWorkspace("o/other", derek, "", "")
+	e.st.SetSetting(publicAddressKey, "https://autobot.example")
+
+	c, _, err := e.st.OpenCase(ws, 42, "pr", "Fix KV cache eviction", "Opened for PR #42.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := e.st.StartContribution(c.UUID, "Gather Information")
+	e.st.SetDraft(id, "Found a race in prefix-cache eviction.")
+	e.st.FinalizeContribution(id)
+	e.st.SetCaseValue(c.UUID, "lens_team.report", "Blocking: cache.rs:88 race condition.", "n1")
+	// Dry-run case and another workspace's case must never appear.
+	e.st.OpenDryCase(ws, 99, 42, "pr", "Dry run", "Dry headline")
+	e.st.OpenCase(other, 77, "pr", "Secret other repo", "Opened.")
+
+	tools := e.ui.caseTools(ws)
+	runTool := func(name, args string) string {
+		t.Helper()
+		for _, tl := range tools {
+			if tl.Spec.Name == name {
+				out, err := tl.Run(t.Context(), json.RawMessage(args))
+				if err != nil {
+					t.Fatalf("%s(%s): %v", name, args, err)
+				}
+				return out
+			}
+		}
+		t.Fatalf("no tool %s", name)
+		return ""
+	}
+
+	listed := runTool("list_cases", `{"query":"prefix-cache"}`)
+	if !strings.Contains(listed, "PR #42: Fix KV cache eviction") || !strings.Contains(listed, "https://autobot.example/api/v1/cases/"+c.UUID+".html") {
+		t.Fatalf("list_cases: %s", listed)
+	}
+	if strings.Contains(listed, "Dry run") || strings.Contains(listed, "Secret other repo") {
+		t.Fatalf("list_cases leaked dry-run or other workspace case: %s", listed)
+	}
+
+	read := runTool("read_case", `{"item":42}`)
+	if !strings.Contains(read, "Found a race in prefix-cache eviction.") || !strings.Contains(read, "lens_team.report") {
+		t.Fatalf("read_case: %s", read)
+	}
+	part := runTool("read_case", `{"item":42,"part":"lens_team.report"}`)
+	if !strings.Contains(part, "Blocking: cache.rs:88 race condition.") {
+		t.Fatalf("read_case part: %s", part)
+	}
+	missing := runTool("read_case", `{"item":999}`)
+	if !strings.Contains(missing, "no case file for #999") {
+		t.Fatalf("read_case missing: %s", missing)
+	}
+
+	// Private repo omits the public case page URL.
+	e.ui.access.mu.Lock()
+	e.ui.access.byWS[ws.ID] = repoFacts{private: true, at: time.Now()}
+	e.ui.access.mu.Unlock()
+	priv := runTool("read_case", `{"item":42}`)
+	if strings.Contains(priv, "autobot.example/api/v1/cases/") {
+		t.Fatalf("private repo leaked case URL: %s", priv)
+	}
+}

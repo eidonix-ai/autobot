@@ -199,8 +199,29 @@ func (s *Store) CaseByNumber(workspaceID int64, number int) (*Case, error) {
 
 // Cases lists a workspace's cases, most recently changed first, without their contents.
 func (s *Store) Cases(workspaceID int64, limit int) ([]Case, error) {
-	rows, err := s.db.Query(`SELECT `+strings.Replace(caseCols, "contents", "''", 1)+` FROM cases
-		WHERE workspace_id = ? AND dry_run_of = 0 ORDER BY updated_at DESC, number DESC LIMIT ?`, workspaceID, limit)
+	return s.SearchCases(workspaceID, "", limit)
+}
+
+// SearchCases lists a workspace's real cases (excluding dry runs), optionally filtered by a
+// case-insensitive match on number, title or contents, most recently changed first (without contents).
+func (s *Store) SearchCases(workspaceID int64, query string, limit int) ([]Case, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	cols := strings.Replace(caseCols, "contents", "''", 1)
+	q := strings.TrimSpace(query)
+	var rows *sql.Rows
+	var err error
+	if q == "" {
+		rows, err = s.db.Query(`SELECT `+cols+` FROM cases
+			WHERE workspace_id = ? AND dry_run_of = 0 ORDER BY updated_at DESC, number DESC LIMIT ?`, workspaceID, limit)
+	} else {
+		pat := "%" + strings.TrimPrefix(q, "#") + "%"
+		rows, err = s.db.Query(`SELECT `+cols+` FROM cases
+			WHERE workspace_id = ? AND dry_run_of = 0
+			  AND (CAST(number AS TEXT) = ? OR title LIKE ? COLLATE NOCASE OR contents LIKE ? COLLATE NOCASE)
+			ORDER BY updated_at DESC, number DESC LIMIT ?`, workspaceID, strings.TrimPrefix(q, "#"), pat, pat, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

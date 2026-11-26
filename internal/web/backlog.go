@@ -139,10 +139,11 @@ func (s *Server) backlogRound(ctx context.Context) {
 	}
 }
 
-// backlogIdleFor reports whether workspace wsID has no queued PR/Issue runs, no runs waiting to
-// reclaim a slot after an approval, and fewer than min(maxSlots, workspace MaxRuns) active PR/Issue runs.
+// backlogIdleFor reports whether workspace wsID has no queued PR/Issue runs (including runs
+// cooling down on transient retry backoff), no runs waiting to reclaim a slot after an approval,
+// and fewer than min(maxSlots, workspace MaxRuns) active PR/Issue runs.
 func (s *Server) backlogIdleFor(wsID int64, maxSlots int) bool {
-	if queued, err := s.st.QueuedRunsFor(wsID, false); err != nil || len(queued) > 0 {
+	if hasQueued, err := s.st.HasQueuedRunsFor(wsID, false); err != nil || hasQueued {
 		return false
 	}
 	limit := min(maxSlots, s.st.MaxRuns(wsID))

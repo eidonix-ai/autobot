@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"strconv"
 	"time"
 )
@@ -82,6 +84,24 @@ func (s *Store) QueuedRunsFor(workspaceID int64, discord bool) ([]int64, error) 
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// HasQueuedRunsFor reports whether workspaceID has ANY queued run (including runs cooling down
+// on a transient retry backoff where retry_after > now) in the Discord or PR/Issue/LFA pool.
+func (s *Store) HasQueuedRunsFor(workspaceID int64, discord bool) (bool, error) {
+	q := `SELECT 1 FROM workflow_runs WHERE workspace_id = ? AND kind != 'discord' AND status = 'queued' LIMIT 1`
+	if discord {
+		q = `SELECT 1 FROM workflow_runs WHERE workspace_id = ? AND kind = 'discord' AND status = 'queued' LIMIT 1`
+	}
+	var one int
+	err := s.db.QueryRow(q, workspaceID).Scan(&one)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
 }
 
 // WorkspacesWithQueue are the workspaces that have a queued run ready to start now.

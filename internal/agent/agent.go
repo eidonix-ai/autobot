@@ -571,20 +571,20 @@ func runTool(ctx context.Context, t Tool, args string) (out string) {
 	return res
 }
 
-// retryWaits are the pauses between attempts at a model request that failed in a way that may pass:
+// RetryWaits are the pauses between attempts at a model request that failed in a way that may pass:
 // about three minutes in all, enough to ride out a provider dropping connections for a while (seen on
 // DeepSeek with five agents at once) without hiding a real outage for long.
-var retryWaits = []time.Duration{2 * time.Second, 6 * time.Second, 18 * time.Second, 54 * time.Second, 60 * time.Second, 60 * time.Second}
+var RetryWaits = []time.Duration{2 * time.Second, 6 * time.Second, 18 * time.Second, 54 * time.Second, 60 * time.Second, 60 * time.Second}
 
 // complete asks the model, trying again on a failure that may pass.
 func complete(ctx context.Context, m Model, msgs []Message, tools []ToolSpec) (Message, Usage, error) {
 	var err error
-	for try := 0; try <= len(retryWaits); try++ {
+	for try := 0; try <= len(RetryWaits); try++ {
 		if try > 0 {
 			select {
 			case <-ctx.Done():
 				return Message{}, Usage{}, ctx.Err()
-			case <-time.After(retryWaits[try-1]):
+			case <-time.After(RetryWaits[try-1]):
 			}
 		}
 		var reply Message
@@ -592,23 +592,42 @@ func complete(ctx context.Context, m Model, msgs []Message, tools []ToolSpec) (M
 		if reply, use, err = m.Complete(ctx, msgs, tools); err == nil {
 			return reply, use, nil
 		}
-		if ctx.Err() != nil || !transient(err) {
+		if ctx.Err() != nil || !IsTransientError(err) {
 			return Message{}, Usage{}, err
 		}
 	}
 	return Message{}, Usage{}, err
 }
 
-// transient reports whether a model error may pass: too many requests, a server error, no answer.
-func transient(err error) bool {
-	s := err.Error()
-	// "reading the answer": the connection broke while the answer came; asking again is safe.
-	for _, code := range []string{" 429 ", " 500 ", " 502 ", " 503 ", " 504 ", "could not reach", "reading the answer"} {
-		if strings.Contains(s, code) {
+// IsTransientError reports whether a model/provider error may pass: rate limit, 5xx overload,
+// dropped connection, or timeout. Context cancellation is not transient.
+func IsTransientError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return IsTransientMessage(err.Error())
+}
+
+// IsTransientMessage reports whether a stored model/provider error message indicates a temporary
+// outage or overload (429, 5xx, server_is_overloaded, or dropped connection) worth retrying later.
+func IsTransientMessage(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	lower := strings.ToLower(msg)
+	for _, token := range []string{
+		" 429 ", " 500 ", " 502 ", " 503 ", " 504 ", " 529 ",
+		"server_is_overloaded", "could not reach", "reading the answer",
+		"unexpected eof", "connection reset", "connection refused", "i/o timeout",
+	} {
+		if strings.Contains(lower, token) {
 			return true
 		}
 	}
-	return errors.Is(err, context.DeadlineExceeded)
+	return false
 }
 
 // citedRE finds files a report names: a path or file name with a source-like extension, perhaps

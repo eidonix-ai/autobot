@@ -714,7 +714,7 @@ func (s *Server) drive(rs *runState) {
 		if err := s.st.RequeueForRetry(rs.run.ID, notes, resetSkipped, nextCount, nextAt); err != nil {
 			log.Printf("workflow run %d: requeuing for retry: %v", rs.run.ID, err)
 		} else {
-			log.Printf("workflow run %d: transient GitHub failure; requeued retry %d/%d in %s", rs.run.ID, nextCount, len(retryBackoffs), delay)
+			log.Printf("workflow run %d: transient failure; requeued retry %d/%d in %s", rs.run.ID, nextCount, len(retryBackoffs), delay)
 			return
 		}
 	}
@@ -1017,7 +1017,7 @@ func (s *Server) runStep(rs *runState, n workflow.Node, sources []source, tags, 
 		}
 		ans, err := s.decide(ctx, rs.ws, d, values)
 		if err != nil {
-			return stepOutcome{err: err}
+			return stepOutcome{err: err, transient: agent.IsTransientError(err)}
 		}
 		out := ans.Choice
 		if d.Output == "probabilities" {
@@ -1293,7 +1293,7 @@ func (s *Server) openPRStep(ctx context.Context, rs *runState, n workflow.Node, 
 	}
 	num, prURL, err := s.gh.CreatePullRequest(ctx, token, rs.ws.Name, title, body, branch, base, op.Draft)
 	if err != nil {
-		return stepOutcome{err: err}
+		return stepOutcome{err: err, transient: github.IsTransient(err) || agent.IsTransientError(err)}
 	}
 	_ = s.writeEntry(rs, n, fmt.Sprintf("Opened %s [#%d](%s) from branch `%s` → `%s`.", kindWord, num, prURL, branch, base), true)
 	return stepOutcome{port: "out", output: prURL, note: fmt.Sprintf("opened %s #%d: %s", kindWord, num, prURL)}
@@ -1310,7 +1310,7 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 	}
 	token, err := s.token(rs.ws)
 	if err != nil {
-		return stepOutcome{err: err}
+		return stepOutcome{err: err, transient: github.IsTransient(err) || agent.IsTransientError(err)}
 	}
 	commit, ref := "", ""
 	if rs.it.pr != nil {
@@ -1341,7 +1341,7 @@ func (s *Server) testStep(ctx context.Context, rs *runState, t workflow.TestRunS
 		}
 	}
 	if err != nil {
-		return stepOutcome{err: err}
+		return stepOutcome{err: err, transient: github.IsTransient(err) || agent.IsTransientError(err)}
 	}
 	deadline := time.After(time.Duration(t.Minutes)*time.Minute + 30*time.Minute) // waiting for the machine counts too
 	for {
@@ -1469,7 +1469,7 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 		return stepOutcome{port: "out", note: errNoConversation.Error()}
 	}
 	if err != nil {
-		return stepOutcome{err: err}
+		return stepOutcome{err: err, transient: github.IsTransient(err) || agent.IsTransientError(err)}
 	}
 	// The page of a running step links to its agent run, and a Stop there stops the whole workflow run.
 	if err := s.st.SetStepAgentRun(rs.run.ID, n.ID, id); err != nil {
@@ -1499,11 +1499,12 @@ func (s *Server) agentStep(ctx context.Context, rs *runState, n workflow.Node, a
 			// 2026-11-24: a Decision chose "yes" from "(The agent ended without a report…)").
 			var tr agent.Transcript
 			json.Unmarshal([]byte(run.Summary), &tr)
-			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent ended without a report: %s", cmp.Or(tr.Error, run.Status))}
+			transient := run.Status == agent.Failed && agent.IsTransientMessage(tr.Error)
+			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent ended without a report: %s", cmp.Or(tr.Error, run.Status)), transient: transient}
 		}
 		tr, parts := s.agentParts(a.EffectiveClosing(rs.run.Kind) == workflow.ClosingReport, run)
 		if run.Status == agent.Failed {
-			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent failed: %s", tr.Error)}
+			return stepOutcome{agentRun: id, err: fmt.Errorf("the agent failed: %s", tr.Error), transient: agent.IsTransientMessage(tr.Error)}
 		}
 		// The step's own output is the report; the output tag, and {input} for the next step, have
 		// more: see agentParts.

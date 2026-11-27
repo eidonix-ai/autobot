@@ -143,3 +143,72 @@ func TestSubAgentsAreListedBySummary(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// A writer that dumps the full report into summary (leaving report as "see summary" or shorter)
+// or writes an oversized summary is asked to fix it; if it still exhausts retries or turns, the
+// full text is preserved in Report and Summary falls back cleanly so a full report is never posted
+// as a summary.
+func TestWriterFinishRejectsSwappedOrOversizedSummary(t *testing.T) {
+	fullReport := strings.TrimSpace("## Key findings\n\n- Concrete bug in a.go:1.\n\n## Detail\n\n" + strings.Repeat("Detailed analysis of a.go:1 and b.go:2. ", 260))
+
+	// 1. Writer puts the full report in summary and "See summary" in report, then fixes it after rejection.
+	badArgs, _ := json.Marshal(map[string]string{
+		"status":  "met",
+		"report":  "See summary field for the report body.",
+		"summary": fullReport,
+	})
+	goodArgs, _ := json.Marshal(map[string]string{
+		"status":  "met",
+		"report":  fullReport,
+		"summary": "### Recommendation: Changes Requested\n- Fix a.go:1.",
+	})
+	m := &script{replies: []Message{
+		call("f1", "finish", string(badArgs)),
+		call("f2", "finish", string(goodArgs)),
+	}}
+	tr := Run(context.Background(), Config{Model: m, MaxTurns: 5, WithSummary: true, NoCitationMarks: true}, nil)
+	if tr.Outcome != Met {
+		t.Fatalf("outcome = %s, want met", tr.Outcome)
+	}
+	if !strings.Contains(last(m.seen[1]), "longer than your report") {
+		t.Fatalf("expected swapped-summary rejection, got: %s", last(m.seen[1]))
+	}
+	if tr.Report != fullReport || !strings.HasPrefix(tr.Summary, "### Recommendation:") {
+		t.Fatalf("unexpected report/summary after fix: rep=%d sum=%q", len(tr.Report), tr.Summary)
+	}
+
+	// 2. Writer puts oversized (>8000 chars) summary even when report is longer -> rejected, then fixed.
+	bigSummary := strings.Repeat("Long verbose bullet about a.go:1. ", 260) // ~8840 chars
+	biggerReport := fullReport + strings.Repeat("More detail. ", 300)
+	overArgs, _ := json.Marshal(map[string]string{
+		"status":  "met",
+		"report":  biggerReport,
+		"summary": bigSummary,
+	})
+	m2 := &script{replies: []Message{
+		call("f1", "finish", string(overArgs)),
+		call("f2", "finish", string(goodArgs)),
+	}}
+	tr2 := Run(context.Background(), Config{Model: m2, MaxTurns: 5, WithSummary: true, NoCitationMarks: true}, nil)
+	if tr2.Outcome != Met || !strings.Contains(last(m2.seen[1]), "summary is too long") {
+		t.Fatalf("expected oversized-summary rejection: outcome=%s seen=%s", tr2.Outcome, last(m2.seen[1]))
+	}
+
+	// 3. Writer exhausts retries while keeping full report in summary -> promoted safely to Report, FallbackSummary in Summary.
+	m3 := &script{replies: []Message{
+		call("f1", "finish", string(badArgs)),
+		call("f2", "finish", string(badArgs)),
+		call("f3", "finish", string(badArgs)),
+		call("f4", "finish", string(badArgs)),
+	}}
+	tr3 := Run(context.Background(), Config{Model: m3, MaxTurns: 6, WithSummary: true, NoCitationMarks: true}, nil)
+	if tr3.Outcome != Met {
+		t.Fatalf("outcome = %s, want met", tr3.Outcome)
+	}
+	if tr3.Report != fullReport {
+		t.Fatalf("full report was not promoted from summary: len(report)=%d", len(tr3.Report))
+	}
+	if len(tr3.Summary) >= 2000 || !strings.Contains(tr3.Summary, "Concrete bug in a.go:1") {
+		t.Fatalf("expected short fallback summary, got len=%d: %q", len(tr3.Summary), tr3.Summary)
+	}
+}

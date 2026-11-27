@@ -28,7 +28,7 @@ const (
 	defaultSummary = "The summary is at most about 300 words: one opening line, then the 5 to 8 findings that matter most " +
 		"(one line each with its citation), then the most important open questions; no inventory of files. "
 	formatSummary = "The summary follows this format exactly, filling every field; keep the labels; write 'None.' where a field allows it and there is nothing:\n"
-	reportIsFull  = "The report is the full report."
+	reportIsFull  = "The report is the full report — put all detailed findings and citations in `report`, and keep `summary` concise (strictly shorter than `report`, under ~3,500 characters; never dump the full report into `summary` or write 'see summary' in `report`)."
 
 	saveTurnTime = 3 * time.Minute // the save turn's own time, whatever the research had left
 

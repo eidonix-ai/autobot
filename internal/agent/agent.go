@@ -136,13 +136,15 @@ type Config struct {
 }
 
 const (
-	maxNudges      = 3
-	maxRejected    = 3
-	maxResult      = 24_000 // characters of a tool's result shown to the model
-	maxSubResult   = 48_000 // sub-agent reports can be larger than a single file read
-	maxCalls       = 16     // tool calls one turn may make; the rest are refused, to be made next turn
-	defaultWindow  = 128_000
-	forceAt        = 85 // percent of the window past which the agent is told to compact
+	maxNudges             = 3
+	maxRejected           = 3
+	maxResult             = 24_000 // characters of a tool's result shown to the model
+	maxSubResult          = 48_000 // sub-agent reports can be larger than a single file read
+	maxCalls              = 16     // tool calls one turn may make; the rest are refused, to be made next turn
+	defaultWindow         = 128_000
+	forceAt               = 85    // percent of the window past which the agent is told to compact
+	maxWriterSummaryChars = 8_000 // reject writer summaries that dump the full report into summary
+	minSwapCheckChars     = 1_500 // ignore summary > report length check on tiny summaries
 )
 
 var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it when the goal is met, or when you are blocked and cannot meet it. " +
@@ -154,12 +156,13 @@ var finishSpec = ToolSpec{Name: "finish", Description: "End the work. Call it wh
 // finishWriterSpec is finish for the session that writes the report from the scratchpad: a summary
 // and the full report.
 var finishWriterSpec = ToolSpec{Name: "finish", Description: "End the work. Call it once the report is written, or when you are blocked and cannot write it. " +
-	"It takes two parts, both required: summary (follow the summary format in the instructions, or write about 300 words of the findings that matter most if no format is given) " +
-	"and report (the full report, opening with a short \"Key findings\" section, then the detail).",
+	"It takes two parts, both required: report (the full report, opening with a short \"Key findings\" section, then the detail) " +
+	"and summary (a concise summary, strictly shorter than report and under ~4,000 characters: follow the summary format in the instructions, or write about 300 words of the findings that matter most if no format is given). " +
+	"Never put the full report in summary and never write 'see summary' in report.",
 	Parameters: json.RawMessage(`{"type":"object","properties":{
 		"status":{"type":"string","enum":["met","blocked"],"description":"met: the goal is met. blocked: it cannot be met, and the report says why."},
-		"summary":{"type":"string","description":"Follow the summary format in the instructions; if none is given, about 300 words of the findings that matter most and open questions."},
-		"report":{"type":"string","description":"The full report, opening with a short Key findings section, then the detail."}},"required":["status","summary","report"]}`)}
+		"report":{"type":"string","description":"The complete full report, opening with a short Key findings section, then all details and citations. Always put the full report here — never write 'see summary'."},
+		"summary":{"type":"string","description":"Concise summary only (strictly shorter than report, under 4,000 chars). Follow the summary format in the instructions; if none is given, about 300 words of the findings that matter most and open questions."}},"required":["status","summary","report"]}`)}
 
 // finishSummarySpec is finish for a research session whose report is written next, from its notes.
 var finishSummarySpec = ToolSpec{Name: "finish", Description: "End the research. Call it when the goal is met, or when you are blocked and cannot meet it. " +
@@ -527,6 +530,30 @@ func (tr *Transcript) finish(ctx context.Context, cfg Config, args string, rejec
 		summary = store.FallbackSummary(a.Report)
 		if strings.TrimSpace(a.Summary) != "" {
 			summary = mark(strings.TrimSpace(a.Summary))
+		}
+		swapped := len(summary) > len(a.Report) && len(summary) > minSwapCheckChars
+		tooLong := len(summary) > maxWriterSummaryChars
+		if swapped || tooLong {
+			// Keep a safe normalized fallback on tr so a report is never lost (and a full report
+			// is never posted as a summary) even if the writer runs out of turns or retries.
+			safeReport := a.Report
+			if swapped {
+				safeReport = summary
+			}
+			safeSummary := store.FallbackSummary(safeReport)
+			if *rejected < maxRejected {
+				*rejected++
+				tr.Report, tr.Summary = safeReport, safeSummary
+				if swapped {
+					return fmt.Sprintf("Not finished: your summary (%d chars) is longer than your report (%d chars). "+
+						"Put the complete full report in the 'report' field and put ONLY a concise summary (under 4,000 chars) "+
+						"in the 'summary' field, then call finish again.", len(summary), len(a.Report)), false
+				}
+				return fmt.Sprintf("Not finished: your summary is too long (%d chars; maximum is %d). "+
+					"Keep all detailed evidence and citations in 'report', and condense 'summary' to short, scannable bullets (under 4,000 chars), then call finish again.",
+					len(summary), maxWriterSummaryChars), false
+			}
+			a.Report, summary = safeReport, safeSummary
 		}
 	}
 	if a.Status == Met {
